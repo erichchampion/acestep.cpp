@@ -35,7 +35,7 @@ struct GGUFModel {
     struct ggml_context * meta        = nullptr;  // tensor descriptors (no data)
     uint8_t *             mapping     = nullptr;  // mmapped file
     size_t                file_size   = 0;
-    size_t                data_offset = 0;  // gguf_get_data_offset(gguf)
+    size_t                data_offset = 0;        // gguf_get_data_offset(gguf)
 #ifdef _WIN32
     HANDLE fh = nullptr;
     HANDLE mh = nullptr;
@@ -88,8 +88,11 @@ static void gf_close(GGUFModel * gf) {
 // uninitialised gf.
 struct GgufCloser {
     GGUFModel * gf;
+
     explicit GgufCloser(GGUFModel * g) : gf(g) {}
+
     ~GgufCloser() { gf_close(gf); }
+
     GgufCloser(const GgufCloser &)             = delete;
     GgufCloser & operator=(const GgufCloser &) = delete;
 };
@@ -176,6 +179,16 @@ static bool gf_load(GGUFModel * gf, const char * path) {
     return true;
 }
 
+// Record the file mapping a loader is copying from, so wctx_alloc can release each
+// raw tensor's staged mmap pages after the copy (Apple only; see wctx_release_file_pages).
+// Every loader that pushes a src pointing straight into gf.mapping calls this; loaders
+// that stage type-converted data on the heap need not, and pushing a src from a second
+// GGUF into the same wctx would just leave that file's pages for gf_close to munmap.
+static inline void gf_note_mapping(WeightCtx * wctx, const GGUFModel & gf) {
+    wctx->file_base = gf.mapping;
+    wctx->file_len  = gf.file_size;
+}
+
 // Load a tensor from GGUF into the weight context.
 // Returns ggml_tensor (not yet backed by memory; call wctx_alloc after all loads).
 // Tensor shapes are already in ggml order (ne[0]=innermost).
@@ -184,6 +197,7 @@ static struct ggml_tensor * gf_load_tensor(WeightCtx *         wctx,
                                            const std::string & name,
                                            const int64_t *     shape_override  = nullptr,
                                            int                 n_dims_override = 0) {
+    gf_note_mapping(wctx, gf);
     int64_t idx = gguf_find_tensor(gf.gguf, name.c_str());
     if (idx < 0) {
         ace_fatal(1, "[GGUF] FATAL: tensor '%s' not found\n", name.c_str());
@@ -332,6 +346,7 @@ static struct ggml_tensor * gf_load_qkv_fused(WeightCtx *         wctx,
         return gf.mapping + gf.data_offset + off;
     };
 
+    gf_note_mapping(wctx, gf);
     wctx->pending.push_back({ fused, get_data(q_name), q_bytes, 0 });
     wctx->pending.push_back({ fused, get_data(k_name), k_bytes, q_bytes });
     wctx->pending.push_back({ fused, get_data(v_name), v_bytes, q_bytes + k_bytes });
@@ -367,6 +382,7 @@ static struct ggml_tensor * gf_load_pair_fused(WeightCtx *         wctx,
         return gf.mapping + gf.data_offset + off;
     };
 
+    gf_note_mapping(wctx, gf);
     wctx->pending.push_back({ fused, get_data(a_name), a_bytes, 0 });
     wctx->pending.push_back({ fused, get_data(b_name), b_bytes, a_bytes });
     return fused;
