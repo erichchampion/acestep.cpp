@@ -117,7 +117,8 @@ static BackendPair backend_init(const char * label) {
     // GGML_BACKEND env var (the CLI fallback), then auto-best below.
     // Device names: CUDA0, Vulkan0, CPU, BLAS (see ggml_backend_dev_name).
     const std::string & cfg_device    = ace_backend_config().device;
-    const char *        force_backend = !cfg_device.empty() ? cfg_device.c_str() : std::getenv("GGML_BACKEND");
+    const bool          from_config   = !cfg_device.empty();
+    const char *        force_backend = from_config ? cfg_device.c_str() : std::getenv("GGML_BACKEND");
     if (force_backend && force_backend[0]) {
         bp.backend = ggml_backend_init_by_name(force_backend, nullptr);
         if (!bp.backend) {
@@ -126,8 +127,8 @@ static BackendPair backend_init(const char * label) {
                 avail += ' ';
                 avail += ggml_backend_dev_name(ggml_backend_dev_get(i));
             }
-            ace_fatal(1, "[Load] FATAL: backend '%s' (ace_backend_configure or GGML_BACKEND) not found. Available:%s\n",
-                      force_backend, avail.c_str());
+            ace_fatal(1, "[Load] FATAL: backend '%s' (from %s) not found. Available:%s\n", force_backend,
+                      from_config ? "ace_backend_configure" : "GGML_BACKEND", avail.c_str());
         }
     } else {
         bp.backend = ggml_backend_init_best();
