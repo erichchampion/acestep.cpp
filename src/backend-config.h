@@ -58,3 +58,26 @@ inline void ace_backend_configure(const char * device, int n_threads) {
     ace_backend_set_device(device);
     ace_backend_set_threads(n_threads);
 }
+
+// Resolve a CPU worker-thread count from an embedder's configured value. One
+// definition, shared by the GGML backend (backend.h) and the MP3 encoder
+// (audio-io.h), so the clamp rule stays in one place and cannot drift between them.
+//   configured <= 0 -> auto: return auto_threads (each caller's own default policy)
+//   configured  > 0 -> honour it, clamped to a ceiling so a bogus value (100000)
+//                      cannot spawn that many threads. The ceiling is the logical
+//                      CPU count when known (hw), else auto_threads -- so the clamp
+//                      still bites when hardware_concurrency() reports 0.
+// auto_threads is the caller's own auto default (the P-core count for GGML GEMM, all
+// logical cores for the ALU-bound MP3 path); it is forced to >= 1, so the result is
+// always >= 1. Pure arithmetic -- no ggml, no platform detection -- so it belongs
+// with the rest of this ggml-free config header.
+inline int ace_resolve_threads(int configured, int hw, int auto_threads) {
+    if (auto_threads < 1) {
+        auto_threads = 1;
+    }
+    if (configured <= 0) {
+        return auto_threads;
+    }
+    const int ceiling = hw > 0 ? hw : auto_threads;
+    return configured > ceiling ? ceiling : configured;
+}

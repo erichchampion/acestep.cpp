@@ -65,23 +65,16 @@ static int backend_cpu_auto_threads(void) {
 }
 
 // GGML CPU thread count: an embedder override (ace_backend_configure), otherwise
-// the auto physical-core count. An explicit override is trusted -- an embedder may
-// deliberately spend all cores including the E-cores -- and only clamped to a
-// ceiling, purely so an absurd value (100000) cannot ask GGML to spawn that many
-// threads. The ceiling is the logical CPU count; if that is undetectable
-// (hardware_concurrency() == 0), the auto count stands in -- on Apple that is still
-// the real P-core count from the perflevel sysctl, so the ceiling stays meaningful
-// even when hardware_concurrency reports 0, and a bogus override can't slip through
-// unbounded. (The one-thread-per-physical-core reasoning is the default's; an
-// explicit request overrides it.)
+// the auto physical-core count. ace_resolve_threads() (backend-config.h) holds the
+// shared policy: an explicit override is trusted -- an embedder may deliberately
+// spend all cores including the E-cores -- and only clamped to a ceiling (the
+// logical CPU count, or the auto count when hardware_concurrency() reports 0, which
+// on Apple is still the real P-core count) so an absurd value cannot ask GGML to
+// spawn that many threads. The one-thread-per-physical-core reasoning is the
+// default's; an explicit request overrides it.
 static int backend_cpu_n_threads(void) {
-    int configured = ace_backend_config().n_threads;
-    if (configured > 0) {
-        int hw      = (int) std::thread::hardware_concurrency();
-        int ceiling = hw > 0 ? hw : backend_cpu_auto_threads();
-        return configured > ceiling ? ceiling : configured;
-    }
-    return backend_cpu_auto_threads();
+    return ace_resolve_threads(ace_backend_config().n_threads, (int) std::thread::hardware_concurrency(),
+                               backend_cpu_auto_threads());
 }
 
 // Standalone CPU backend via Registry API (DL-safe, no ggml-cpu.h needed).

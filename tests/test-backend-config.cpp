@@ -59,6 +59,21 @@ int main() {
     ace_backend_configure(nullptr, -4);
     CHECK(backend_cpu_n_threads() == auto_threads);
 
+    // ace_resolve_threads(): the shared clamp policy that both backend_cpu_n_threads
+    // (backend.h) and the MP3 encoder (audio-io.h) route through. Pure arithmetic, so
+    // these exact values hold on any host regardless of its real core count.
+    CHECK(ace_resolve_threads(0, 10, 8) == 8);        // <= 0 -> the caller's auto default
+    CHECK(ace_resolve_threads(-1, 10, 8) == 8);       // negative -> auto too
+    CHECK(ace_resolve_threads(4, 10, 8) == 4);        // in range -> honoured exactly
+    CHECK(ace_resolve_threads(10, 10, 8) == 10);      // at the ceiling -> honoured
+    CHECK(ace_resolve_threads(100000, 10, 8) == 10);  // absurd -> clamped to hw
+    // hw undetectable (0): the ceiling falls back to the auto count, so an absurd
+    // value is still clamped and the result never drops below 1.
+    CHECK(ace_resolve_threads(100000, 0, 8) == 8);
+    CHECK(ace_resolve_threads(0, 0, 8) == 8);
+    CHECK(ace_resolve_threads(100000, 0, 0) == 1);  // no info at all -> at least 1
+    CHECK(ace_resolve_threads(0, 0, 0) == 1);
+
     // The device is settable and cleared by "" / NULL.
     ace_backend_configure("Metal", 0);
     CHECK(ace_backend_config().device == "Metal");
