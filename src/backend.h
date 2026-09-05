@@ -6,6 +6,7 @@
 // qwen3.h, qwen3-lm.h, cond.h, dit.h, vae.h.
 
 #include "ace-fatal.h"
+#include "backend-config.h"
 #include "ggml-backend.h"
 
 #include <cstdio>
@@ -13,6 +14,10 @@
 #include <cstring>
 #include <string>
 #include <thread>
+
+#ifdef __APPLE__
+#    include <sys/sysctl.h>
+#endif
 
 struct BackendPair {
     ggml_backend_t backend;
@@ -28,6 +33,22 @@ static int         g_backend_refs  = 0;
 // Used for GGML CPU thread count: GEMM shares SIMD units across hyperthreads,
 // so one thread per physical core is optimal.
 static int backend_cpu_n_threads(void) {
+    // Embedder override wins (ace_backend_configure).
+    int configured = ace_backend_config().n_threads;
+    if (configured > 0) {
+        return configured;
+    }
+#ifdef __APPLE__
+    // Apple silicon has no SMT and asymmetric cores, so logical/2 is wrong: an
+    // M3 Max (12P + 4E) would get 8 instead of 12, an iPhone 15 Pro (2P + 4E) 3
+    // instead of 6. hw.perflevel0 is the performance-core cluster.
+    int    perf = 0;
+    size_t sz   = sizeof(perf);
+    if (sysctlbyname("hw.perflevel0.logicalcpu", &perf, &sz, nullptr, 0) == 0 && perf > 0) {
+        return perf;
+    }
+#endif
+    // x86 with SMT: logical / 2 approximates the physical core count.
     int n = (int) std::thread::hardware_concurrency() / 2;
     return n > 0 ? n : 1;
 }
@@ -75,10 +96,12 @@ static BackendPair backend_init(const char * label) {
     ggml_backend_load_all();
     BackendPair bp = {};
 
-    // GGML_BACKEND env var: force a specific device instead of auto-best.
+    // Device selection: an explicit ace_backend_configure() wins, then the
+    // GGML_BACKEND env var (the CLI fallback), then auto-best below.
     // Device names: CUDA0, Vulkan0, CPU, BLAS (see ggml_backend_dev_name).
-    const char * force_backend = std::getenv("GGML_BACKEND");
-    if (force_backend) {
+    const std::string & cfg_device    = ace_backend_config().device;
+    const char *        force_backend = !cfg_device.empty() ? cfg_device.c_str() : std::getenv("GGML_BACKEND");
+    if (force_backend && force_backend[0]) {
         bp.backend = ggml_backend_init_by_name(force_backend, nullptr);
         if (!bp.backend) {
             std::string avail;
@@ -86,7 +109,7 @@ static BackendPair backend_init(const char * label) {
                 avail += ' ';
                 avail += ggml_backend_dev_name(ggml_backend_dev_get(i));
             }
-            ace_fatal(1, "[Load] FATAL: GGML_BACKEND=%s not found. Available:%s\n", force_backend,
+            ace_fatal(1, "[Load] FATAL: requested backend '%s' not found. Available:%s\n", force_backend,
                       avail.c_str());
         }
     } else {
