@@ -7,10 +7,20 @@
 //
 // Define ACESTEP_FATAL_THROWS (the app does; the CLIs do not) and the same
 // message is thrown as ace_fatal_error instead, so C++ stack unwinding runs:
-// every half-built ggml_context and backend buffer is freed by its destructor,
-// and ModelStore's std::lock_guard unlocks, rather than the process dying
-// mid-load with the mutex still held. The message travels with the exception,
-// so an app can show *why* a load failed without scraping stderr.
+// every RAII-owned ggml_context and backend buffer is freed, and ModelStore's
+// std::lock_guard unlocks, rather than the process dying mid-load. The message
+// is echoed to stderr *and* carried on the exception.
+//
+// Where the exception ends up depends on who raised it. ModelStore catches
+// ace_fatal_error at the load boundary (store_require_*) and turns a failed load
+// into the nullptr it already returned on failure -- so load callers are
+// unchanged and read the reason from stderr. A fatal raised anywhere without
+// such a boundary propagates to the caller carrying the message.
+//
+// ace_fatal_error is defined even in the default (non-throwing) build so callers
+// can `catch (const ace_fatal_error &)` unconditionally; it is simply never
+// thrown there. Catching this specific type rather than `...` lets an unrelated
+// std::bad_alloc keep propagating instead of being masked as a benign failure.
 //
 // Why an exception and not the alternatives (see #17):
 //   - setjmp/longjmp skips C++ destructors -- it would leak the half-built
@@ -22,12 +32,9 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
-
-#ifdef ACESTEP_FATAL_THROWS
-#    include <stdexcept>
-#    include <string>
-#    include <utility>
-#endif
+#include <stdexcept>
+#include <string>
+#include <utility>
 
 #if defined(__GNUC__) || defined(__clang__)
 #    define ACE_FATAL_PRINTF_FMT __attribute__((format(printf, 2, 3)))
@@ -35,13 +42,12 @@
 #    define ACE_FATAL_PRINTF_FMT
 #endif
 
-#ifdef ACESTEP_FATAL_THROWS
 // Carries the exit code the CLI would have used and the formatted message.
+// Defined unconditionally; only thrown under ACESTEP_FATAL_THROWS.
 struct ace_fatal_error : std::runtime_error {
     int code;
     ace_fatal_error(int c, std::string msg) : std::runtime_error(std::move(msg)), code(c) {}
 };
-#endif
 
 [[noreturn]] ACE_FATAL_PRINTF_FMT inline void ace_fatal(int code, const char * fmt, ...) {
     va_list ap;

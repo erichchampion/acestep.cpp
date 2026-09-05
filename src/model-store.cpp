@@ -12,6 +12,7 @@
 
 #include "model-store.h"
 
+#include "ace-fatal.h"
 #include "gguf-weights.h"
 #include "timer.h"
 
@@ -280,9 +281,15 @@ static size_t bytes_of_fsq_detok(const DetokGGML * m) {
 // loaders, but a throw escaping any of these functions skips its `delete m` just
 // the same, so m (and the backend + scheduler already assigned into it) would
 // leak past the frame with the store's mutex released mid-load. LoadGuard frees
-// m on both the load-returned-false path and the throw-unwind path; dismiss()
-// once the store owns it. Default builds never throw, so this only changes
-// behaviour under the flag -- the delete matches the existing false-path delete.
+// m on the load-returned-false path, the ace_fatal_error throw path (the flag),
+// and a std::bad_alloc from the load's own STL allocations -- which can happen in
+// any build, so this also plugs a pre-existing leak, not only a flag-only one.
+// dismiss() runs right before install_entry, not after: install_entry does two
+// emplaces, and if the second throws once the first has already put m in s->gpu,
+// a still-armed guard would delete an m the store now owns (a dangling entry).
+// Dismissing first, m is either the store's or leaked, never double-freed. Below,
+// each site catches ace_fatal_error specifically, not `...`, so a bad_alloc is
+// not masked as a benign nullptr but propagates (with m already freed here).
 template <typename T> struct LoadGuard {
     T * p;
     explicit LoadGuard(T * ptr) : p(ptr) {}
@@ -307,11 +314,11 @@ Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & k) {
         if (!qw3lm_load(m, k.path.c_str(), k.max_seq, k.n_kv_sets)) {
             return nullptr;
         }
-    } catch (...) {
-        return nullptr;
+    } catch (const ace_fatal_error &) {
+        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
-    install_entry(s, k, m, bytes_of_lm(m), "LM", del_lm);
     guard.dismiss();
+    install_entry(s, k, m, bytes_of_lm(m), "LM", del_lm);
     fprintf(stderr, "[Store] Load LM: %.0f ms\n", t.ms());
     return m;
 }
@@ -331,11 +338,11 @@ Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & k) {
         if (!qwen3_load_text_encoder(m, k.path.c_str())) {
             return nullptr;
         }
-    } catch (...) {
-        return nullptr;
+    } catch (const ace_fatal_error &) {
+        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
-    install_entry(s, k, m, bytes_of_text_enc(m), "TextEnc", del_text_enc);
     guard.dismiss();
+    install_entry(s, k, m, bytes_of_text_enc(m), "TextEnc", del_text_enc);
     fprintf(stderr, "[Store] Load TextEnc: %.0f ms\n", t.ms());
     return m;
 }
@@ -355,11 +362,11 @@ CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & k) {
         if (!cond_ggml_load(m, k.path.c_str())) {
             return nullptr;
         }
-    } catch (...) {
-        return nullptr;
+    } catch (const ace_fatal_error &) {
+        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
-    install_entry(s, k, m, bytes_of_cond_enc(m), "CondEnc", del_cond_enc);
     guard.dismiss();
+    install_entry(s, k, m, bytes_of_cond_enc(m), "CondEnc", del_cond_enc);
     fprintf(stderr, "[Store] Load CondEnc: %.0f ms\n", t.ms());
     return m;
 }
@@ -380,11 +387,11 @@ DiTGGML * store_require_dit(ModelStore * s, const ModelKey & k) {
         if (!dit_ggml_load(m, k.path.c_str(), adapter, k.adapter_scale)) {
             return nullptr;
         }
-    } catch (...) {
-        return nullptr;
+    } catch (const ace_fatal_error &) {
+        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
-    install_entry(s, k, m, bytes_of_dit(m), "DiT", del_dit);
     guard.dismiss();
+    install_entry(s, k, m, bytes_of_dit(m), "DiT", del_dit);
     fprintf(stderr, "[Store] Load DiT: %.0f ms\n", t.ms());
     return m;
 }
@@ -402,11 +409,11 @@ VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & k) {
     LoadGuard<VAEEncoder> guard(m);
     try {
         vae_enc_load(m, k.path.c_str());  // void: exit(1) by default, throws under the flag
-    } catch (...) {
-        return nullptr;
+    } catch (const ace_fatal_error &) {
+        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
-    install_entry(s, k, m, bytes_of_vae_enc(m), "VAE-Enc", del_vae_enc);
     guard.dismiss();
+    install_entry(s, k, m, bytes_of_vae_enc(m), "VAE-Enc", del_vae_enc);
     fprintf(stderr, "[Store] Load VAE-Enc: %.0f ms\n", t.ms());
     return m;
 }
@@ -424,11 +431,11 @@ VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & k) {
     LoadGuard<VAEGGML> guard(m);
     try {
         vae_ggml_load(m, k.path.c_str());  // void: exit(1) by default, throws under the flag
-    } catch (...) {
-        return nullptr;
+    } catch (const ace_fatal_error &) {
+        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
-    install_entry(s, k, m, bytes_of_vae_dec(m), "VAE-Dec", del_vae_dec);
     guard.dismiss();
+    install_entry(s, k, m, bytes_of_vae_dec(m), "VAE-Dec", del_vae_dec);
     fprintf(stderr, "[Store] Load VAE-Dec: %.0f ms\n", t.ms());
     return m;
 }
@@ -448,11 +455,11 @@ TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & k) {
         if (!tok_ggml_load(m, k.path.c_str())) {
             return nullptr;
         }
-    } catch (...) {
-        return nullptr;
+    } catch (const ace_fatal_error &) {
+        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
-    install_entry(s, k, m, bytes_of_fsq_tok(m), "FSQ-Tok", del_fsq_tok);
     guard.dismiss();
+    install_entry(s, k, m, bytes_of_fsq_tok(m), "FSQ-Tok", del_fsq_tok);
     fprintf(stderr, "[Store] Load FSQ-Tok: %.0f ms\n", t.ms());
     return m;
 }
@@ -472,11 +479,11 @@ DetokGGML * store_require_fsq_detok(ModelStore * s, const ModelKey & k) {
         if (!detok_ggml_load(m, k.path.c_str())) {
             return nullptr;
         }
-    } catch (...) {
-        return nullptr;
+    } catch (const ace_fatal_error &) {
+        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
-    install_entry(s, k, m, bytes_of_fsq_detok(m), "FSQ-Detok", del_fsq_detok);
     guard.dismiss();
+    install_entry(s, k, m, bytes_of_fsq_detok(m), "FSQ-Detok", del_fsq_detok);
     fprintf(stderr, "[Store] Load FSQ-Detok: %.0f ms\n", t.ms());
     return m;
 }
