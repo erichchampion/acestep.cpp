@@ -1343,8 +1343,9 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
         T_latent_max = MAX_T_LATENT;
     }
     std::vector<float> latent((size_t) T_latent_max * LATENT_CHANNELS);
-    int                T_latent = vae_enc_encode_tiled(vae, src_interleaved, src_len, latent.data(), T_latent_max,
-                                                       g_synth_params.vae_chunk, g_synth_params.vae_overlap);
+    int                T_latent =
+        vae_enc_encode_tiled(vae, src_interleaved, src_len, latent.data(), T_latent_max, g_synth_params.vae_chunk,
+                             g_synth_params.vae_overlap, AceProgress{ server_progress, (void *) &job->cancel });
     if (T_latent < 0) {
         fprintf(stderr, "[Server] encode: vae_enc_encode_tiled failed\n");
         job->status.store(JobStatus::FAILED);

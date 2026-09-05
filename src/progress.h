@@ -17,25 +17,32 @@ enum AceStage {
 
 // fn is called at each pipeline poll with the current (stage, step, total) and
 // returns true to cancel the run. step is 0-based; total is the loop's iteration
-// count. A report with step == 0 is emitted before a loop's first unit of work so
-// a UI can size a segmented bar (and so an empty loop still announces its stage).
-// fn == nullptr means no progress and never cancel.
+// count. The loop's first iteration (step 0) reports before the first unit of
+// work, so a UI can size a segmented bar. fn == nullptr means no progress and
+// never cancel.
+//
+// total is an upper bound, not a promise: an LM stage reports total =
+// max_new_tokens / max_tokens but stops early once every sequence hits EOS
+// (usually far below total), so an LM bar should treat it as a ceiling and expect
+// the stage to end before reaching it.
 //
 // A call with step < 0 is a bare cancel poll (see ace_cancelled), NOT a progress
 // report: a progress-recording callback should honour its cancel return but skip
-// it for sizing/advancing. It is used where there is no meaningful iteration
-// index to report -- MP3's fork-join encode, and the VAE error-vs-cancel
-// disambiguation -- so those never inject bogus steps into a stage's stream.
+// it for sizing/advancing. It is used before a loop (to honour a cancel that
+// landed before step 0 -- an empty loop therefore emits no step-0 report, only
+// this poll), where there is no meaningful iteration index (MP3 encode), and in
+// the VAE error-vs-cancel disambiguation -- so those never inject bogus steps
+// into a stage's stream.
 //
 // Cancel must be level-triggered: once the run is cancelled, fn must keep
 // returning true (the server reads a std::atomic<bool> flag, which is). The
 // disambiguation re-polls rely on that.
 //
-// A stage may run more than once in a single request: VAE encode runs for the
-// source and then the timbre reference in Cover-family tasks, each pass emitting
-// its own step-0 sizing report followed by 0..N. A consumer should treat a step-0
-// report as the start of a (possibly repeated) pass for that stage, not assume a
-// stage appears exactly once.
+// A stage may run more than once in a single request, each run re-emitting its
+// step-0 sizing report followed by 0..N -- so a consumer should treat step 0 as
+// the start of a (repeatable) pass, not assume a stage appears once. VAE encode
+// runs for the source and the timbre reference in Cover tasks; VAE decode runs
+// once per batch item; and DiT and LM repeat once per group in batched synthesis.
 //
 // Thread-safety: fn is always called from a single thread. The pipelines poll it
 // sequentially, and MP3 encode -- though fork-join -- polls cancel only from its
