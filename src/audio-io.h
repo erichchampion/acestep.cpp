@@ -610,13 +610,26 @@ static std::string audio_encode_mp3(const float * audio, int T_audio, int sr, in
     // inference. With no cap, all logical cores: MP3 is ALU-bound with a small
     // working set, so hyperthreads help here (unlike GGML GEMM, which shares SIMD
     // units, hence the P-core default in backend.h -- so the auto default here is
-    // the logical count, not that P-core count). ace_resolve_threads() applies the
-    // same clamp backend_cpu_n_threads() uses, so an absurd cap (100000) can't spawn
-    // that many encoders even when hardware_concurrency() reports 0; the length-based
-    // max_threads floor below is a second ceiling regardless. minimum ~2s per chunk
-    // so filter warmup at boundaries is negligible.
-    int hw           = (int) std::thread::hardware_concurrency();
-    int n_threads    = ace_resolve_threads(ace_backend_config().n_threads, hw, hw);
+    // the logical count, not that P-core count).
+    //
+    // When the core count is known (always, on macOS/iOS) the shared clamp applies:
+    // auto (<=0) is all logical cores, an explicit cap is honoured and clamped to
+    // that count. When it is undetectable (hw==0), the two paths part: the GGML path
+    // clamps to its perflevel-sysctl auto count, but MP3 has no such independent
+    // reference (its "auto" is the logical count we don't have), so it honours an
+    // explicit cap as given rather than collapsing it -- an embedder that configured
+    // a count is the better authority when we cannot enumerate cores. That is safe
+    // because, unlike GGML, the length-based max_threads below is a hard ceiling on
+    // the actual encoder threads (one per ~2s chunk), so even an absurd cap cannot
+    // run away. minimum ~2s per chunk so filter warmup at boundaries is negligible.
+    int hw = (int) std::thread::hardware_concurrency();
+    int n_threads;
+    if (hw > 0) {
+        n_threads = ace_resolve_threads(ace_backend_config().n_threads, hw, hw);
+    } else {
+        int configured = ace_backend_config().n_threads;
+        n_threads      = configured > 0 ? configured : 1;
+    }
     int total_frames = (enc_T + 1151) / 1152;
     int min_frames   = (enc_sr * 2 + 1151) / 1152;  // ~2s worth of frames
     int max_threads  = total_frames / (min_frames > 0 ? min_frames : 1);

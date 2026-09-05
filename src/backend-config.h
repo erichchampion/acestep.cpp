@@ -43,8 +43,14 @@ inline void ace_backend_set_device(const char * device) {
     ace_backend_config().device = device ? device : "";
 }
 
-// Set the CPU worker thread count: <= 0 means auto (the performance-core count on
-// Apple silicon, hardware_concurrency()/2 elsewhere).
+// Set the CPU worker thread count. This one value governs both workloads: the GGML
+// inference threads and the MP3 export encoder threads. A positive count caps both
+// (an embedder bounding CPU for battery/thermals means the whole pipeline). <= 0
+// means auto, and the auto default differs by workload because their optimal thread
+// policies differ: GGML uses the performance-core count on Apple silicon
+// (hardware_concurrency()/2 elsewhere) since GEMM shares SIMD units across
+// hyperthreads, while MP3 -- ALU-bound with a small working set -- uses all logical
+// cores. There is deliberately one knob, not one per workload.
 inline void ace_backend_set_threads(int n_threads) {
     ace_backend_config().n_threads = n_threads;
 }
