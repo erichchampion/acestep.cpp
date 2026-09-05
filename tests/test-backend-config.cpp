@@ -28,6 +28,13 @@ int main() {
     const int hw = (int) std::thread::hardware_concurrency();
     const int t2 = hw >= 2 ? 2 : 1;  // a second in-range thread value
 
+    // ace_logical_cpus(): the shared logical-CPU reference both paths clamp against.
+    // >= 1 always, and equal to hardware_concurrency() whenever that reports a value.
+    CHECK(ace_logical_cpus() >= 1);
+    if (hw > 0) {
+        CHECK(ace_logical_cpus() == hw);
+    }
+
     // Auto by default: a positive thread count, no forced device, never more than
     // the logical CPUs.
     CHECK(ace_backend_config().device.empty());

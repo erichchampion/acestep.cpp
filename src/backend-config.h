@@ -18,6 +18,11 @@
 // from its C++ or Objective-C++ bridge (the same shim it already needs for
 // ace_synth_* etc.), not from Swift directly.
 #include <string>
+#include <thread>
+
+#ifdef __APPLE__
+#    include <sys/sysctl.h>
+#endif
 
 struct AceBackendConfig {
     std::string device;         // backend name (e.g. "Metal", "CUDA0", "CPU"); "" = auto
@@ -63,6 +68,26 @@ inline void ace_backend_set_threads(int n_threads) {
 inline void ace_backend_configure(const char * device, int n_threads) {
     ace_backend_set_device(device);
     ace_backend_set_threads(n_threads);
+}
+
+// The logical CPU count: std::thread::hardware_concurrency(), with an Apple sysctl
+// fallback (hw.logicalcpu) for the rare case it returns 0, so a caller that uses the
+// logical count as an auto default or a clamp ceiling gets a real number instead of
+// collapsing to 1. Always >= 1. Shared (ggml-free) so backend.h and audio-io.h both
+// source their logical-CPU reference here rather than each calling the raw query.
+inline int ace_logical_cpus() {
+    int n = (int) std::thread::hardware_concurrency();
+    if (n > 0) {
+        return n;
+    }
+#ifdef __APPLE__
+    int    logical = 0;
+    size_t sz      = sizeof(logical);
+    if (sysctlbyname("hw.logicalcpu", &logical, &sz, nullptr, 0) == 0 && logical > 0) {
+        return logical;
+    }
+#endif
+    return 1;
 }
 
 // Resolve a CPU worker-thread count from an embedder's configured value. One

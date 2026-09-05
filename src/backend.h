@@ -67,14 +67,12 @@ static int backend_cpu_auto_threads(void) {
 // GGML CPU thread count: an embedder override (ace_backend_configure), otherwise
 // the auto physical-core count. ace_resolve_threads() (backend-config.h) holds the
 // shared policy: an explicit override is trusted -- an embedder may deliberately
-// spend all cores including the E-cores -- and only clamped to a ceiling (the
-// logical CPU count, or the auto count when hardware_concurrency() reports 0, which
-// on Apple is still the real P-core count) so an absurd value cannot ask GGML to
-// spawn that many threads. The one-thread-per-physical-core reasoning is the
-// default's; an explicit request overrides it.
+// spend all cores including the E-cores -- and only clamped to the logical CPU count
+// (ace_logical_cpus(), the same source the MP3 path uses) so an absurd value cannot
+// ask GGML to spawn that many threads. The one-thread-per-physical-core reasoning is
+// the default's (backend_cpu_auto_threads); an explicit request overrides it.
 static int backend_cpu_n_threads(void) {
-    return ace_resolve_threads(ace_backend_config().n_threads, (int) std::thread::hardware_concurrency(),
-                               backend_cpu_auto_threads());
+    return ace_resolve_threads(ace_backend_config().n_threads, ace_logical_cpus(), backend_cpu_auto_threads());
 }
 
 // Standalone CPU backend via Registry API (DL-safe, no ggml-cpu.h needed).
