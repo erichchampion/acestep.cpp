@@ -7,6 +7,11 @@
 // has been configured, backend init still honours GGML_BACKEND, then auto-picks
 // the best device.
 //
+// All the setters below are setup-time only and unsynchronized: the engine reads
+// this config (holding a reference to the device string) at the first model load,
+// so set it before any generate/load call and never from another thread while one
+// is running. It is set-once configuration, not a live control surface.
+//
 // This header is deliberately free of any ggml dependency so an embedder can
 // include just it to configure the engine; backend.h reads the config. Like the
 // rest of the engine's API it is C++ (not extern "C"): a Swift/Obj-C app calls it

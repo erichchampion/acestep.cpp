@@ -58,6 +58,25 @@ int main() {
     CHECK(backend_cpu_n_threads() == 2);
     ace_backend_configure(nullptr, 0);  // reset both
 
+    // An absurd thread count is clamped to the logical CPU count, not passed
+    // through to spawn that many workers.
+    int hw = (int) std::thread::hardware_concurrency();
+    if (hw > 0) {
+        ace_backend_configure(nullptr, 100000);
+        CHECK(backend_cpu_n_threads() == hw);
+        ace_backend_configure(nullptr, 0);
+    }
+
+    // End-to-end: a configured device actually drives backend_init's selection.
+    // "CPU" is always available, so this needs no GPU.
+    ace_backend_configure("CPU", 2);
+    BackendPair bp = backend_init("test");
+    CHECK(bp.backend != nullptr);
+    CHECK(strcmp(ggml_backend_name(bp.backend), "CPU") == 0);
+    CHECK(!bp.has_gpu);
+    backend_release(bp.backend, bp.cpu_backend);
+    ace_backend_configure(nullptr, 0);
+
 #ifdef __APPLE__
     // On Apple the auto default is the performance-core count, not logical/2.
     // Sanity: it is positive and does not exceed the total logical CPUs.

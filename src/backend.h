@@ -40,10 +40,14 @@ static int         g_backend_refs  = 0;
 // Used for GGML CPU thread count: GEMM shares SIMD units across hyperthreads,
 // so one thread per physical core is optimal.
 static int backend_cpu_n_threads(void) {
-    // Embedder override wins (ace_backend_configure).
+    // Embedder override wins (ace_backend_configure), clamped to the logical CPU
+    // count: more worker threads than CPUs only oversubscribes and slows GEMM, and
+    // this also stops an absurd value (e.g. 100000) from asking GGML to spawn that
+    // many threads.
     int configured = ace_backend_config().n_threads;
     if (configured > 0) {
-        return configured;
+        int hw = (int) std::thread::hardware_concurrency();
+        return (hw > 0 && configured > hw) ? hw : configured;
     }
 #ifdef __APPLE__
     // Apple silicon has no SMT and asymmetric cores, so logical/2 is the wrong
