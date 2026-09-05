@@ -65,17 +65,18 @@ static int backend_cpu_auto_threads(void) {
 }
 
 // GGML CPU thread count: an embedder override (ace_backend_configure), otherwise
-// the auto physical-core count. The override is clamped to that auto count, not to
-// the logical CPU count -- asking for more than one thread per physical core only
-// oversubscribes GEMM across hyperthreads (and an absurd value like 100000 would
-// otherwise ask GGML to spawn that many).
+// the auto physical-core count. An explicit override is trusted -- an embedder may
+// deliberately spend all cores including the E-cores -- and only clamped to the
+// total logical CPU count, purely so an absurd value (100000) cannot ask GGML to
+// spawn that many threads. (The one-thread-per-physical-core reasoning is the
+// default's; an explicit request overrides it.)
 static int backend_cpu_n_threads(void) {
-    int auto_n     = backend_cpu_auto_threads();
     int configured = ace_backend_config().n_threads;
     if (configured > 0) {
-        return configured < auto_n ? configured : auto_n;
+        int hw = (int) std::thread::hardware_concurrency();
+        return (hw > 0 && configured > hw) ? hw : configured;
     }
-    return auto_n;
+    return backend_cpu_auto_threads();
 }
 
 // Standalone CPU backend via Registry API (DL-safe, no ggml-cpu.h needed).
