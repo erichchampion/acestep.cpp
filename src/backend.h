@@ -124,6 +124,15 @@ static BackendPair backend_init(const char * label) {
 
 // Release a backend reference. Frees GPU + CPU backends when refcount hits 0.
 static void backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) {
+    // A caller with no backend (m->backend == null) never took a ref -- e.g. a
+    // load that threw before backend_init under ACESTEP_FATAL_THROWS, whose
+    // del_* still runs here. Every caller passes m->backend, so null means "no
+    // ref"; decrementing would corrupt the shared count and could free a backend
+    // another live module still holds. vae/vae-enc open the GGUF before
+    // backend_init, so they are the ones that reach here with a null backend.
+    if (!backend) {
+        return;
+    }
     if (g_backend_refs <= 0) {
         return;
     }

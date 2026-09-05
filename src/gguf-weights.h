@@ -31,16 +31,19 @@
 #endif
 
 struct GGUFModel {
-    struct gguf_context * gguf;         // parsed header (KV + tensor metadata)
-    struct ggml_context * meta;         // tensor descriptors (no data)
-    uint8_t *             mapping;      // mmapped file
-    size_t                file_size;
-    size_t                data_offset;  // gguf_get_data_offset(gguf)
+    struct gguf_context * gguf        = nullptr;  // parsed header (KV + tensor metadata)
+    struct ggml_context * meta        = nullptr;  // tensor descriptors (no data)
+    uint8_t *             mapping     = nullptr;  // mmapped file
+    size_t                file_size   = 0;
+    size_t                data_offset = 0;  // gguf_get_data_offset(gguf)
 #ifdef _WIN32
-    HANDLE fh;
-    HANDLE mh;
+    HANDLE fh = nullptr;
+    HANDLE mh = nullptr;
 #else
-    int fd;
+    // -1, not 0, is "no fd": 0 is a legitimate descriptor (open() returns it when
+    // stdin is closed), so gf_close must be able to close 0 yet skip the unset
+    // value. `= {}` and the *gf = {} in gf_close/gf_load both reset fd to -1.
+    int fd = -1;
 #endif
 };
 
@@ -65,10 +68,10 @@ static void gf_close(GGUFModel * gf) {
     if (gf->mapping) {
         munmap(gf->mapping, gf->file_size);
     }
-    // > 0, not >= 0: a real model fd from open() is always > 0, and 0 is the
-    // zero-init / post-close value -- so this never close(0)s stdin and is safe
-    // to call twice, which GgufCloser below relies on.
-    if (gf->fd > 0) {
+    // fd defaults to -1 (see GGUFModel), so >= 0 closes a real descriptor --
+    // including a legitimate fd 0 -- while the -1 sentinel makes this safe to
+    // call twice, which GgufCloser below relies on.
+    if (gf->fd >= 0) {
         close(gf->fd);
     }
 #endif

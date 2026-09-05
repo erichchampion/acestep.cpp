@@ -142,6 +142,19 @@ link_ggml_backends(acestep-core)
 # the target's interface so every consumer inherits it without restating it.
 target_compile_definitions(acestep-core PUBLIC GGML_MAX_NAME=128)
 
+# ace_fatal() exit(1)s by default; with this ON it throws ace_fatal_error so an
+# embedder can catch a failed load instead of dying (see src/ace-fatal.h). It
+# gates the body of an inline function, so it is PUBLIC and build-wide -- the one
+# correct way to turn it on, uniformly across acestep-core and its consumers, the
+# way GGML_MAX_NAME is. Defining it on only some targets is an ODR violation.
+# OFF by default, and do not turn it on until the inference path is
+# exception-safe: today only the model-store load path frees cleanly on a throw
+# (a forward-time fatal still leaks -- see the ACESTEP_FATAL_THROWS follow-up).
+option(ACESTEP_FATAL_THROWS "ace_fatal() throws instead of exit(1) (load-path only so far)" OFF)
+if(ACESTEP_FATAL_THROWS)
+    target_compile_definitions(acestep-core PUBLIC ACESTEP_FATAL_THROWS)
+endif()
+
 # The tools and the tests. Everything below is gated on ACESTEP_BUILD_TOOLS,
 # which is ON for a top-level build and OFF when acestep-core is embedded. Only
 # acestep-core (and ggml and yyjson, above) is built when the flag is off.
