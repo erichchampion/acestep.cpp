@@ -8,6 +8,7 @@
 // caches everything across calls. DiT weight swap between phases is an
 // invisible consequence of the store, not an orchestration concern anymore.
 
+#include "progress.h"
 #include "request.h"
 
 #include <cstdlib>

@@ -5,6 +5,7 @@
 // the VAE encoder, FSQ tokenizer and LM from the store in sequence, with
 // RAII release between stages. Audio -> latents -> codes -> LM -> metadata.
 
+#include "progress.h"
 #include "request.h"
 
 #include <vector>

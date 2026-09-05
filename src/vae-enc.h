@@ -321,7 +321,8 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
     float downsample_factor = 0.0f;
     int   latent_write_pos  = 0;
 
-    if (ace_progress(progress, ACE_STAGE_VAE_ENCODE, 0, num_steps)) {  // size the bar; honour a cancel before tile 0
+    if (ace_cancelled(progress,
+                      ACE_STAGE_VAE_ENCODE)) {  // honour a cancel before the loop; the loop's step-0 poll sizes the bar
         fprintf(stderr, "[VAE-Enc] Cancelled at tile 0/%d\n", num_steps);
         return -1;
     }

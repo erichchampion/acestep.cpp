@@ -513,8 +513,8 @@ static void handle_logs(const httplib::Request &, httplib::Response & res) {
 
 // progress + cancel callback. Reports (stage, step, total) are ignored here --
 // the client polls job status separately -- but the return still cancels via the
-// per-job flag. Reads the atomic, so it is safe to call from the MP3 encode
-// worker threads too.
+// per-job flag. It only reads the atomic, so it has no thread-safety needs of
+// its own (the pipelines call it from a single thread regardless).
 static bool server_progress(void * data, AceStage /*stage*/, int /*step*/, int /*total*/) {
     auto * flag = (const std::atomic<bool> *) data;
     return flag && flag->load(std::memory_order_relaxed);
@@ -1253,7 +1253,8 @@ static void decode_worker(std::shared_ptr<Job> job,
     int                T_audio_max = (src_T_latent + 64) * 1920;
     std::vector<float> audio_buf((size_t) T_audio_max * 2);
     int T_audio = vae_ggml_decode_tiled(vae, src_latents.data(), src_T_latent, audio_buf.data(), T_audio_max,
-                                        g_synth_params.vae_chunk, g_synth_params.vae_overlap);
+                                        g_synth_params.vae_chunk, g_synth_params.vae_overlap,
+                                        AceProgress{ server_progress, (void *) &job->cancel });
     if (T_audio < 0) {
         fprintf(stderr, "[Server] decode: vae_ggml_decode_tiled failed\n");
         job->status.store(JobStatus::FAILED);

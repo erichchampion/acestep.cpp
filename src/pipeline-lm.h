@@ -5,6 +5,7 @@
 // pipeline acquires the Qwen3 LM, BPE tokenizer and FSM template from the
 // store and releases the LM through RAII before returning.
 
+#include "progress.h"
 #include "request.h"
 #include "task-types.h"
 

@@ -3,8 +3,6 @@
 //
 // Pure data container + JSON read/write. Zero business logic.
 
-#include "progress.h"
-
 #include <cstdint>
 #include <cstdio>
 #include <string>

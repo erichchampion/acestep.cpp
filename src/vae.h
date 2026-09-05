@@ -492,7 +492,8 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
     float upsample_factor = 0.0f;
     int   audio_write_pos = 0;
 
-    if (ace_progress(progress, ACE_STAGE_VAE_DECODE, 0, num_steps)) {  // size the bar; honour a cancel before tile 0
+    if (ace_cancelled(progress,
+                      ACE_STAGE_VAE_DECODE)) {  // honour a cancel before the loop; the loop's step-0 poll sizes the bar
         fprintf(stderr, "[VAE] Cancelled at tile 0/%d\n", num_steps);
         return -1;
     }

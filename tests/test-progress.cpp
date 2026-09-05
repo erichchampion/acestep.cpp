@@ -39,11 +39,13 @@ static bool record_fn(void * data, AceStage stage, int step, int total) {
     return r->flag || (r->cancel_at >= 0 && step >= r->cancel_at);
 }
 
-// Mirrors what every pipeline loop does: one sizing report, then poll at the top
-// of each iteration. Returns the step it cancelled at, or total if it ran fully.
+// Mirrors what every pipeline loop does: a bare cancel poll before the loop (so
+// an already-cancelled stage aborts even when total == 0), then poll+report at
+// the top of each iteration -- iteration 0 (step 0) sizes the bar. Returns the
+// step it cancelled at, or total if it ran fully.
 static int run_stage(const AceProgress & p, AceStage stage, int total) {
-    if (ace_progress(p, stage, 0, total)) {  // size the bar, and honour a cancel before step 0
-        return 0;
+    if (ace_cancelled(p, stage)) {  // no progress report; honours a cancel before the loop
+        return -1;
     }
     for (int step = 0; step < total; step++) {
         if (ace_progress(p, stage, step, total)) {
@@ -81,26 +83,26 @@ int main() {
         for (auto & s : stages) {
             CHECK(run_stage(p, s.stage, s.total) == s.total);
         }
-        // Each stage emits: sizing(0) + poll(0..total-1) = total + 1 reports.
-        size_t expect = 0;
-        for (auto & s : stages) {
-            expect += static_cast<size_t>(s.total) + 1;
-        }
-        CHECK(rec.reports.size() == expect);
 
-        // Walk the recorded reports and confirm per stage: first two steps are 0
-        // (sizing then poll-0), steps are non-decreasing, total is constant, and
-        // the stage matches.
-        size_t i = 0;
-        for (auto & s : stages) {
-            CHECK(rec.reports[i].stage == s.stage && rec.reports[i].step == 0 && rec.reports[i].total == s.total);
-            i++;  // sizing report
-            for (int step = 0; step < s.total; step++, i++) {
-                CHECK(rec.reports[i].stage == s.stage);
-                CHECK(rec.reports[i].step == step);
-                CHECK(rec.reports[i].total == s.total);
+        // The progress reports (step >= 0; the bare cancel polls at step -1 are
+        // not progress) are, per stage, exactly 0..total-1: step 0 first (the
+        // sizing report, before any work), then non-decreasing, total constant.
+        std::vector<Report> prog;
+        for (auto & r : rec.reports) {
+            if (r.step >= 0) {
+                prog.push_back(r);
             }
         }
+        size_t i = 0;
+        for (auto & s : stages) {
+            for (int step = 0; step < s.total; step++, i++) {
+                CHECK(i < prog.size());
+                CHECK(prog[i].stage == s.stage);
+                CHECK(prog[i].step == step);
+                CHECK(prog[i].total == s.total);
+            }
+        }
+        CHECK(i == prog.size());  // no extra progress reports
     }
 
     // 3. Returning true cancels at that step, and the loop stops there.

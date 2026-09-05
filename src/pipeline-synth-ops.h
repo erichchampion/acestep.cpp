@@ -7,6 +7,7 @@
 // AceSynth are defined in pipeline-synth-impl.h.
 
 #include "pipeline-synth.h"
+#include "progress.h"
 
 struct AceSynth;
 struct SynthState;
