@@ -25,7 +25,14 @@ struct BackendPair {
     bool           has_gpu;
 };
 
-// Cached backend state (shared across all modules in the same binary)
+// Cached backend state, shared across every model that loads within one binary.
+// static-in-header (internal linkage) means one copy per TU, not one program-wide
+// like ace_backend_config() -- and that is fine only because exactly one TU per
+// binary ever reaches backend_init(): in the engine every load goes through
+// model-store.cpp's store_require_*, and the neural-codec tool is a standalone TU
+// that loads its own VAE. If a second TU in the same binary ever called a loader
+// directly, its loads would get a separate cache and refcount and not share --
+// make this a shared singleton (ace_backend_config-style) if that day comes.
 static BackendPair g_backend_cache = {};
 static int         g_backend_refs  = 0;
 
