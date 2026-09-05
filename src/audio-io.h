@@ -609,14 +609,20 @@ static std::string audio_encode_mp3(const float * audio, int T_audio, int sr, in
     // bounding CPU for battery/thermals means the MP3 export too, not just
     // inference. With no cap, all logical cores: MP3 is ALU-bound with a small
     // working set, so hyperthreads help here (unlike GGML GEMM, which shares SIMD
-    // units, hence the P-core default in backend.h). minimum ~2s per chunk so
-    // filter warmup at boundaries is negligible.
+    // units, hence the P-core default in backend.h). An explicit cap is clamped to
+    // the logical CPU count, matching backend_cpu_n_threads() in backend.h, so an
+    // absurd value (100000) can't spawn that many encoders; the length-based
+    // max_threads floor below is a second ceiling regardless. minimum ~2s per chunk
+    // so filter warmup at boundaries is negligible.
+    int hw        = (int) std::thread::hardware_concurrency();
     int n_threads = ace_backend_config().n_threads;
     if (n_threads <= 0) {
-        n_threads = (int) std::thread::hardware_concurrency();
+        n_threads = hw;  // no cap -> all logical cores
+    } else if (hw > 0 && n_threads > hw) {
+        n_threads = hw;  // clamp an absurd explicit cap to the logical CPU count
     }
     if (n_threads < 1) {
-        n_threads = 1;
+        n_threads = 1;  // hw undetectable (0) or a nonsensical value -> at least 1
     }
     int total_frames = (enc_T + 1151) / 1152;
     int min_frames   = (enc_sr * 2 + 1151) / 1152;  // ~2s worth of frames
