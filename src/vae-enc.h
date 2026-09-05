@@ -307,8 +307,14 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
         audio_overlap /= 2;
     }
 
-    // Short audio: encode directly
+    // Short audio: encode directly, as one implicit tile. Still report it and
+    // honour a cancel, so a short input is neither invisible to a progress bar
+    // nor uncancellable (the encode itself is a single un-interruptible graph).
     if (T_audio <= audio_chunk) {
+        if (ace_progress(progress, ACE_STAGE_VAE_ENCODE, 0, 1)) {
+            fprintf(stderr, "[VAE-Enc] Cancelled at tile 0/1\n");
+            return -1;
+        }
         return vae_enc_encode(m, audio, T_audio, latent_out, max_T_latent);
     }
 

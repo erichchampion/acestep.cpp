@@ -478,8 +478,14 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
         overlap /= 2;
     }
 
-    // Short sequence: decode directly
+    // Short sequence: decode directly, as one implicit tile. Still report it and
+    // honour a cancel, so a short input is neither invisible to a progress bar
+    // nor uncancellable (the decode itself is a single un-interruptible graph).
     if (T_latent <= chunk_size) {
+        if (ace_progress(progress, ACE_STAGE_VAE_DECODE, 0, 1)) {
+            fprintf(stderr, "[VAE] Cancelled at tile 0/1\n");
+            return -1;
+        }
         return vae_ggml_decode(m, latent, T_latent, audio_out, max_T_audio);
     }
 
