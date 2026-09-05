@@ -7,9 +7,11 @@
 //
 // Define ACESTEP_FATAL_THROWS (the app does; the CLIs do not) and the same
 // message is thrown as ace_fatal_error instead, so C++ stack unwinding runs:
-// every RAII-owned ggml_context and backend buffer is freed, and ModelStore's
-// std::lock_guard unlocks, rather than the process dying mid-load. The message
-// is echoed to stderr *and* carried on the exception.
+// ModelStore's LoadGuard frees the half-built module (its backend, scheduler,
+// ggml_context and weight buffer) and its std::lock_guard unlocks, rather than
+// the process dying mid-load. The message is echoed to stderr *and* carried on
+// the exception. (This covers the load path; an inference-time fatal still
+// unwinds through code that is not yet exception-safe -- see the follow-up.)
 //
 // Where the exception ends up depends on who raised it. ModelStore catches
 // ace_fatal_error at the load boundary (store_require_*) and turns a failed load

@@ -73,8 +73,9 @@ int main() {
         CHECK(caught);
     }
 
-    // 4. A generic handler catches it too (this is how ModelStore's LoadGuard
-    //    sites catch(...) to turn a failed load into a nullptr return).
+    // 4. A generic handler catches it too. (ModelStore's LoadGuard sites catch
+    //    the specific `const ace_fatal_error &`, not `...`, so a std::bad_alloc
+    //    is not masked; this only checks the base-class catch still works.)
     {
         bool caught = false;
         try {

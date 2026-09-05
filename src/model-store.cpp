@@ -278,22 +278,38 @@ static size_t bytes_of_fsq_detok(const DetokGGML * m) {
 // below does `T * m = new T(); load(m); install_entry(...)`, and each load calls
 // backend_init / gf_load_tensor -- which exit(1) by default but throw under
 // ACESTEP_FATAL_THROWS (see ace-fatal.h). #17 called out only the two void
-// loaders, but a throw escaping any of these functions skips its `delete m` just
-// the same, so m (and the backend + scheduler already assigned into it) would
-// leak past the frame with the store's mutex released mid-load. LoadGuard frees
-// m on the load-returned-false path, the ace_fatal_error throw path (the flag),
-// and a std::bad_alloc from the load's own STL allocations -- which can happen in
-// any build, so this also plugs a pre-existing leak, not only a flag-only one.
+// loaders, but a throw escaping any of these functions skips its cleanup just
+// the same, so the half-built m -- with its backend, scheduler, ggml_context and
+// weight buffer already assigned in -- would leak past the frame with the store's
+// mutex released mid-load. LoadGuard frees it on the load-returned-false path,
+// the ace_fatal_error throw path (the flag), and a std::bad_alloc from the load's
+// own STL allocations (which can happen in any build, so this also plugs a
+// pre-existing leak, not only a flag-only one).
+//
+// It runs the module's del_* function -- the same free the store uses on
+// eviction -- NOT a bare `delete`. These structs are POD: `delete m` would run a
+// trivial destructor and leak the backend/scheduler/context/buffer, since the
+// real teardown lives in qw3lm_free()/vae_enc_free()/etc. The del_* frees safely
+// on a partial module: every *_free() null-checks each handle, and backend_init
+// either fully took a ref (backend_release returns it) or threw before taking one
+// (g_backend_refs is 0, so backend_release early-returns).
+//
 // dismiss() runs right before install_entry, not after: install_entry does two
-// emplaces, and if the second throws once the first has already put m in s->gpu,
-// a still-armed guard would delete an m the store now owns (a dangling entry).
-// Dismissing first, m is either the store's or leaked, never double-freed. Below,
-// each site catches ace_fatal_error specifically, not `...`, so a bad_alloc is
-// not masked as a benign nullptr but propagates (with m already freed here).
+// emplaces, and if the second throws once the first has put m in s->gpu, a
+// still-armed guard would free an m the store now owns (a dangling entry, then a
+// double-free at teardown). Dismissing first, m is either the store's or -- only
+// if the first emplace itself OOMs -- leaked, but never double-freed. Below, each
+// site catches ace_fatal_error specifically, not `...`, so a bad_alloc is not
+// masked as a benign nullptr but propagates (with m already freed here).
 template <typename T> struct LoadGuard {
     T * p;
-    explicit LoadGuard(T * ptr) : p(ptr) {}
-    ~LoadGuard() { delete p; }
+    void (*free_fn)(void *);
+    LoadGuard(T * ptr, void (*fn)(void *)) : p(ptr), free_fn(fn) {}
+    ~LoadGuard() {
+        if (p) {
+            free_fn(p);
+        }
+    }
     void dismiss() { p = nullptr; }
     LoadGuard(const LoadGuard &)             = delete;
     LoadGuard & operator=(const LoadGuard &) = delete;
@@ -309,7 +325,7 @@ Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & k) {
     }
     Timer     t;
     Qwen3LM *          m = new Qwen3LM();
-    LoadGuard<Qwen3LM> guard(m);
+    LoadGuard<Qwen3LM> guard(m, del_lm);
     try {
         if (!qw3lm_load(m, k.path.c_str(), k.max_seq, k.n_kv_sets)) {
             return nullptr;
@@ -333,7 +349,7 @@ Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & k) {
     }
     Timer       t;
     Qwen3GGML *          m = new Qwen3GGML();
-    LoadGuard<Qwen3GGML> guard(m);
+    LoadGuard<Qwen3GGML> guard(m, del_text_enc);
     try {
         if (!qwen3_load_text_encoder(m, k.path.c_str())) {
             return nullptr;
@@ -357,7 +373,7 @@ CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & k) {
     }
     Timer      t;
     CondGGML *          m = new CondGGML();
-    LoadGuard<CondGGML> guard(m);
+    LoadGuard<CondGGML> guard(m, del_cond_enc);
     try {
         if (!cond_ggml_load(m, k.path.c_str())) {
             return nullptr;
@@ -381,7 +397,7 @@ DiTGGML * store_require_dit(ModelStore * s, const ModelKey & k) {
     }
     Timer        t;
     DiTGGML *          m       = new DiTGGML();
-    LoadGuard<DiTGGML> guard(m);
+    LoadGuard<DiTGGML> guard(m, del_dit);
     const char *       adapter = k.adapter_path.empty() ? nullptr : k.adapter_path.c_str();
     try {
         if (!dit_ggml_load(m, k.path.c_str(), adapter, k.adapter_scale)) {
@@ -406,7 +422,7 @@ VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & k) {
     }
     Timer        t;
     VAEEncoder *          m = new VAEEncoder();
-    LoadGuard<VAEEncoder> guard(m);
+    LoadGuard<VAEEncoder> guard(m, del_vae_enc);
     try {
         vae_enc_load(m, k.path.c_str());  // void: exit(1) by default, throws under the flag
     } catch (const ace_fatal_error &) {
@@ -428,7 +444,7 @@ VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & k) {
     }
     Timer     t;
     VAEGGML *          m = new VAEGGML();
-    LoadGuard<VAEGGML> guard(m);
+    LoadGuard<VAEGGML> guard(m, del_vae_dec);
     try {
         vae_ggml_load(m, k.path.c_str());  // void: exit(1) by default, throws under the flag
     } catch (const ace_fatal_error &) {
@@ -450,7 +466,7 @@ TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & k) {
     }
     Timer     t;
     TokGGML *          m = new TokGGML();
-    LoadGuard<TokGGML> guard(m);
+    LoadGuard<TokGGML> guard(m, del_fsq_tok);
     try {
         if (!tok_ggml_load(m, k.path.c_str())) {
             return nullptr;
@@ -474,7 +490,7 @@ DetokGGML * store_require_fsq_detok(ModelStore * s, const ModelKey & k) {
     }
     Timer       t;
     DetokGGML *          m = new DetokGGML();
-    LoadGuard<DetokGGML> guard(m);
+    LoadGuard<DetokGGML> guard(m, del_fsq_detok);
     try {
         if (!detok_ggml_load(m, k.path.c_str())) {
             return nullptr;
