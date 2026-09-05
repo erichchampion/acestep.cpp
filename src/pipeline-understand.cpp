@@ -307,6 +307,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
     bool             past_think = false;
     int              max_tokens = 4096;
 
+    (void) ace_progress(progress, ACE_STAGE_LM, 0, max_tokens);  // size the bar before step 0
     for (int step = 0; step < max_tokens; step++) {
         if (ace_progress(progress, ACE_STAGE_LM, step, max_tokens)) {
             fprintf(stderr, "[Understand] Cancelled at step %d\n", step);

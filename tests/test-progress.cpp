@@ -25,16 +25,18 @@ struct Report {
     int      total;
 };
 
-// Records every call; cancels when step reaches cancel_at (-1 = never).
+// Records every call; cancels when the level-triggered flag is set or when step
+// reaches cancel_at (-1 = never).
 struct Recorder {
     std::vector<Report> reports;
     int                 cancel_at = -1;
+    bool                flag      = false;
 };
 
 static bool record_fn(void * data, AceStage stage, int step, int total) {
     auto * r = static_cast<Recorder *>(data);
     r->reports.push_back({ stage, step, total });
-    return r->cancel_at >= 0 && step >= r->cancel_at;
+    return r->flag || (r->cancel_at >= 0 && step >= r->cancel_at);
 }
 
 // Mirrors what every pipeline loop does: one sizing report, then poll at the top
@@ -108,6 +110,23 @@ int main() {
         // sizing(0) + poll(0),poll(1),poll(2)=cancel -> last recorded step is 2.
         CHECK(!rec.reports.empty());
         CHECK(rec.reports.back().step == 2);
+    }
+
+    // 4. ace_cancelled is a bare cancel poll: it honours the cancel return but
+    //    marks itself with step < 0 so a consumer can skip it for progress.
+    {
+        Recorder    rec;
+        AceProgress p{ record_fn, &rec };
+        CHECK(!ace_cancelled(p, ACE_STAGE_MP3));  // not cancelled
+        CHECK(rec.reports.size() == 1);
+        CHECK(rec.reports.back().stage == ACE_STAGE_MP3);
+        CHECK(rec.reports.back().step < 0);  // distinguishable from a real report
+
+        rec.flag = true;                     // now the (level-triggered) callback cancels
+        CHECK(ace_cancelled(p, ACE_STAGE_MP3));
+
+        AceProgress none;
+        CHECK(!ace_cancelled(none, ACE_STAGE_MP3));  // null fn: never cancels
     }
 
     if (failures == 0) {

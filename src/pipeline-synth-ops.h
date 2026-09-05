@@ -35,13 +35,13 @@ void ops_build_schedule(SynthState & s);
 int ops_resolve_T(const AceSynth * ctx, SynthState & s);
 
 // Encode timbre from ref_audio via VAE. Sets s.timbre_feats and s.S_ref_timbre.
-void ops_encode_timbre(const AceSynth * ctx,
-                       const float *    ref_audio,
-                       int              ref_len,
-                       const float *    ref_latents,
-                       int              ref_T_latent,
-                       SynthState &     s,
-                       AceProgress      progress = {});
+int ops_encode_timbre(const AceSynth * ctx,
+                      const float *    ref_audio,
+                      int              ref_len,
+                      const float *    ref_latents,
+                      int              ref_T_latent,
+                      SynthState &     s,
+                      AceProgress      progress = {});
 
 // Per-batch text + lyric encoding (main pass + optional non-cover pass).
 // Stacks results into s.enc_hidden / s.enc_hidden_nc.

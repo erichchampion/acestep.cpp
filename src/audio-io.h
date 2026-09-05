@@ -705,7 +705,7 @@ static std::string audio_encode_mp3(const float * audio, int T_audio, int sr, in
         int chunk_len = chunk_end - chunk_start;
         int sub       = enc_sr;  // ~1 second
         for (int p = 0; p < chunk_len; p += sub) {
-            if (ace_progress(progress, ACE_STAGE_MP3, p, chunk_len)) {
+            if (ace_cancelled(progress, ACE_STAGE_MP3)) {
                 break;
             }
             int len = (p + sub <= chunk_len) ? sub : (chunk_len - p);
@@ -749,7 +749,7 @@ static std::string audio_encode_mp3(const float * audio, int T_audio, int sr, in
 
     free(resampled);
 
-    if (ace_progress(progress, ACE_STAGE_MP3, 0, 0)) {
+    if (ace_cancelled(progress, ACE_STAGE_MP3)) {
         fprintf(stderr, "[MP3] Cancelled\n");
         return "";
     }

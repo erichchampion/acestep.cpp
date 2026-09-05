@@ -343,13 +343,16 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s) {
     return 0;
 }
 
-void ops_encode_timbre(const AceSynth * ctx,
-                       const float *    ref_audio,
-                       int              ref_len,
-                       const float *    ref_latents,
-                       int              ref_T_latent,
-                       SynthState &     s,
-                       AceProgress      progress) {
+// 0 on success (including the deliberate fall-back to silence when a ref_audio
+// encode *fails*), -1 if the run was cancelled during the ref encode -- so the
+// caller aborts rather than silently generating with silence timbre.
+int ops_encode_timbre(const AceSynth * ctx,
+                      const float *    ref_audio,
+                      int              ref_len,
+                      const float *    ref_latents,
+                      int              ref_T_latent,
+                      SynthState &     s,
+                      AceProgress      progress) {
     // Timbre features from ref_audio or ref_latents (independent of src).
     // Two paths converge into s.timbre_feats: pre-encoded latents skip the
     // VAE encoder entirely, raw audio takes the encoder path. Latents win
@@ -360,7 +363,7 @@ void ops_encode_timbre(const AceSynth * ctx,
         s.timbre_feats.assign(ref_latents, ref_latents + (size_t) ref_T_latent * 64);
         fprintf(stderr, "[Encode-Timbre] Latents in: %d frames (%.1fs), VAE encode skipped\n", ref_T_latent,
                 (float) ref_T_latent / 25.0f);
-        return;
+        return 0;
     }
     if (ref_audio && ref_len > 0) {
         s.timer.reset();
@@ -369,7 +372,7 @@ void ops_encode_timbre(const AceSynth * ctx,
             fprintf(stderr, "[Encode-Timbre] WARNING: store_require_vae_enc failed, using silence\n");
             s.S_ref_timbre = 1;
             s.timbre_feats.assign(ctx->meta->silence_full.data(), ctx->meta->silence_full.data() + 64);
-            return;
+            return 0;
         }
         ModelHandle ref_vae_guard(ctx->store, ref_vae);
 
@@ -378,6 +381,13 @@ void ops_encode_timbre(const AceSynth * ctx,
         int                T_ref = vae_enc_encode_tiled(ref_vae, ref_audio, ref_len, ref_lat_buf.data(), max_T_ref,
                                                         ctx->params.vae_chunk, ctx->params.vae_overlap, progress);
         if (T_ref < 0) {
+            // vae_enc_encode_tiled returns -1 for both a cancel and a real encode
+            // failure. A cancel must abort; only a genuine failure falls back to
+            // silence (which the whole point of this path -- Cover import -- can
+            // tolerate). Re-poll to tell them apart (cancel is level-triggered).
+            if (ace_cancelled(progress, ACE_STAGE_VAE_ENCODE)) {
+                return -1;
+            }
             fprintf(stderr, "[Encode-Timbre] WARNING: ref_audio encode failed, using silence\n");
             s.S_ref_timbre = 1;
             s.timbre_feats.assign(ctx->meta->silence_full.data(), ctx->meta->silence_full.data() + 64);
@@ -391,6 +401,7 @@ void ops_encode_timbre(const AceSynth * ctx,
         s.S_ref_timbre = 1;
         s.timbre_feats.assign(ctx->meta->silence_full.data(), ctx->meta->silence_full.data() + 64);
     }
+    return 0;
 }
 
 // Per-batch CPU-resident forward from the text encoder.
@@ -910,7 +921,7 @@ int ops_vae_decode(const AceSynth * ctx, int batch_n, AceAudio * out, SynthState
         int T_audio = vae_ggml_decode_tiled(vae, dit_out, T_latent, audio.data(), T_audio_max, ctx->params.vae_chunk,
                                             ctx->params.vae_overlap, progress);
         if (T_audio < 0) {
-            if (ace_progress(progress, ACE_STAGE_VAE_DECODE, b, batch_n)) {
+            if (ace_cancelled(progress, ACE_STAGE_VAE_DECODE)) {
                 fprintf(stderr, "[VAE-Decode Batch%d] Cancelled\n", b);
                 return -1;
             }

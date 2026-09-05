@@ -258,7 +258,9 @@ static bool pinned_encode_src_and_timbre(AceSynth *    ctx,
     bool have_ref         = have_ref_audio || have_ref_latents;
     if (!have_src && !have_ref) {
         // Neither encode touches the GPU: timbre takes the silence path.
-        ops_encode_timbre(ctx, NULL, 0, NULL, 0, s, progress);
+        if (ops_encode_timbre(ctx, NULL, 0, NULL, 0, s, progress) != 0) {
+            return false;
+        }
         return true;
     }
     bool        need_vae_pin = (have_src_audio || have_ref_audio);
@@ -272,7 +274,9 @@ static bool pinned_encode_src_and_timbre(AceSynth *    ctx,
             return false;
         }
     }
-    ops_encode_timbre(ctx, ref_audio, ref_len, ref_latents, ref_T_latent, s, progress);
+    if (ops_encode_timbre(ctx, ref_audio, ref_len, ref_latents, ref_T_latent, s, progress) != 0) {
+        return false;
+    }
     return true;
 }
 
