@@ -40,19 +40,24 @@ static int backend_cpu_n_threads(void) {
     }
 #ifdef __APPLE__
     // Apple silicon has no SMT and asymmetric cores, so logical/2 is the wrong
-    // count -- it halves as if for hyperthreads. hw.perflevel0.logicalcpu is the
+    // count -- it halves as if for hyperthreads. hw.perflevel0 is the
     // performance-core cluster, the cores GEMM should run on: the E-cores are
-    // much slower and just drag a shared graph. That is 12 on an M3 Max (12P+4E,
-    // where logical/2 gave 8) and 2 on an iPhone 15 Pro (2P+4E, where logical/2
-    // gave 3) -- fewer than before on a 2P device, but the fast cores only, which
-    // is the "one thread per (useful) physical core" this function is after.
+    // much slower and just drag a shared graph. physicalcpu, not logicalcpu:
+    // they are equal on Apple silicon (no SMT), but an Intel Mac -- also __APPLE__
+    // -- does have SMT, and physicalcpu correctly halves there while logicalcpu
+    // would re-introduce the oversubscription. That is 12 P-cores on an M3 Max
+    // (12P+4E, where logical/2 gave 8) and 2 on an iPhone 15 Pro (2P+4E, where
+    // logical/2 gave 3) -- fewer than before on a 2P device, but the fast cores
+    // only, which is the one-thread-per-useful-physical-core this function wants.
     int    perf = 0;
     size_t sz   = sizeof(perf);
-    if (sysctlbyname("hw.perflevel0.logicalcpu", &perf, &sz, nullptr, 0) == 0 && perf > 0) {
+    if (sysctlbyname("hw.perflevel0.physicalcpu", &perf, &sz, nullptr, 0) == 0 && perf > 0) {
         return perf;
     }
 #endif
-    // x86 with SMT: logical / 2 approximates the physical core count.
+    // Non-Apple: x86 with SMT is the target, where logical / 2 approximates the
+    // physical core count. (A non-SMT non-Apple host -- e.g. ARM64 Linux -- would
+    // be undercounted, but that is not a platform this engine ships on.)
     int n = (int) std::thread::hardware_concurrency() / 2;
     return n > 0 ? n : 1;
 }

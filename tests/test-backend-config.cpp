@@ -45,6 +45,19 @@ int main() {
     ace_backend_configure(nullptr, 0);
     CHECK(ace_backend_config().device.empty());
 
+    // The single-field setters change one field without disturbing the other.
+    ace_backend_set_device("Metal");
+    ace_backend_set_threads(5);
+    CHECK(ace_backend_config().device == "Metal");
+    CHECK(backend_cpu_n_threads() == 5);
+    ace_backend_set_threads(2);  // device untouched
+    CHECK(ace_backend_config().device == "Metal");
+    CHECK(backend_cpu_n_threads() == 2);
+    ace_backend_set_device(nullptr);  // threads untouched
+    CHECK(ace_backend_config().device.empty());
+    CHECK(backend_cpu_n_threads() == 2);
+    ace_backend_configure(nullptr, 0);  // reset both
+
 #ifdef __APPLE__
     // On Apple the auto default is the performance-core count, not logical/2.
     // Sanity: it is positive and does not exceed the total logical CPUs.

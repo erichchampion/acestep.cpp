@@ -28,13 +28,24 @@ inline AceBackendConfig & ace_backend_config() {
     return cfg;
 }
 
-// Set the compute device and CPU thread count before the first model load.
-//   device:    backend name; NULL or "" means auto (falls back to the
-//              GGML_BACKEND env var, then the best available device).
-//   n_threads: CPU worker threads; <= 0 means auto (the performance-core count on
-//              Apple silicon, hardware_concurrency()/2 elsewhere).
-// Not thread-safe: call once during setup, before any generate call.
-inline void ace_backend_configure(const char * device, int n_threads) {
-    ace_backend_config().device    = device ? device : "";
+// Set the compute device: backend name, or NULL/"" for auto (falls back to the
+// GGML_BACKEND env var, then the best available device).
+inline void ace_backend_set_device(const char * device) {
+    ace_backend_config().device = device ? device : "";
+}
+
+// Set the CPU worker thread count: <= 0 means auto (the performance-core count on
+// Apple silicon, hardware_concurrency()/2 elsewhere).
+inline void ace_backend_set_threads(int n_threads) {
     ace_backend_config().n_threads = n_threads;
+}
+
+// Set BOTH device and thread count at once -- a convenience for the common
+// configure-once-at-startup call. It sets the full config, so passing e.g.
+// (nullptr, 8) also resets the device to auto; to change only one field later use
+// the single-field setters above. Not thread-safe: call during setup, before any
+// generate call.
+inline void ace_backend_configure(const char * device, int n_threads) {
+    ace_backend_set_device(device);
+    ace_backend_set_threads(n_threads);
 }
