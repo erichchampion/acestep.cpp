@@ -58,14 +58,11 @@ int main() {
     CHECK(backend_cpu_n_threads() == 2);
     ace_backend_configure(nullptr, 0);  // reset both
 
-    // An absurd thread count is clamped to the logical CPU count, not passed
-    // through to spawn that many workers.
-    int hw = (int) std::thread::hardware_concurrency();
-    if (hw > 0) {
-        ace_backend_configure(nullptr, 100000);
-        CHECK(backend_cpu_n_threads() == hw);
-        ace_backend_configure(nullptr, 0);
-    }
+    // An absurd (or merely over-physical) thread count is clamped to the auto
+    // physical-core count, not passed through to spawn that many workers.
+    ace_backend_configure(nullptr, 100000);
+    CHECK(backend_cpu_n_threads() == auto_threads);
+    ace_backend_configure(nullptr, 0);
 
     // End-to-end: a configured device actually drives backend_init's selection.
     // "CPU" is always available, so this needs no GPU.
