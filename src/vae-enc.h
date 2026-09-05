@@ -7,6 +7,7 @@
 
 #pragma once
 #include "ace-fatal.h"
+#include "progress.h"
 #include "vae.h"
 
 // Encoder block: 3xResUnit(in_ch) -> snake(in_ch) -> strided Conv1d(in_ch -> out_ch)
@@ -295,7 +296,8 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
                                 float *       latent_out,  // [T_latent, 64] output, time-major
                                 int           max_T_latent,
                                 int           chunk_size = 256,
-                                int           overlap    = 64) {
+                                int           overlap    = 64,
+                                AceProgress   progress   = {}) {
     // Work in audio-sample space. Each latent frame = 1920 audio samples.
     int audio_chunk   = chunk_size * 1920;
     int audio_overlap = overlap * 1920;
@@ -319,7 +321,12 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
     float downsample_factor = 0.0f;
     int   latent_write_pos  = 0;
 
+    (void) ace_progress(progress, ACE_STAGE_VAE_ENCODE, 0, num_steps);  // size the bar before tile 0
     for (int i = 0; i < num_steps; i++) {
+        if (ace_progress(progress, ACE_STAGE_VAE_ENCODE, i, num_steps)) {
+            fprintf(stderr, "[VAE-Enc] Cancelled at tile %d/%d\n", i, num_steps);
+            return -1;
+        }
         // Core range in audio samples (the part we keep)
         int core_start = i * audio_stride;
         int core_end   = core_start + audio_stride;

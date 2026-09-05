@@ -13,6 +13,7 @@
 #include "ggml-backend.h"
 #include "ggml.h"
 #include "gguf-weights.h"
+#include "progress.h"
 
 #include <cmath>
 #include <cstdio>
@@ -371,9 +372,9 @@ static struct ggml_tensor * vae_ggml_build_graph(struct ggml_context * ctx,
 // Core compute: ensure graph cached, set input, run. Returns T_audio or -1.
 // Output remains in m->graph_output for caller to read as needed.
 static int vae_ggml_compute(VAEGGML *     m,
-                            const float * latent,    // [T_full, 64] time-major
-                            int           T_latent,  // window length to decode
-                            int           win_start = 0) {     // offset into latent
+                            const float * latent,           // [T_full, 64] time-major
+                            int           T_latent,         // window length to decode
+                            int           win_start = 0) {  // offset into latent
 
     // Build graph only when T_latent changes (cached for tiled decode reuse)
     if (m->graph_T != T_latent) {
@@ -471,8 +472,7 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
                                  int           max_T_audio,
                                  int           chunk_size = 256,
                                  int           overlap    = 64,
-                                 bool (*cancel)(void *)   = nullptr,
-                                 void * cancel_data       = nullptr) {
+                                 AceProgress   progress   = {}) {
     // Ensure positive stride (matches Python effective_overlap reduction)
     while (chunk_size - 2 * overlap <= 0 && overlap > 0) {
         overlap /= 2;
@@ -492,8 +492,9 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
     float upsample_factor = 0.0f;
     int   audio_write_pos = 0;
 
+    (void) ace_progress(progress, ACE_STAGE_VAE_DECODE, 0, num_steps);  // size the bar before tile 0
     for (int i = 0; i < num_steps; i++) {
-        if (cancel && cancel(cancel_data)) {
+        if (ace_progress(progress, ACE_STAGE_VAE_DECODE, i, num_steps)) {
             fprintf(stderr, "[VAE] Cancelled at tile %d/%d\n", i, num_steps);
             return -1;
         }

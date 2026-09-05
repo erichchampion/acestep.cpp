@@ -5,6 +5,7 @@
 // All functions use planar stereo float: [L: T samples][R: T samples].
 // Part of acestep.cpp. MIT license.
 
+#include "progress.h"
 #include "task-types.h"
 
 #include <algorithm>
@@ -580,12 +581,7 @@ static bool audio_write_wav(const char * path, const float * audio, int T_audio,
 // audio_encode_mp3 is the core: encode planar stereo to MP3 in memory.
 // Does NOT normalize - caller is responsible (audio_write does it).
 // Returns empty string on failure.
-static std::string audio_encode_mp3(const float * audio,
-                                    int           T_audio,
-                                    int           sr,
-                                    int           kbps,
-                                    bool (*cancel)(void *) = nullptr,
-                                    void * cancel_data     = nullptr) {
+static std::string audio_encode_mp3(const float * audio, int T_audio, int sr, int kbps, AceProgress progress = {}) {
     const float * enc_audio = audio;
     int           enc_T     = T_audio;
     int           enc_sr    = sr;
@@ -709,7 +705,7 @@ static std::string audio_encode_mp3(const float * audio,
         int chunk_len = chunk_end - chunk_start;
         int sub       = enc_sr;  // ~1 second
         for (int p = 0; p < chunk_len; p += sub) {
-            if (cancel && cancel(cancel_data)) {
+            if (ace_progress(progress, ACE_STAGE_MP3, p, chunk_len)) {
                 break;
             }
             int len = (p + sub <= chunk_len) ? sub : (chunk_len - p);
@@ -753,7 +749,7 @@ static std::string audio_encode_mp3(const float * audio,
 
     free(resampled);
 
-    if (cancel && cancel(cancel_data)) {
+    if (ace_progress(progress, ACE_STAGE_MP3, 0, 0)) {
         fprintf(stderr, "[MP3] Cancelled\n");
         return "";
     }

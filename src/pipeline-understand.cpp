@@ -102,8 +102,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
                             AceRequest *         out,
                             std::vector<float> * latent_out,
                             int *                T_latent_out,
-                            bool (*cancel)(void *),
-                            void * cancel_data) {
+                            AceProgress          progress) {
     if (!ctx || !req || !out) {
         return -1;
     }
@@ -161,7 +160,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
         {
             ModelHandle vae_guard(ctx->store, vae_enc);
             T_25Hz = vae_enc_encode_tiled(vae_enc, src_audio, src_len, latents.data(), max_T_lat, ctx->params.vae_chunk,
-                                          ctx->params.vae_overlap);
+                                          ctx->params.vae_overlap, progress);
         }
         if (T_25Hz < 0) {
             fprintf(stderr, "[Understand-VAE] FATAL: encode failed\n");
@@ -309,7 +308,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
     int              max_tokens = 4096;
 
     for (int step = 0; step < max_tokens; step++) {
-        if (cancel && cancel(cancel_data)) {
+        if (ace_progress(progress, ACE_STAGE_LM, step, max_tokens)) {
             fprintf(stderr, "[Understand] Cancelled at step %d\n", step);
             return -1;
         }

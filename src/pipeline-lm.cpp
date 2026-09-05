@@ -45,8 +45,7 @@ static std::vector<std::string> generate_phase1_batch(Qwen3LM *                m
                                                       float                    cfg_scale         = 1.0f,
                                                       const std::vector<int> * uncond_tokens     = nullptr,
                                                       bool                     stop_at_reasoning = false,
-                                                      bool (*cancel)(void *)                     = nullptr,
-                                                      void * cancel_data                         = nullptr) {
+                                                      AceProgress              progress          = {}) {
     int  V       = m->cfg.vocab_size;
     bool use_cfg = cfg_scale > 1.0f && uncond_tokens && !uncond_tokens->empty();
 
@@ -161,8 +160,9 @@ static std::vector<std::string> generate_phase1_batch(Qwen3LM *                m
         }
     }
 
+    (void) ace_progress(progress, ACE_STAGE_LM, 0, max_new_tokens);  // size the bar before step 0
     for (int step = 0; step < max_new_tokens && n_active > 0; step++) {
-        if (cancel && cancel(cancel_data)) {
+        if (ace_progress(progress, ACE_STAGE_LM, step, max_new_tokens)) {
             fprintf(stderr, "[LM-Phase1] Cancelled at step %d\n", step);
             return {};
         }
@@ -273,8 +273,7 @@ static std::vector<std::string> run_phase2_batch(Qwen3LM *                      
                                                  float                          cfg_scale,
                                                  const char *                   negative_prompt,
                                                  bool                           use_batch_cfg,
-                                                 bool (*cancel)(void *),
-                                                 void * cancel_data) {
+                                                 AceProgress                    progress) {
     int  V             = m->cfg.vocab_size;
     bool use_cfg       = cfg_scale > 1.0f;
     bool shared_prompt = ((int) aces.size() == 1);
@@ -424,8 +423,9 @@ static std::vector<std::string> run_phase2_batch(Qwen3LM *                      
         }
     }
 
+    (void) ace_progress(progress, ACE_STAGE_LM, 0, max_tokens);  // size the bar before step 0
     for (int step = 0; step < max_tokens && n_active > 0; step++) {
-        if (cancel && cancel(cancel_data)) {
+        if (ace_progress(progress, ACE_STAGE_LM, step, max_tokens)) {
             fprintf(stderr, "[LM-Phase2] Cancelled at step %d\n", step);
             return {};
         }
@@ -586,9 +586,8 @@ int ace_lm_generate(AceLm *            ctx,
                     AceRequest *       out,
                     const char *       dump_logits,
                     const char *       dump_tokens,
-                    bool (*cancel)(void *),
-                    void * cancel_data,
-                    int    mode) {
+                    AceProgress        progress,
+                    int                mode) {
     if (!ctx || !req || !out || lm_batch_size < 1) {
         return -1;
     }
@@ -762,7 +761,7 @@ int ace_lm_generate(AceLm *            ctx,
 
         auto phase1_texts = generate_phase1_batch(model, bpe, prompt, 2048, temperature, fill_top_p, fill_top_k, seed,
                                                   lm_batch_size, active_fsm, gen_lyrics, fill_cfg,
-                                                  uncond.empty() ? nullptr : &uncond, !gen_lyrics, cancel, cancel_data);
+                                                  uncond.empty() ? nullptr : &uncond, !gen_lyrics, progress);
         if (phase1_texts.empty()) {
             return -1;
         }
@@ -834,7 +833,7 @@ int ace_lm_generate(AceLm *            ctx,
                 mode == LM_MODE_INSPIRE ? "Inspire" : "Format");
     } else if (!user_has_codes) {
         batch_codes = run_phase2_batch(model, *bpe, aces, temperature, top_p, top_k, seed, lm_batch_size, cfg_scale,
-                                       neg_prompt, ctx->params.use_batch_cfg, cancel, cancel_data);
+                                       neg_prompt, ctx->params.use_batch_cfg, progress);
         if (batch_codes.empty()) {
             return -1;
         }
