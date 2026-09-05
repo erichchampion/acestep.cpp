@@ -186,10 +186,25 @@ static bool gf_load(GGUFModel * gf, const char * path) {
 // but records the same range each time, so it only assigns when the range actually
 // changes -- and for a single-GGUF load (every current caller) that is exactly once.
 static inline void gf_note_mapping(WeightCtx * wctx, const GGUFModel & gf) {
-    if (wctx->file_base != gf.mapping || wctx->file_len != gf.file_size) {
-        wctx->file_base = gf.mapping;
-        wctx->file_len  = gf.file_size;
+    if (wctx->file_base == gf.mapping && wctx->file_len == gf.file_size) {
+        return;  // already recorded -- the common case, every tensor of one GGUF
     }
+    // A second, distinct mapping in one wctx. No current loader does this (an adapter's
+    // mapping is read and closed inside adapter_merge before wctx_alloc, and merged
+    // tensors carry heap srcs), and it stays safe -- the range check still gates every
+    // unmap -- but only the last-noted file's pages get released. Warn once so the
+    // missed release is visible rather than silently swallowed by the prose invariant.
+    if (wctx->file_base != nullptr) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            fprintf(stderr,
+                    "[WeightCtx] WARNING: a wctx staged tensors from two GGUF mappings; "
+                    "only the last file's staged pages will be released\n");
+        }
+    }
+    wctx->file_base = gf.mapping;
+    wctx->file_len  = gf.file_size;
 }
 
 // Load a tensor from GGUF into the weight context.

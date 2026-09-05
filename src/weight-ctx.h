@@ -21,8 +21,11 @@
 #include <vector>
 
 #ifdef __APPLE__
-#    include <sys/mman.h>  // posix_madvise, POSIX_MADV_DONTNEED
+#    include <sys/mman.h>  // munmap
 #    include <unistd.h>    // sysconf, _SC_PAGESIZE
+
+#    include <cerrno>      // errno
+#    include <cstring>     // strerror
 #endif
 
 struct WeightCtx {
@@ -121,6 +124,17 @@ static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void 
         return 0;                                          // tensor spans less than one whole interior page
     }
     if (munmap((void *) start, (size_t) (end - start)) != 0) {
+        // Distinguish a real failure from the legitimate "nothing to unmap" returns
+        // above: warn once (not per tensor) so a systematically broken release is
+        // visible instead of masquerading as "unmapped 0.0 MB".
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            fprintf(stderr,
+                    "[WeightCtx] WARNING: munmap of a staged tensor's pages failed (%s); "
+                    "page release is not taking effect\n",
+                    strerror(errno));
+        }
         return 0;
     }
     return (size_t) (end - start);
@@ -141,13 +155,21 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
     size_t unmapped = 0;
 #endif
     for (auto & pc : wctx->pending) {
-        // ggml_backend_tensor_set (the synchronous copy, not the _async variant) has
-        // fully read pc.src by the time it returns, so unmapping the source pages
-        // right after is safe -- the data now lives in the backend buffer.
         ggml_backend_tensor_set(pc.tensor, pc.src, pc.offset, pc.nbytes);
         total += pc.nbytes;
 #ifdef __APPLE__
-        unmapped += wctx_unmap_file_pages(pc.src, pc.nbytes, wctx->file_base, wctx->file_len);
+        if (wctx->file_base) {
+            // ggml_backend_tensor_set is the synchronous copy (the async variant is a
+            // separate call we do not use), so by its contract pc.src is already fully
+            // read. Synchronize anyway before unmapping: munmap is destructive, and a
+            // page freed under an in-flight copy would fault or tear the weights, so
+            // this makes the copy-before-unmap invariant hold even if a backend's
+            // set_tensor ever became deferred. It is a cheap near-no-op on the
+            // shared-buffer Metal and CPU backends we ship (the queue is already
+            // drained), and only runs when there is a mapping to release.
+            ggml_backend_synchronize(backend);
+            unmapped += wctx_unmap_file_pages(pc.src, pc.nbytes, wctx->file_base, wctx->file_len);
+        }
 #endif
     }
 #ifdef __APPLE__
