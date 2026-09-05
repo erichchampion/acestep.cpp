@@ -8,7 +8,10 @@
 // the best device.
 //
 // This header is deliberately free of any ggml dependency so an embedder can
-// include just it to configure the engine; backend.h reads the config.
+// include just it to configure the engine; backend.h reads the config. Like the
+// rest of the engine's API it is C++ (not extern "C"): a Swift/Obj-C app calls it
+// from its C++ or Objective-C++ bridge (the same shim it already needs for
+// ace_synth_* etc.), not from Swift directly.
 #include <string>
 
 struct AceBackendConfig {

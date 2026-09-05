@@ -39,9 +39,13 @@ static int backend_cpu_n_threads(void) {
         return configured;
     }
 #ifdef __APPLE__
-    // Apple silicon has no SMT and asymmetric cores, so logical/2 is wrong: an
-    // M3 Max (12P + 4E) would get 8 instead of 12, an iPhone 15 Pro (2P + 4E) 3
-    // instead of 6. hw.perflevel0 is the performance-core cluster.
+    // Apple silicon has no SMT and asymmetric cores, so logical/2 is the wrong
+    // count -- it halves as if for hyperthreads. hw.perflevel0.logicalcpu is the
+    // performance-core cluster, the cores GEMM should run on: the E-cores are
+    // much slower and just drag a shared graph. That is 12 on an M3 Max (12P+4E,
+    // where logical/2 gave 8) and 2 on an iPhone 15 Pro (2P+4E, where logical/2
+    // gave 3) -- fewer than before on a 2P device, but the fast cores only, which
+    // is the "one thread per (useful) physical core" this function is after.
     int    perf = 0;
     size_t sz   = sizeof(perf);
     if (sysctlbyname("hw.perflevel0.logicalcpu", &perf, &sz, nullptr, 0) == 0 && perf > 0) {
@@ -109,8 +113,8 @@ static BackendPair backend_init(const char * label) {
                 avail += ' ';
                 avail += ggml_backend_dev_name(ggml_backend_dev_get(i));
             }
-            ace_fatal(1, "[Load] FATAL: requested backend '%s' not found. Available:%s\n", force_backend,
-                      avail.c_str());
+            ace_fatal(1, "[Load] FATAL: backend '%s' (ace_backend_configure or GGML_BACKEND) not found. Available:%s\n",
+                      force_backend, avail.c_str());
         }
     } else {
         bp.backend = ggml_backend_init_best();
