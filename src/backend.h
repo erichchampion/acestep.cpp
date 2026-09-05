@@ -125,6 +125,9 @@ static BackendPair backend_init(const char * label) {
     // Device selection: an explicit ace_backend_configure() wins, then the
     // GGML_BACKEND env var (the CLI fallback), then auto-best below.
     // Device names: CUDA0, Vulkan0, CPU, BLAS (see ggml_backend_dev_name).
+    // An *empty* value from either source (config device "" or GGML_BACKEND="")
+    // reads as unset and falls through to auto-best -- the `force_backend[0]`
+    // guard -- by design; only a non-empty, unknown name is a hard error.
     const std::string & cfg_device    = ace_backend_config().device;
     const bool          from_config   = !cfg_device.empty();
     const char *        force_backend = from_config ? cfg_device.c_str() : std::getenv("GGML_BACKEND");
