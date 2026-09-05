@@ -13,6 +13,7 @@
 //   wctx_alloc(&wctx, backend);
 //   gf_close(&gf);   // safe after wctx_alloc copied data to GPU
 
+#include "ace-fatal.h"
 #include "gguf.h"
 #include "weight-ctx.h"
 
@@ -163,15 +164,13 @@ static struct ggml_tensor * gf_load_tensor(WeightCtx *         wctx,
                                            int                 n_dims_override = 0) {
     int64_t idx = gguf_find_tensor(gf.gguf, name.c_str());
     if (idx < 0) {
-        fprintf(stderr, "[GGUF] FATAL: tensor '%s' not found\n", name.c_str());
-        exit(1);
+        ace_fatal(1, "[GGUF] FATAL: tensor '%s' not found\n", name.c_str());
     }
 
     // Get metadata from the context populated by gguf_init_from_file
     struct ggml_tensor * src = ggml_get_tensor(gf.meta, name.c_str());
     if (!src) {
-        fprintf(stderr, "[GGUF] FATAL: tensor '%s' not in meta context\n", name.c_str());
-        exit(1);
+        ace_fatal(1, "[GGUF] FATAL: tensor '%s' not in meta context\n", name.c_str());
     }
 
     int     n_dims;
@@ -214,8 +213,7 @@ static struct ggml_tensor * gf_try_load_tensor(WeightCtx * wctx, const GGUFModel
 static struct ggml_tensor * gf_load_tensor_f32(WeightCtx * wctx, const GGUFModel & gf, const std::string & name) {
     int64_t idx = gguf_find_tensor(gf.gguf, name.c_str());
     if (idx < 0) {
-        fprintf(stderr, "[GGUF] FATAL: tensor '%s' not found\n", name.c_str());
-        exit(1);
+        ace_fatal(1, "[GGUF] FATAL: tensor '%s' not found\n", name.c_str());
     }
     struct ggml_tensor * src    = ggml_get_tensor(gf.meta, name.c_str());
     int                  n_dims = ggml_n_dims(src);
@@ -287,9 +285,8 @@ static struct ggml_tensor * gf_load_qkv_fused(WeightCtx *         wctx,
     struct ggml_tensor * k_src = ggml_get_tensor(gf.meta, k_name.c_str());
     struct ggml_tensor * v_src = ggml_get_tensor(gf.meta, v_name.c_str());
     if (!q_src || !k_src || !v_src) {
-        fprintf(stderr, "[GGUF] FATAL: QKV tensor not found: %s / %s / %s\n", q_name.c_str(), k_name.c_str(),
-                v_name.c_str());
-        exit(1);
+        ace_fatal(1, "[GGUF] FATAL: QKV tensor not found: %s / %s / %s\n", q_name.c_str(), k_name.c_str(),
+                  v_name.c_str());
     }
     // All must share ne[0] (input dim) and type - otherwise can't fuse
     GGML_ASSERT(q_src->ne[0] == k_src->ne[0] && k_src->ne[0] == v_src->ne[0]);

@@ -12,6 +12,7 @@
 //   Pack: cat(lyric, timbre[0:1], text_proj) -> [2048, S_total]
 
 #pragma once
+#include "ace-fatal.h"
 #include "qwen3-enc.h"
 
 // Lyric/Timbre encoder configs
@@ -288,8 +289,7 @@ static void cond_ggml_forward(CondGGML *           m,
 
     // Allocate and set inputs
     if (!ggml_backend_sched_alloc_graph(m->sched, gf)) {
-        fprintf(stderr, "[CondEncoder] FATAL: failed to allocate graph\n");
-        exit(1);
+        ace_fatal(1, "[CondEncoder] FATAL: failed to allocate graph\n");
     }
 
     ggml_backend_tensor_set(t_lyric_in, lyric_embed, 0, 1024 * S_lyric * sizeof(float));

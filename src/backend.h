@@ -5,11 +5,13 @@
 // keep CPU as fallback. This avoids duplicating init logic across
 // qwen3.h, qwen3-lm.h, cond.h, dit.h, vae.h.
 
+#include "ace-fatal.h"
 #include "ggml-backend.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <thread>
 
 struct BackendPair {
@@ -79,19 +81,19 @@ static BackendPair backend_init(const char * label) {
     if (force_backend) {
         bp.backend = ggml_backend_init_by_name(force_backend, nullptr);
         if (!bp.backend) {
-            fprintf(stderr, "[Load] FATAL: GGML_BACKEND=%s not found. Available:", force_backend);
+            std::string avail;
             for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
-                fprintf(stderr, " %s", ggml_backend_dev_name(ggml_backend_dev_get(i)));
+                avail += ' ';
+                avail += ggml_backend_dev_name(ggml_backend_dev_get(i));
             }
-            fprintf(stderr, "\n");
-            exit(1);
+            ace_fatal(1, "[Load] FATAL: GGML_BACKEND=%s not found. Available:%s\n", force_backend,
+                      avail.c_str());
         }
     } else {
         bp.backend = ggml_backend_init_best();
     }
     if (!bp.backend) {
-        fprintf(stderr, "[Load] FATAL: no backend available\n");
-        exit(1);
+        ace_fatal(1, "[Load] FATAL: no backend available\n");
     }
     bool best_is_cpu = (strcmp(ggml_backend_name(bp.backend), "CPU") == 0);
     int  n_threads   = backend_cpu_n_threads();
@@ -103,8 +105,7 @@ static BackendPair backend_init(const char * label) {
         bp.cpu_backend = cpu_backend_new(n_threads);
     }
     if (!bp.cpu_backend) {
-        fprintf(stderr, "[Load] FATAL: failed to init CPU backend\n");
-        exit(1);
+        ace_fatal(1, "[Load] FATAL: failed to init CPU backend\n");
     }
     bp.has_gpu = !best_is_cpu;
     fprintf(stderr, "[Load] %s backend: %s (CPU threads: %d)\n", label, ggml_backend_name(bp.backend), n_threads);
@@ -150,8 +151,7 @@ static ggml_backend_sched_t backend_sched_new(BackendPair bp, int max_nodes) {
 
     ggml_backend_sched_t sched = ggml_backend_sched_new(backends, bufts, n, max_nodes, false, true);
     if (!sched) {
-        fprintf(stderr, "[Load] FATAL: failed to create scheduler\n");
-        exit(1);
+        ace_fatal(1, "[Load] FATAL: failed to create scheduler\n");
     }
     return sched;
 }

@@ -273,6 +273,25 @@ static size_t bytes_of_fsq_detok(const DetokGGML * m) {
     return m && m->wctx.buffer ? ggml_backend_buffer_get_size(m->wctx.buffer) : 0;
 }
 
+// Owns a raw-new'd module until install_entry adopts it. Every store_require_*
+// below does `T * m = new T(); load(m); install_entry(...)`, and each load calls
+// backend_init / gf_load_tensor -- which exit(1) by default but throw under
+// ACESTEP_FATAL_THROWS (see ace-fatal.h). #17 called out only the two void
+// loaders, but a throw escaping any of these functions skips its `delete m` just
+// the same, so m (and the backend + scheduler already assigned into it) would
+// leak past the frame with the store's mutex released mid-load. LoadGuard frees
+// m on both the load-returned-false path and the throw-unwind path; dismiss()
+// once the store owns it. Default builds never throw, so this only changes
+// behaviour under the flag -- the delete matches the existing false-path delete.
+template <typename T> struct LoadGuard {
+    T * p;
+    explicit LoadGuard(T * ptr) : p(ptr) {}
+    ~LoadGuard() { delete p; }
+    void dismiss() { p = nullptr; }
+    LoadGuard(const LoadGuard &)             = delete;
+    LoadGuard & operator=(const LoadGuard &) = delete;
+};
+
 Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & k) {
     std::lock_guard<std::mutex> lock(s->mtx);
     if (auto * hit = cache_hit<Qwen3LM>(s, k)) {
@@ -282,12 +301,17 @@ Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & k) {
         evict_all_except(s, k);
     }
     Timer     t;
-    Qwen3LM * m = new Qwen3LM();
-    if (!qw3lm_load(m, k.path.c_str(), k.max_seq, k.n_kv_sets)) {
-        delete m;
+    Qwen3LM *          m = new Qwen3LM();
+    LoadGuard<Qwen3LM> guard(m);
+    try {
+        if (!qw3lm_load(m, k.path.c_str(), k.max_seq, k.n_kv_sets)) {
+            return nullptr;
+        }
+    } catch (...) {
         return nullptr;
     }
     install_entry(s, k, m, bytes_of_lm(m), "LM", del_lm);
+    guard.dismiss();
     fprintf(stderr, "[Store] Load LM: %.0f ms\n", t.ms());
     return m;
 }
@@ -301,12 +325,17 @@ Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & k) {
         evict_all_except(s, k);
     }
     Timer       t;
-    Qwen3GGML * m = new Qwen3GGML();
-    if (!qwen3_load_text_encoder(m, k.path.c_str())) {
-        delete m;
+    Qwen3GGML *          m = new Qwen3GGML();
+    LoadGuard<Qwen3GGML> guard(m);
+    try {
+        if (!qwen3_load_text_encoder(m, k.path.c_str())) {
+            return nullptr;
+        }
+    } catch (...) {
         return nullptr;
     }
     install_entry(s, k, m, bytes_of_text_enc(m), "TextEnc", del_text_enc);
+    guard.dismiss();
     fprintf(stderr, "[Store] Load TextEnc: %.0f ms\n", t.ms());
     return m;
 }
@@ -320,12 +349,17 @@ CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & k) {
         evict_all_except(s, k);
     }
     Timer      t;
-    CondGGML * m = new CondGGML();
-    if (!cond_ggml_load(m, k.path.c_str())) {
-        delete m;
+    CondGGML *          m = new CondGGML();
+    LoadGuard<CondGGML> guard(m);
+    try {
+        if (!cond_ggml_load(m, k.path.c_str())) {
+            return nullptr;
+        }
+    } catch (...) {
         return nullptr;
     }
     install_entry(s, k, m, bytes_of_cond_enc(m), "CondEnc", del_cond_enc);
+    guard.dismiss();
     fprintf(stderr, "[Store] Load CondEnc: %.0f ms\n", t.ms());
     return m;
 }
@@ -339,13 +373,18 @@ DiTGGML * store_require_dit(ModelStore * s, const ModelKey & k) {
         evict_all_except(s, k);
     }
     Timer        t;
-    DiTGGML *    m       = new DiTGGML();
-    const char * adapter = k.adapter_path.empty() ? nullptr : k.adapter_path.c_str();
-    if (!dit_ggml_load(m, k.path.c_str(), adapter, k.adapter_scale)) {
-        delete m;
+    DiTGGML *          m       = new DiTGGML();
+    LoadGuard<DiTGGML> guard(m);
+    const char *       adapter = k.adapter_path.empty() ? nullptr : k.adapter_path.c_str();
+    try {
+        if (!dit_ggml_load(m, k.path.c_str(), adapter, k.adapter_scale)) {
+            return nullptr;
+        }
+    } catch (...) {
         return nullptr;
     }
     install_entry(s, k, m, bytes_of_dit(m), "DiT", del_dit);
+    guard.dismiss();
     fprintf(stderr, "[Store] Load DiT: %.0f ms\n", t.ms());
     return m;
 }
@@ -359,9 +398,15 @@ VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & k) {
         evict_all_except(s, k);
     }
     Timer        t;
-    VAEEncoder * m = new VAEEncoder();
-    vae_enc_load(m, k.path.c_str());  // exit(1) on failure, returns void
+    VAEEncoder *          m = new VAEEncoder();
+    LoadGuard<VAEEncoder> guard(m);
+    try {
+        vae_enc_load(m, k.path.c_str());  // void: exit(1) by default, throws under the flag
+    } catch (...) {
+        return nullptr;
+    }
     install_entry(s, k, m, bytes_of_vae_enc(m), "VAE-Enc", del_vae_enc);
+    guard.dismiss();
     fprintf(stderr, "[Store] Load VAE-Enc: %.0f ms\n", t.ms());
     return m;
 }
@@ -375,9 +420,15 @@ VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & k) {
         evict_all_except(s, k);
     }
     Timer     t;
-    VAEGGML * m = new VAEGGML();
-    vae_ggml_load(m, k.path.c_str());  // exit(1) on failure, returns void
+    VAEGGML *          m = new VAEGGML();
+    LoadGuard<VAEGGML> guard(m);
+    try {
+        vae_ggml_load(m, k.path.c_str());  // void: exit(1) by default, throws under the flag
+    } catch (...) {
+        return nullptr;
+    }
     install_entry(s, k, m, bytes_of_vae_dec(m), "VAE-Dec", del_vae_dec);
+    guard.dismiss();
     fprintf(stderr, "[Store] Load VAE-Dec: %.0f ms\n", t.ms());
     return m;
 }
@@ -391,12 +442,17 @@ TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & k) {
         evict_all_except(s, k);
     }
     Timer     t;
-    TokGGML * m = new TokGGML();
-    if (!tok_ggml_load(m, k.path.c_str())) {
-        delete m;
+    TokGGML *          m = new TokGGML();
+    LoadGuard<TokGGML> guard(m);
+    try {
+        if (!tok_ggml_load(m, k.path.c_str())) {
+            return nullptr;
+        }
+    } catch (...) {
         return nullptr;
     }
     install_entry(s, k, m, bytes_of_fsq_tok(m), "FSQ-Tok", del_fsq_tok);
+    guard.dismiss();
     fprintf(stderr, "[Store] Load FSQ-Tok: %.0f ms\n", t.ms());
     return m;
 }
@@ -410,12 +466,17 @@ DetokGGML * store_require_fsq_detok(ModelStore * s, const ModelKey & k) {
         evict_all_except(s, k);
     }
     Timer       t;
-    DetokGGML * m = new DetokGGML();
-    if (!detok_ggml_load(m, k.path.c_str())) {
-        delete m;
+    DetokGGML *          m = new DetokGGML();
+    LoadGuard<DetokGGML> guard(m);
+    try {
+        if (!detok_ggml_load(m, k.path.c_str())) {
+            return nullptr;
+        }
+    } catch (...) {
         return nullptr;
     }
     install_entry(s, k, m, bytes_of_fsq_detok(m), "FSQ-Detok", del_fsq_detok);
+    guard.dismiss();
     fprintf(stderr, "[Store] Load FSQ-Detok: %.0f ms\n", t.ms());
     return m;
 }
