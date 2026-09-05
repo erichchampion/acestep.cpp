@@ -179,14 +179,17 @@ static bool gf_load(GGUFModel * gf, const char * path) {
     return true;
 }
 
-// Record the file mapping a loader is copying from, so wctx_alloc can release each
-// raw tensor's staged mmap pages after the copy (Apple only; see wctx_release_file_pages).
+// Record the file mapping a loader is copying from, so wctx_alloc can unmap each raw
+// tensor's staged mmap pages after the copy (Apple only; see wctx_unmap_file_pages).
 // Every loader that pushes a src pointing straight into gf.mapping calls this; loaders
-// that stage type-converted data on the heap need not, and pushing a src from a second
-// GGUF into the same wctx would just leave that file's pages for gf_close to munmap.
+// that stage type-converted data on the heap need not. It is called once per tensor
+// but records the same range each time, so it only assigns when the range actually
+// changes -- and for a single-GGUF load (every current caller) that is exactly once.
 static inline void gf_note_mapping(WeightCtx * wctx, const GGUFModel & gf) {
-    wctx->file_base = gf.mapping;
-    wctx->file_len  = gf.file_size;
+    if (wctx->file_base != gf.mapping || wctx->file_len != gf.file_size) {
+        wctx->file_base = gf.mapping;
+        wctx->file_len  = gf.file_size;
+    }
 }
 
 // Load a tensor from GGUF into the weight context.

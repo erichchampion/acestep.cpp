@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -43,10 +44,15 @@ struct WeightCtx {
     std::vector<std::unique_ptr<float[]>> staging;
 
     // The source GGUF file mapping, if the loader recorded one (gf_note_mapping in
-    // gguf-weights.h). wctx_alloc uses it to release each raw tensor's staged mmap
-    // pages right after copying that tensor into the backend buffer -- keyed on this
-    // range so only pages actually inside the file mapping are touched (heap staging
-    // buffers and stack scalars, whose srcs fall outside it, are left alone).
+    // gguf-weights.h). wctx_alloc uses it to unmap each raw tensor's staged mmap pages
+    // right after copying that tensor into the backend buffer -- keyed on this range
+    // so only pages actually inside the file mapping are touched (heap staging buffers
+    // and stack scalars, whose srcs fall outside it, are left alone). One range is
+    // enough: every wctx_alloc caller stages from a single GGUF, and an adapter's
+    // separate mapping is read and closed inside adapter_merge before wctx_alloc, so
+    // it never reaches here. If a second distinct mapping were ever noted, the last
+    // wins and the other file's pages simply stay mapped until its gf_close -- a
+    // missed release, never an unsafe unmap (the range check still gates every call).
     const void * file_base = nullptr;
     size_t       file_len  = 0;
 };
@@ -67,24 +73,37 @@ static void wctx_init(WeightCtx * wctx, int n_tensors) {
 }
 
 #ifdef __APPLE__
-// Release the staged mmap pages a just-copied tensor occupied. The GGUF mmap is
-// staging, not residency (gguf-weights.h copies each tensor into the backend buffer,
-// then gf_close munmaps), so once ggml_backend_tensor_set has consumed a tensor its
-// file pages are dead weight until the munmap at the end of the load. Dropping them
-// per tensor keeps peak clean-page residency down across a large load instead of
-// holding the whole file mapped until then.
+// Release the staged GGUF mmap pages a just-copied tensor occupied, by unmapping the
+// whole pages fully inside its byte range. The mmap is staging, not residency
+// (gguf-weights.h copies each tensor into the backend buffer, then gf_close munmaps
+// the rest), so once ggml_backend_tensor_set has consumed a tensor its file pages are
+// dead weight. posix_madvise(POSIX_MADV_DONTNEED) -- and MADV_DONTNEED/MADV_FREE --
+// are no-ops on macOS (measured with mincore: they free nothing), so a partial munmap
+// is the only thing that actually drops the pages and lowers peak clean-page residency
+// across a large load. gf_close later munmaps the whole original range, which tolerates
+// these interior holes.
 //
 // Only whole pages fully inside BOTH [src, src+nbytes) and the file mapping are
-// dropped: the start rounds up and the end rounds down, so a page shared with an
-// adjacent tensor survives, and a src not contained in the mapping (a heap staging
-// buffer, a stack scalar) is skipped outright. So this can only ever discard clean
-// file-backed pages, which refault from the file on the (unexpected) next read --
-// never dirty or anonymous memory, so it cannot corrupt or zero live data.
-static size_t wctx_release_file_pages(const void * src, size_t nbytes, const void * file_base, size_t file_len) {
+// unmapped: start rounds up and end rounds down, so a page shared with an adjacent
+// (possibly not-yet-copied) tensor survives, and a src not contained in the mapping --
+// a heap staging buffer (adapter merge, the f32 and pre-permute loaders) or a stack
+// scalar -- is skipped outright. So this only ever unmaps interior pages holding this
+// one tensor's bytes, and only after its copy has read them. Unlike madvise, munmap is
+// NOT safe on an unexpected re-read (it would fault, not refault), which is exactly why
+// the containment and interior-only rules are strict -- and they hold because nothing
+// reads a tensor's src again once wctx_alloc has copied it.
+static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void * file_base, size_t file_len) {
     if (!file_base || file_len == 0 || nbytes == 0) {
         return 0;
     }
-    const long ps = sysconf(_SC_PAGESIZE);
+    // Escape hatch for a destructive op in the load path: ACE_NO_PAGE_UNMAP=1 keeps the
+    // whole mapping resident until gf_close (the pre-2.7 behaviour), for A/B footprint
+    // measurement or to rule this out if a device ever misbehaves. Queried once.
+    static const bool disabled = std::getenv("ACE_NO_PAGE_UNMAP") != nullptr;
+    if (disabled) {
+        return 0;
+    }
+    static const long ps = sysconf(_SC_PAGESIZE);  // process-invariant; query once, not per tensor
     if (ps <= 0) {
         return 0;
     }
@@ -101,7 +120,7 @@ static size_t wctx_release_file_pages(const void * src, size_t nbytes, const voi
     if (end <= start) {
         return 0;                                          // tensor spans less than one whole interior page
     }
-    if (posix_madvise((void *) start, (size_t) (end - start), POSIX_MADV_DONTNEED) != 0) {
+    if (munmap((void *) start, (size_t) (end - start)) != 0) {
         return 0;
     }
     return (size_t) (end - start);
@@ -119,21 +138,21 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
     ggml_backend_buffer_set_usage(wctx->buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
     size_t total = 0;
 #ifdef __APPLE__
-    size_t released = 0;
+    size_t unmapped = 0;
 #endif
     for (auto & pc : wctx->pending) {
         // ggml_backend_tensor_set (the synchronous copy, not the _async variant) has
-        // fully read pc.src by the time it returns, so releasing the source pages
+        // fully read pc.src by the time it returns, so unmapping the source pages
         // right after is safe -- the data now lives in the backend buffer.
         ggml_backend_tensor_set(pc.tensor, pc.src, pc.offset, pc.nbytes);
         total += pc.nbytes;
 #ifdef __APPLE__
-        released += wctx_release_file_pages(pc.src, pc.nbytes, wctx->file_base, wctx->file_len);
+        unmapped += wctx_unmap_file_pages(pc.src, pc.nbytes, wctx->file_base, wctx->file_len);
 #endif
     }
 #ifdef __APPLE__
-    fprintf(stderr, "[WeightCtx] Loaded %zu tensors, %.1f MB into backend (released %.1f MB of staged file pages)\n",
-            wctx->pending.size(), (float) total / (1024 * 1024), (float) released / (1024 * 1024));
+    fprintf(stderr, "[WeightCtx] Loaded %zu tensors, %.1f MB into backend (unmapped %.1f MB of staged file pages)\n",
+            wctx->pending.size(), (float) total / (1024 * 1024), (float) unmapped / (1024 * 1024));
 #else
     fprintf(stderr, "[WeightCtx] Loaded %zu tensors, %.1f MB into backend\n", wctx->pending.size(),
             (float) total / (1024 * 1024));
