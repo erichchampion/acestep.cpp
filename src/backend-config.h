@@ -19,10 +19,14 @@ struct AceBackendConfig {
     int         n_threads = 0;  // CPU worker threads; <= 0 = auto
 };
 
-// The one config instance, shared across every translation unit: a function-local
-// static inside an inline (external-linkage) function has exactly one instance
-// program-wide, so the app's ace_backend_configure() and the engine's backend
-// init read the same object even though they compile in different TUs.
+// The one config instance, shared across translation units that link into the
+// same image: a function-local static inside an inline (external-linkage) function
+// has one instance per linked image, so the app's ace_backend_configure() and the
+// engine's backend init read the same object even in different TUs. acestep-core
+// links statically (build-ios-libs.sh, the CMake STATIC lib), so that image is the
+// whole app -- one instance. If the engine were ever built as a separate
+// dylib/framework, this static could duplicate across the boundary; move it to a
+// .cpp (one external definition) then.
 inline AceBackendConfig & ace_backend_config() {
     static AceBackendConfig cfg;
     return cfg;

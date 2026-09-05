@@ -42,13 +42,14 @@ static int backend_cpu_n_threads(void) {
     // Apple silicon has no SMT and asymmetric cores, so logical/2 is the wrong
     // count -- it halves as if for hyperthreads. hw.perflevel0 is the
     // performance-core cluster, the cores GEMM should run on: the E-cores are
-    // much slower and just drag a shared graph. physicalcpu, not logicalcpu:
-    // they are equal on Apple silicon (no SMT), but an Intel Mac -- also __APPLE__
-    // -- does have SMT, and physicalcpu correctly halves there while logicalcpu
-    // would re-introduce the oversubscription. That is 12 P-cores on an M3 Max
+    // much slower and just drag a shared graph. That is 12 P-cores on an M3 Max
     // (12P+4E, where logical/2 gave 8) and 2 on an iPhone 15 Pro (2P+4E, where
     // logical/2 gave 3) -- fewer than before on a 2P device, but the fast cores
     // only, which is the one-thread-per-useful-physical-core this function wants.
+    // (physicalcpu == logicalcpu here anyway, no SMT; physicalcpu just reads as
+    // the honest intent.) The perflevel sysctls exist only on Apple silicon: on an
+    // Intel Mac this query fails and control falls through to the logical/2 below,
+    // which is the right answer there because Intel does have SMT.
     int    perf = 0;
     size_t sz   = sizeof(perf);
     if (sysctlbyname("hw.perflevel0.physicalcpu", &perf, &sz, nullptr, 0) == 0 && perf > 0) {
