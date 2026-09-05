@@ -653,8 +653,10 @@ static std::string audio_encode_mp3(const float * audio, int T_audio, int sr, in
 
     std::vector<std::string> results(n_threads);
 
-    // worker: encode one chunk with a private encoder instance.
-    // feeds 1-second sub-chunks for cancel responsiveness.
+    // worker: encode one chunk with a private encoder instance, in 1-second
+    // sub-chunks to bound the per-iteration scratch buffer. (Cancel is polled
+    // once after the join, not per sub-chunk -- progress.fn is not called from
+    // these worker threads.)
     auto worker = [&](int tid) {
         int chunk_start = ranges[tid].start;
         int chunk_end   = ranges[tid].end;

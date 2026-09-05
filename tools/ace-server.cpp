@@ -1256,8 +1256,9 @@ static void decode_worker(std::shared_ptr<Job> job,
                                         g_synth_params.vae_chunk, g_synth_params.vae_overlap,
                                         AceProgress{ server_progress, (void *) &job->cancel });
     if (T_audio < 0) {
-        fprintf(stderr, "[Server] decode: vae_ggml_decode_tiled failed\n");
-        job->status.store(JobStatus::FAILED);
+        bool cancelled = job->cancel.load();
+        fprintf(stderr, "[Server] decode: %s\n", cancelled ? "cancelled" : "vae_ggml_decode_tiled failed");
+        job->status.store(cancelled ? JobStatus::CANCELLED : JobStatus::FAILED);
         return;
     }
     fprintf(stderr, "[Server] decode: %d latent frames -> %d audio samples (%.2fs), %.0fms\n", src_T_latent, T_audio,
@@ -1347,8 +1348,9 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
         vae_enc_encode_tiled(vae, src_interleaved, src_len, latent.data(), T_latent_max, g_synth_params.vae_chunk,
                              g_synth_params.vae_overlap, AceProgress{ server_progress, (void *) &job->cancel });
     if (T_latent < 0) {
-        fprintf(stderr, "[Server] encode: vae_enc_encode_tiled failed\n");
-        job->status.store(JobStatus::FAILED);
+        bool cancelled = job->cancel.load();
+        fprintf(stderr, "[Server] encode: %s\n", cancelled ? "cancelled" : "vae_enc_encode_tiled failed");
+        job->status.store(cancelled ? JobStatus::CANCELLED : JobStatus::FAILED);
         return;
     }
     fprintf(stderr, "[Server] encode: %d audio samples (%.2fs) -> %d latent frames, %.0fms\n", src_len,
