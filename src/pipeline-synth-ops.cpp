@@ -156,7 +156,14 @@ int ops_encode_src(const AceSynth * ctx,
         s.T_cover = vae_enc_encode_tiled(vae_enc, src_audio, T_audio, s.cover_latents.data(), max_T_lat,
                                          ctx->params.vae_chunk, ctx->params.vae_overlap, progress);
         if (s.T_cover < 0) {
-            fprintf(stderr, "[Encode-Src] FATAL: encode failed\n");
+            // -1 is both cancel and failure; both abort here (unlike the timbre
+            // path, which tolerates a failure by falling back to silence), so
+            // this only sharpens the diagnostic.
+            if (ace_cancelled(progress, ACE_STAGE_VAE_ENCODE)) {
+                fprintf(stderr, "[Encode-Src] Cancelled\n");
+            } else {
+                fprintf(stderr, "[Encode-Src] FATAL: encode failed\n");
+            }
             return -1;
         }
         s.cover_latents.resize(s.T_cover * 64);

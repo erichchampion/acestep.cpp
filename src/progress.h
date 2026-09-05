@@ -31,11 +31,16 @@ enum AceStage {
 // returning true (the server reads a std::atomic<bool> flag, which is). The
 // disambiguation re-polls rely on that.
 //
-// Thread-safety: fn is called sequentially for LM, DiT and VAE, but MP3 encode is
-// fork-join, so fn may be called concurrently from worker threads there. A cancel
-// implementation that only reads a flag (the common case) is naturally safe; one
-// that also records progress must tolerate concurrent calls, or ignore
-// ACE_STAGE_MP3 (which only ever cancel-polls, never reports).
+// A stage may run more than once in a single request: VAE encode runs for the
+// source and then the timbre reference in Cover-family tasks, each pass emitting
+// its own step-0 sizing report followed by 0..N. A consumer should treat a step-0
+// report as the start of a (possibly repeated) pass for that stage, not assume a
+// stage appears exactly once.
+//
+// Thread-safety: fn is always called from a single thread. The pipelines poll it
+// sequentially, and MP3 encode -- though fork-join -- polls cancel only from its
+// single-threaded post-join point, never from a worker. So fn need not be
+// thread-safe.
 struct AceProgress {
     bool (*fn)(void * data, AceStage stage, int step, int total) = nullptr;
     void * data                                                  = nullptr;

@@ -701,13 +701,14 @@ static std::string audio_encode_mp3(const float * audio, int T_audio, int sr, in
             e->out_written = 0;
         }
 
-        // encode real chunk
+        // encode real chunk. No cancel poll here: this runs in fork-join worker
+        // threads and progress.fn is not required to be thread-safe (it may be
+        // recording progress), so it is only ever called from the single-threaded
+        // post-join check below. MP3 encode of already-generated audio is fast, so
+        // the responsiveness cost of not bailing mid-chunk is negligible.
         int chunk_len = chunk_end - chunk_start;
         int sub       = enc_sr;  // ~1 second
         for (int p = 0; p < chunk_len; p += sub) {
-            if (ace_cancelled(progress, ACE_STAGE_MP3)) {
-                break;
-            }
             int len = (p + sub <= chunk_len) ? sub : (chunk_len - p);
 
             float * buf = (float *) malloc((size_t) len * 2 * sizeof(float));

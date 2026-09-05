@@ -492,7 +492,10 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
     float upsample_factor = 0.0f;
     int   audio_write_pos = 0;
 
-    (void) ace_progress(progress, ACE_STAGE_VAE_DECODE, 0, num_steps);  // size the bar before tile 0
+    if (ace_progress(progress, ACE_STAGE_VAE_DECODE, 0, num_steps)) {  // size the bar; honour a cancel before tile 0
+        fprintf(stderr, "[VAE] Cancelled at tile 0/%d\n", num_steps);
+        return -1;
+    }
     for (int i = 0; i < num_steps; i++) {
         if (ace_progress(progress, ACE_STAGE_VAE_DECODE, i, num_steps)) {
             fprintf(stderr, "[VAE] Cancelled at tile %d/%d\n", i, num_steps);

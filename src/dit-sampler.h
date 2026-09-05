@@ -405,7 +405,11 @@ static int dit_ggml_generate(DiTGGML *           model,
 
     // Flow matching loop
     bool switched_cover = false;
-    (void) ace_progress(progress, ACE_STAGE_DIT, 0, num_steps);  // size the bar before step 0
+    if (ace_progress(progress, ACE_STAGE_DIT, 0, num_steps)) {  // size the bar; honour a cancel before step 0
+        fprintf(stderr, "[DiT] Cancelled at step 0/%d\n", num_steps);
+        ggml_free(ctx);
+        return -1;
+    }
     for (int step = 0; step < num_steps; step++) {
         if (ace_progress(progress, ACE_STAGE_DIT, step, num_steps)) {
             fprintf(stderr, "[DiT] Cancelled at step %d/%d\n", step, num_steps);

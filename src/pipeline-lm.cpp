@@ -160,7 +160,10 @@ static std::vector<std::string> generate_phase1_batch(Qwen3LM *                m
         }
     }
 
-    (void) ace_progress(progress, ACE_STAGE_LM, 0, max_new_tokens);  // size the bar before step 0
+    if (ace_progress(progress, ACE_STAGE_LM, 0, max_new_tokens)) {  // size the bar; honour a cancel before step 0
+        fprintf(stderr, "[LM-Phase1] Cancelled at step 0\n");
+        return {};
+    }
     for (int step = 0; step < max_new_tokens && n_active > 0; step++) {
         if (ace_progress(progress, ACE_STAGE_LM, step, max_new_tokens)) {
             fprintf(stderr, "[LM-Phase1] Cancelled at step %d\n", step);
@@ -423,7 +426,10 @@ static std::vector<std::string> run_phase2_batch(Qwen3LM *                      
         }
     }
 
-    (void) ace_progress(progress, ACE_STAGE_LM, 0, max_tokens);  // size the bar before step 0
+    if (ace_progress(progress, ACE_STAGE_LM, 0, max_tokens)) {  // size the bar; honour a cancel before step 0
+        fprintf(stderr, "[LM-Phase2] Cancelled at step 0\n");
+        return {};
+    }
     for (int step = 0; step < max_tokens && n_active > 0; step++) {
         if (ace_progress(progress, ACE_STAGE_LM, step, max_tokens)) {
             fprintf(stderr, "[LM-Phase2] Cancelled at step %d\n", step);

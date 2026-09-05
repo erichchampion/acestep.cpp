@@ -60,8 +60,9 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 //   pass is skipped. Mutually exclusive per side: when both audio and latents
 //   are provided for the same side, latents win and audio is ignored.
 // batch_n: number of requests (1..9).
-// progress: abort + progress callback, polled between DiT steps (ACE_STAGE_DIT).
-// Default {} = never cancel, no progress.
+// progress: abort + progress callback. Reports ACE_STAGE_DIT between DiT steps,
+// and ACE_STAGE_VAE_ENCODE while encoding the source and/or timbre reference in
+// Cover-family tasks. Default {} = never cancel, no progress.
 // Returns NULL on error or cancellation.
 AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
                                     const AceRequest * reqs,

@@ -42,7 +42,9 @@ static bool record_fn(void * data, AceStage stage, int step, int total) {
 // Mirrors what every pipeline loop does: one sizing report, then poll at the top
 // of each iteration. Returns the step it cancelled at, or total if it ran fully.
 static int run_stage(const AceProgress & p, AceStage stage, int total) {
-    (void) ace_progress(p, stage, 0, total);  // size the bar
+    if (ace_progress(p, stage, 0, total)) {  // size the bar, and honour a cancel before step 0
+        return 0;
+    }
     for (int step = 0; step < total; step++) {
         if (ace_progress(p, stage, step, total)) {
             return step;  // cancelled

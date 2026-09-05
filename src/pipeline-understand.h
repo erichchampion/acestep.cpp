@@ -50,9 +50,9 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
 //   the capture. On the audio-in path, the buffer is filled (assigned)
 //   with [T_latent * 64] f32 and *T_latent_out is set; on any error path
 //   before tokenize, the buffer is left empty.
-// progress: abort + progress callback, polled between tokens (ACE_STAGE_LM).
-// Default {} = never cancel, no progress.
-// Returns 0 on success, -1 on error or cancellation.
+// progress: abort + progress callback. Reports ACE_STAGE_LM between tokens, and
+// ACE_STAGE_VAE_ENCODE while encoding input reference audio. Default {} = never
+// cancel, no progress. Returns 0 on success, -1 on error or cancellation.
 int ace_understand_generate(AceUnderstand *      ctx,
                             const float *        src_audio,
                             int                  src_len,
