@@ -342,6 +342,7 @@ static bool qwen3_load_text_encoder(Qwen3GGML * m, const char * gguf_path) {
         fprintf(stderr, "[Load] FATAL: cannot load %s\n", gguf_path);
         return false;
     }
+    GgufCloser gfc(&gf);
 
     // embed(1) + 28 layers * 11 weights + final_norm(1) = 310
     int n_tensors = 1 + m->cfg.n_layers * 11 + 1;

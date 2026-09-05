@@ -266,6 +266,7 @@ static bool dit_ggml_load(DiTGGML *    m,
         fprintf(stderr, "[Load] FATAL: cannot load %s\n", gguf_path);
         return false;
     }
+    GgufCloser gfc(&gf);
 
     // config from GGUF metadata (all keys required)
     DiTGGMLConfig & cfg   = m->cfg;

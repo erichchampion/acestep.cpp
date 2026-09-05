@@ -47,6 +47,7 @@ static void vae_enc_load(VAEEncoder * m, const char * path) {
     if (!gf_load(&gf, path)) {
         ace_fatal(1, "[VAE-Enc] FATAL: cannot load %s\n", path);
     }
+    GgufCloser gfc(&gf);
 
     // Encoder channel layout (mirror of decoder, bottom-up):
     //   conv1: 2 -> 128

@@ -245,6 +245,7 @@ static bool qw3lm_load(Qwen3LM * m, const char * gguf_path, int max_seq_len, int
         fprintf(stderr, "[LM-Load] FATAL: cannot load %s\n", gguf_path);
         return false;
     }
+    GgufCloser gfc(&gf);
 
     m->cfg = qw3lm_load_config(gf);
     if (max_seq_len > 0) {

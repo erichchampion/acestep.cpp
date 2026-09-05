@@ -170,6 +170,7 @@ static void vae_ggml_load(VAEGGML * m, const char * path) {
     if (!gf_load(&gf, path)) {
         ace_fatal(1, "[VAE] FATAL: cannot load %s\n", path);
     }
+    GgufCloser gfc(&gf);
 
     static const int strides[]   = { 10, 6, 4, 4, 2 };
     static const int in_ch[]     = { 2048, 1024, 512, 256, 128 };

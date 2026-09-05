@@ -65,12 +65,31 @@ static void gf_close(GGUFModel * gf) {
     if (gf->mapping) {
         munmap(gf->mapping, gf->file_size);
     }
-    if (gf->fd >= 0) {
+    // > 0, not >= 0: a real model fd from open() is always > 0, and 0 is the
+    // zero-init / post-close value -- so this never close(0)s stdin and is safe
+    // to call twice, which GgufCloser below relies on.
+    if (gf->fd > 0) {
         close(gf->fd);
     }
 #endif
     *gf = {};
 }
+
+// Closes an open GGUFModel when the scope unwinds -- by a return, or (under
+// ACESTEP_FATAL_THROWS) by a gf_load_tensor throwing mid-load. Each loader opens
+// a local gf, runs throwing tensor reads, and gf_close()s at the end; without
+// this a thrown fatal skips that close and leaks the whole mmap + fd + gguf
+// context on every failed load. gf_close is idempotent (above), so the loader's
+// own end-of-function gf_close stays and this is just a no-op safety net after
+// it. Construct it only once gf is open (after gf_load succeeds), never over an
+// uninitialised gf.
+struct GgufCloser {
+    GGUFModel * gf;
+    explicit GgufCloser(GGUFModel * g) : gf(g) {}
+    ~GgufCloser() { gf_close(gf); }
+    GgufCloser(const GgufCloser &)             = delete;
+    GgufCloser & operator=(const GgufCloser &) = delete;
+};
 
 static bool gf_load(GGUFModel * gf, const char * path) {
     *gf = {};

@@ -101,6 +101,7 @@ static bool cond_ggml_load(CondGGML * m, const char * gguf_path) {
         fprintf(stderr, "[Load] FATAL: cannot load %s\n", gguf_path);
         return false;
     }
+    GgufCloser gfc(&gf);
 
     // XL models have encoder_hidden_size in GGUF metadata (2B models omit it).
     // When present, the timbre encoder prepends a learned CLS token.
