@@ -105,6 +105,13 @@ static BackendPair backend_init(const char * label) {
         bp.cpu_backend = cpu_backend_new(n_threads);
     }
     if (!bp.cpu_backend) {
+        // Under ACESTEP_FATAL_THROWS this throws, and bp is a local that never
+        // reaches a module or the backend cache -- so free the GPU backend
+        // allocated above (the best_is_cpu branch already freed it and left
+        // bp.backend null) before unwinding, or it leaks. exit(1) does not care.
+        if (bp.backend) {
+            ggml_backend_free(bp.backend);
+        }
         ace_fatal(1, "[Load] FATAL: failed to init CPU backend\n");
     }
     bp.has_gpu = !best_is_cpu;
