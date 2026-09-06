@@ -40,20 +40,14 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
-#include <mutex>
 #include <stdexcept>
 #include <string>
-#include <unordered_set>
 #include <utility>
 
 #if defined(__GNUC__) || defined(__clang__)
-#    define ACE_FATAL_PRINTF_FMT     __attribute__((format(printf, 2, 3)))
-// Unlike ace_fatal, ace_warn_once has no leading code argument: fmt IS its first
-// parameter, hence 1, 2 rather than 2, 3.
-#    define ACE_WARN_ONCE_PRINTF_FMT __attribute__((format(printf, 1, 2)))
+#    define ACE_FATAL_PRINTF_FMT __attribute__((format(printf, 2, 3)))
 #else
 #    define ACE_FATAL_PRINTF_FMT
-#    define ACE_WARN_ONCE_PRINTF_FMT
 #endif
 
 // Carries the exit code the CLI would have used and the formatted message.
@@ -96,27 +90,4 @@ struct ace_fatal_error : std::runtime_error {
     va_end(ap);
     exit(code);
 #endif
-}
-
-// Print a warning (fmt must be a string literal) at most once per process, no matter
-// how many translation units include this header: the seen-set is keyed on the format
-// string itself -- a separate key would only duplicate what the literal already says,
-// with a mismatch silently suppressing or duplicating the warning. The set is a
-// function-local static of an external-linkage inline function, so it is one entity
-// per linked image -- the same ODR reasoning as ace_backend_config() in
-// backend-config.h (and with the same dylib caveat). Mutex-guarded, so a warning on
-// one thread can never corrupt the set for another; diagnostics run off the hot path.
-inline ACE_WARN_ONCE_PRINTF_FMT void ace_warn_once(const char * fmt, ...) {
-    static std::mutex                      mtx;
-    static std::unordered_set<std::string> warned;
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        if (!warned.insert(fmt).second) {
-            return;  // already warned about this
-        }
-    }
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
 }

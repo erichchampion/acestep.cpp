@@ -318,9 +318,13 @@ static struct ggml_tensor * gf_load_tensor_f32(WeightCtx * wctx, const GGUFModel
 // Lifetime: the pointer is valid only while this GGUFModel is open AND before any
 // wctx_alloc has run on a WeightCtx loading from it -- on Apple wctx_alloc unmaps
 // each copied tensor's pages as it goes (weight-ctx.h), so a late read of a copied
-// tensor now faults instead of harmlessly refaulting the page. Current users open
-// their own short-lived mapping (model-store metadata, store_silence) or read before
-// any alloc (vae.h); keep it that way.
+// tensor now faults instead of harmlessly refaulting the page. Current users are safe
+// for different reasons, and both matter: model-store metadata and store_silence open
+// their own short-lived mapping that no WeightCtx touches, and vae.h reads its mapping
+// across phases but never calls wctx_alloc at all -- nothing releases its pages. Note
+// the second half: a module may read before OR after its own buffer allocation; the
+// rule is only about WeightCtx's release, so a module converted TO the WeightCtx
+// idiom must move every post-alloc mapping read into the push/copy flow.
 static const void * gf_get_data(const GGUFModel & gf, const char * name) {
     int64_t idx = gguf_find_tensor(gf.gguf, name);
     if (idx < 0) {
