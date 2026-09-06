@@ -424,7 +424,7 @@ static bool dit_ggml_load(DiTGGML *    m,
     }
 
     // Allocate backend buffer and copy weights
-    if (!wctx_alloc(&m->wctx, m->backend, gf.mapping, gf.file_size)) {
+    if (!wctx_alloc(&m->wctx, m->backend)) {
         gf_close(&gf);
         return false;
     }

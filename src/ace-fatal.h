@@ -46,11 +46,9 @@
 #include <utility>
 
 #if defined(__GNUC__) || defined(__clang__)
-#    define ACE_FATAL_PRINTF_FMT     __attribute__((format(printf, 2, 3)))
-#    define ACE_WARN_ONCE_PRINTF_FMT __attribute__((format(printf, 2, 3)))
+#    define ACE_FATAL_PRINTF_FMT __attribute__((format(printf, 2, 3)))
 #else
 #    define ACE_FATAL_PRINTF_FMT
-#    define ACE_WARN_ONCE_PRINTF_FMT
 #endif
 
 // Carries the exit code the CLI would have used and the formatted message.
@@ -101,7 +99,7 @@ struct ace_fatal_error : std::runtime_error {
 // ODR reasoning as ace_backend_config() in backend-config.h (and with the same
 // dylib caveat). Engine diagnostics during load run on one thread, so the set is
 // not synchronized; do not call from concurrent code.
-inline ACE_WARN_ONCE_PRINTF_FMT void ace_warn_once(const char * key, const char * fmt, ...) {
+inline ACE_FATAL_PRINTF_FMT void ace_warn_once(const char * key, const char * fmt, ...) {
     static std::unordered_set<std::string> warned;
     if (!warned.insert(key).second) {
         return;  // already warned about this key

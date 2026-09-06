@@ -8,12 +8,12 @@
 //   WeightCtx wctx;
 //   wctx_init(&wctx, n_tensors);
 //   ggml_tensor * w = <loader>_load_tensor(&wctx, source, "name");
-//   wctx_alloc(&wctx, backend, source.mapping, source.file_size);
+//   wctx_alloc(&wctx, backend);
 //
-// The mapping range passed to wctx_alloc must be the mapping the pending srcs
-// point into: wctx_alloc unmaps each raw tensor's staged pages (Apple only) as
-// it copies, which is what keeps load-time page residency near one tensor
-// instead of the whole file.
+// Loaders that copy straight out of a file mapping record where the bytes came
+// from (wctx_push_file_copy in gguf-weights.h); wctx_alloc releases those staged
+// pages as it copies (Apple: munmap, Linux: madvise), which is what keeps load-time
+// page residency near one tensor instead of the whole file.
 
 #include "ace-fatal.h"
 #include "ggml-backend.h"
@@ -32,6 +32,9 @@
 #    include <unistd.h>    // sysconf, _SC_PAGESIZE
 
 #    include <cerrno>      // errno
+#elif defined(__linux__)
+#    include <sys/mman.h>  // madvise, MADV_DONTNEED
+#    include <unistd.h>    // sysconf, _SC_PAGESIZE
 #endif
 
 struct WeightCtx {
@@ -43,6 +46,18 @@ struct WeightCtx {
         const void *         src;
         size_t               nbytes;
         size_t               offset;  // byte offset into dst tensor (0 for regular loads)
+
+        // Where the bytes came from, recorded at push time by the loaders that copy
+        // straight out of a file mapping (wctx_push_file_copy in gguf-weights.h): the
+        // original mapping address and extent to release once this copy is done. Null
+        // for copies from heap staging or the stack, which have nothing to release.
+        // Kept separate from src/nbytes so an adapter merge can repoint src at its
+        // merged heap staging and the original mapping pages still get released by
+        // wctx_alloc -- no second mapping parameter to mis-pair at the call site.
+        const void * file_src    = nullptr;
+        size_t       file_nbytes = 0;
+        const void * file_base   = nullptr;
+        size_t       file_len    = 0;
     };
 
     std::vector<PendingCopy> pending;
@@ -66,13 +81,14 @@ static void wctx_init(WeightCtx * wctx, int n_tensors) {
     wctx->pending.reserve(n_tensors);
 }
 
-#ifdef __APPLE__
 // The ACE_NO_PAGE_UNMAP escape hatch for a destructive op in the load path: set it to
 // any non-empty value other than "0" to keep the whole mapping resident until gf_close
 // (the pre-2.7 behaviour), for A/B footprint measurement or to rule this out if a
 // device ever misbehaves. "=0" or unset means release runs. This is a diagnostic
 // switch, deliberately not part of the AceBackendConfig API: an application has no
 // business disabling memory release, it exists for measurement and emergencies.
+// Platform-neutral on purpose -- it gates the release on every platform, not just
+// Apple, so it lives outside the ifdefs below.
 static bool wctx_page_unmap_disabled(void) {
     static const bool disabled = [] {
         const char * v = std::getenv("ACE_NO_PAGE_UNMAP");
@@ -81,6 +97,7 @@ static bool wctx_page_unmap_disabled(void) {
     return disabled;
 }
 
+#ifdef __APPLE__
 // Release the staged GGUF mmap pages a just-copied tensor occupied, by unmapping the
 // whole pages fully inside its byte range. The mmap is staging, not residency
 // (gguf-weights.h copies each tensor into the backend buffer, then gf_close munmaps
@@ -138,12 +155,46 @@ static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void 
     }
     return (size_t) (end - start);
 }
+#elif defined(__linux__)
+// Linux twin of the Apple body, with madvise(MADV_DONTNEED) in place of munmap:
+// there the madvise family does work on file mappings, and it keeps the mapping
+// intact -- the same interior-page rounding and return value, one call swapped.
+// (Built by CI; behaviourally identical release semantics.)
+static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void * file_base, size_t file_len) {
+    if (!file_base || file_len == 0 || nbytes == 0 || wctx_page_unmap_disabled()) {
+        return 0;
+    }
+    static const long ps = sysconf(_SC_PAGESIZE);
+    if (ps <= 0) {
+        return 0;
+    }
+    const uintptr_t page = (uintptr_t) ps;
+    const uintptr_t s    = (uintptr_t) src;
+    const uintptr_t e    = s + nbytes;
+    const uintptr_t fb   = (uintptr_t) file_base;
+    const uintptr_t fe   = fb + file_len;
+    if (s < fb || e > fe) {
+        return 0;
+    }
+    const uintptr_t start = (s + page - 1) & ~(page - 1);
+    const uintptr_t end   = e & ~(page - 1);
+    if (end <= start) {
+        return 0;
+    }
+    if (madvise((void *) start, (size_t) (end - start), MADV_DONTNEED) != 0) {
+        ace_warn_once("wctx-madvise-failed",
+                      "[WeightCtx] WARNING: madvise of a staged tensor's pages failed "
+                      "(%s); page release is not taking effect\n",
+                      strerror(errno));
+        return 0;
+    }
+    return (size_t) (end - start);
+}
 #else
-// Not Apple: the staged pages stay until gf_close. Linux could use
-// madvise(MADV_DONTNEED), which does work there (it is macOS where the madvise
-// family is a no-op) -- that platform difference is exactly why the decision
-// lives in this one function instead of #ifdefs at the call sites. This engine
-// ships on Apple; the stub keeps wctx_alloc platform-free.
+// No mechanism on this platform (Windows has neither munmap nor madvise for file
+// mappings): the staged pages simply stay until gf_close. The log still reports
+// what happened -- an honest "unmapped 0.0 MB" for a platform this engine is not
+// shipped on.
 static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void * file_base, size_t file_len) {
     (void) src;
     (void) nbytes;
@@ -153,7 +204,7 @@ static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void 
 }
 #endif
 
-static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend, const void * file_base, size_t file_len) {
+static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
     wctx->buffer = ggml_backend_alloc_ctx_tensors(wctx->ctx, backend);
     if (!wctx->buffer) {
         fprintf(stderr, "[WeightCtx] FATAL: failed to allocate backend buffer\n");
@@ -167,7 +218,12 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend, const void * fi
     for (auto & pc : wctx->pending) {
         ggml_backend_tensor_set(pc.tensor, pc.src, pc.offset, pc.nbytes);
         total += pc.nbytes;
-        unmapped += wctx_unmap_file_pages(pc.src, pc.nbytes, file_base, file_len);
+        if (pc.file_src) {
+            // Release the pages this copy came from -- recorded at push time, so it
+            // still names the original mapping pages even after an adapter merge
+            // repointed src at a heap staging buffer.
+            unmapped += wctx_unmap_file_pages(pc.file_src, pc.file_nbytes, pc.file_base, pc.file_len);
+        }
     }
     if (wctx_page_unmap_disabled()) {
         // Name the hatch explicitly: a deliberate off must not read like a

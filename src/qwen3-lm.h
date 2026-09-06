@@ -272,7 +272,7 @@ static bool qw3lm_load(Qwen3LM * m, const char * gguf_path, int max_seq_len, int
         qwen3_load_layer(&m->wctx, gf, &m->layers[i], prefix, i);
     }
 
-    wctx_alloc(&m->wctx, m->backend, gf.mapping, gf.file_size);
+    wctx_alloc(&m->wctx, m->backend);
     gf_close(&gf);
 
     // KV cache

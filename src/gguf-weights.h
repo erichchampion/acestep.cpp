@@ -10,7 +10,7 @@
 //   WeightCtx wctx;
 //   wctx_init(&wctx, n_tensors);
 //   ggml_tensor * w = gf_load_tensor(&wctx, gf, "layer.0.weight");
-//   wctx_alloc(&wctx, backend, gf.mapping, gf.file_size);
+//   wctx_alloc(&wctx, backend);
 //   gf_close(&gf);   // safe after wctx_alloc copied data to GPU
 
 #include "ace-fatal.h"
@@ -179,6 +179,20 @@ static bool gf_load(GGUFModel * gf, const char * path) {
     return true;
 }
 
+// Queue a copy straight from the file mapping, recording where the bytes came from so
+// wctx_alloc can release those staged pages once copied (Apple: munmap, Linux:
+// madvise). The recorded range survives an adapter merge repointing src at a heap
+// staging buffer, so the original pages are still released. Copies from heap staging
+// or the stack push PendingCopy directly -- they have nothing to release.
+static void wctx_push_file_copy(WeightCtx *          wctx,
+                                struct ggml_tensor * tensor,
+                                const void *         file_src,
+                                size_t               nbytes,
+                                size_t               offset,
+                                const GGUFModel &    gf) {
+    wctx->pending.push_back({ tensor, file_src, nbytes, offset, file_src, nbytes, gf.mapping, gf.file_size });
+}
+
 // Load a tensor from GGUF into the weight context.
 // Returns ggml_tensor (not yet backed by memory; call wctx_alloc after all loads).
 // Tensor shapes are already in ggml order (ne[0]=innermost).
@@ -220,7 +234,7 @@ static struct ggml_tensor * gf_load_tensor(WeightCtx *         wctx,
     const void * data   = gf.mapping + gf.data_offset + offset;
     size_t       nbytes = ggml_nbytes(src);
 
-    wctx->pending.push_back({ tensor, data, nbytes, 0 });
+    wctx_push_file_copy(wctx, tensor, data, nbytes, 0, gf);
     return tensor;
 }
 
@@ -341,9 +355,9 @@ static struct ggml_tensor * gf_load_qkv_fused(WeightCtx *         wctx,
         size_t  off = gguf_get_tensor_offset(gf.gguf, idx);
         return gf.mapping + gf.data_offset + off;
     };
-    wctx->pending.push_back({ fused, get_data(q_name), q_bytes, 0 });
-    wctx->pending.push_back({ fused, get_data(k_name), k_bytes, q_bytes });
-    wctx->pending.push_back({ fused, get_data(v_name), v_bytes, q_bytes + k_bytes });
+    wctx_push_file_copy(wctx, fused, get_data(q_name), q_bytes, 0, gf);
+    wctx_push_file_copy(wctx, fused, get_data(k_name), k_bytes, q_bytes, gf);
+    wctx_push_file_copy(wctx, fused, get_data(v_name), v_bytes, q_bytes + k_bytes, gf);
     return fused;
 }
 
@@ -375,8 +389,8 @@ static struct ggml_tensor * gf_load_pair_fused(WeightCtx *         wctx,
         size_t  off = gguf_get_tensor_offset(gf.gguf, idx);
         return gf.mapping + gf.data_offset + off;
     };
-    wctx->pending.push_back({ fused, get_data(a_name), a_bytes, 0 });
-    wctx->pending.push_back({ fused, get_data(b_name), b_bytes, a_bytes });
+    wctx_push_file_copy(wctx, fused, get_data(a_name), a_bytes, 0, gf);
+    wctx_push_file_copy(wctx, fused, get_data(b_name), b_bytes, a_bytes, gf);
     return fused;
 }
 

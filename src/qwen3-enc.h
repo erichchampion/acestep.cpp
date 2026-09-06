@@ -359,7 +359,7 @@ static bool qwen3_load_text_encoder(Qwen3GGML * m, const char * gguf_path) {
         qwen3_load_layer(&m->wctx, gf, &m->layers[i], prefix, i);
     }
 
-    if (!wctx_alloc(&m->wctx, m->backend, gf.mapping, gf.file_size)) {
+    if (!wctx_alloc(&m->wctx, m->backend)) {
         gf_close(&gf);
         return false;
     }
