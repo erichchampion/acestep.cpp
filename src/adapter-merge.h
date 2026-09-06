@@ -363,6 +363,8 @@ static bool adapter_merge_on_backend(WeightCtx *                                
                                      const float *                                                     ds,
                                      float                                                             user_scale,
                                      ggml_backend_t                                                    backend,
+                                     const void *                                                      file_base,
+                                     size_t                                                            file_len,
                                      const char *                                                      gguf_name,
                                      const std::function<adapter_delta_build(struct ggml_context *)> & build_delta) {
     // torch.finfo(torch.bfloat16).eps, used verbatim in LyCORIS apply_weight_decompose
@@ -467,6 +469,15 @@ static bool adapter_merge_on_backend(WeightCtx *                                
         pc->src    = merged_buf;
         pc->nbytes = merged_bytes;
     }
+    // The base weight's staged mmap pages are consumed (uploaded from base_ptr at the
+    // top, the merge graph ran, the result downloaded above) and src now points at the
+    // merged heap staging -- release the pages here, exactly as wctx_alloc would have
+    // for an unmerged tensor, so an adapter load gets the same residency reduction as
+    // a plain one. Without this the swapped srcs would fail wctx_alloc's containment
+    // check and the bulk DiT weights would stay resident until gf_close. The range
+    // check inside still gates it (base_ptr always comes from gf.mapping), and the
+    // ACE_NO_PAGE_UNMAP hatch is honoured.
+    wctx_unmap_file_pages(base_ptr, base_nb, file_base, file_len);
     wctx->staging.push_back(std::move(staging_buf));
 
     ggml_backend_buffer_free(buf);
@@ -623,8 +634,8 @@ static bool adapter_merge_lora(WeightCtx *         wctx,
             return db;
         };
 
-        if (!adapter_merge_on_backend(wctx, pending_idx, base_ptr, ttype, ne0, ne1, nullptr, 1.0f, backend,
-                                      gguf_name.c_str(), build)) {
+        if (!adapter_merge_on_backend(wctx, pending_idx, base_ptr, ttype, ne0, ne1, nullptr, 1.0f, backend, gf.mapping,
+                                      gf.file_size, gguf_name.c_str(), build)) {
             skipped++;
             continue;
         }
@@ -929,7 +940,7 @@ static bool adapter_merge_lokr(WeightCtx *       wctx,
         };
 
         if (!adapter_merge_on_backend(wctx, pending_idx, base_ptr, ttype, ne0, ne1, ds_ptr, user_scale, backend,
-                                      gguf_name.c_str(), build)) {
+                                      gf.mapping, gf.file_size, gguf_name.c_str(), build)) {
             skipped++;
             continue;
         }

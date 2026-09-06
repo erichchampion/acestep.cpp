@@ -10,7 +10,7 @@
 //   WeightCtx wctx;
 //   wctx_init(&wctx, n_tensors);
 //   ggml_tensor * w = gf_load_tensor(&wctx, gf, "layer.0.weight");
-//   wctx_alloc(&wctx, backend);
+//   wctx_alloc(&wctx, backend, gf.mapping, gf.file_size);
 //   gf_close(&gf);   // safe after wctx_alloc copied data to GPU
 
 #include "ace-fatal.h"
@@ -179,34 +179,6 @@ static bool gf_load(GGUFModel * gf, const char * path) {
     return true;
 }
 
-// Record the file mapping a loader is copying from, so wctx_alloc can unmap each raw
-// tensor's staged mmap pages after the copy (Apple only; see wctx_unmap_file_pages).
-// Every loader that pushes a src pointing straight into gf.mapping calls this; loaders
-// that stage type-converted data on the heap need not. It is called once per tensor
-// but records the same range each time, so it only assigns when the range actually
-// changes -- and for a single-GGUF load (every current caller) that is exactly once.
-static inline void gf_note_mapping(WeightCtx * wctx, const GGUFModel & gf) {
-    if (wctx->file_base == gf.mapping && wctx->file_len == gf.file_size) {
-        return;  // already recorded -- the common case, every tensor of one GGUF
-    }
-    // A second, distinct mapping in one wctx. No current loader does this (an adapter's
-    // mapping is read and closed inside adapter_merge before wctx_alloc, and merged
-    // tensors carry heap srcs), and it stays safe -- the range check still gates every
-    // unmap -- but only the last-noted file's pages get released. Warn once so the
-    // missed release is visible rather than silently swallowed by the prose invariant.
-    if (wctx->file_base != nullptr) {
-        static bool warned = false;
-        if (!warned) {
-            warned = true;
-            fprintf(stderr,
-                    "[WeightCtx] WARNING: a wctx staged tensors from two GGUF mappings; "
-                    "only the last file's staged pages will be released\n");
-        }
-    }
-    wctx->file_base = gf.mapping;
-    wctx->file_len  = gf.file_size;
-}
-
 // Load a tensor from GGUF into the weight context.
 // Returns ggml_tensor (not yet backed by memory; call wctx_alloc after all loads).
 // Tensor shapes are already in ggml order (ne[0]=innermost).
@@ -215,7 +187,6 @@ static struct ggml_tensor * gf_load_tensor(WeightCtx *         wctx,
                                            const std::string & name,
                                            const int64_t *     shape_override  = nullptr,
                                            int                 n_dims_override = 0) {
-    gf_note_mapping(wctx, gf);
     int64_t idx = gguf_find_tensor(gf.gguf, name.c_str());
     if (idx < 0) {
         ace_fatal(1, "[GGUF] FATAL: tensor '%s' not found\n", name.c_str());
@@ -318,6 +289,13 @@ static struct ggml_tensor * gf_load_tensor_f32(WeightCtx * wctx, const GGUFModel
 // Get raw pointer to tensor data in the mmapped file.
 // Useful for CPU-side operations (e.g. bf16 embed lookup for lyrics).
 // Returns NULL if not found.
+//
+// Lifetime: the pointer is valid only while this GGUFModel is open AND before any
+// wctx_alloc has run on a WeightCtx loading from it -- on Apple wctx_alloc unmaps
+// each copied tensor's pages as it goes (weight-ctx.h), so a late read of a copied
+// tensor now faults instead of harmlessly refaulting the page. Current users open
+// their own short-lived mapping (model-store metadata, store_silence) or read before
+// any alloc (vae.h); keep it that way.
 static const void * gf_get_data(const GGUFModel & gf, const char * name) {
     int64_t idx = gguf_find_tensor(gf.gguf, name);
     if (idx < 0) {
@@ -363,8 +341,6 @@ static struct ggml_tensor * gf_load_qkv_fused(WeightCtx *         wctx,
         size_t  off = gguf_get_tensor_offset(gf.gguf, idx);
         return gf.mapping + gf.data_offset + off;
     };
-
-    gf_note_mapping(wctx, gf);
     wctx->pending.push_back({ fused, get_data(q_name), q_bytes, 0 });
     wctx->pending.push_back({ fused, get_data(k_name), k_bytes, q_bytes });
     wctx->pending.push_back({ fused, get_data(v_name), v_bytes, q_bytes + k_bytes });
@@ -399,8 +375,6 @@ static struct ggml_tensor * gf_load_pair_fused(WeightCtx *         wctx,
         size_t  off = gguf_get_tensor_offset(gf.gguf, idx);
         return gf.mapping + gf.data_offset + off;
     };
-
-    gf_note_mapping(wctx, gf);
     wctx->pending.push_back({ fused, get_data(a_name), a_bytes, 0 });
     wctx->pending.push_back({ fused, get_data(b_name), b_bytes, a_bytes });
     return fused;

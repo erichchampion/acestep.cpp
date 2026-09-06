@@ -146,7 +146,7 @@ static bool cond_ggml_load(CondGGML * m, const char * gguf_path) {
     m->text_proj_w   = gf_load_tensor(&m->wctx, gf, "encoder.text_projector.weight");
     m->null_cond_emb = gf_load_tensor(&m->wctx, gf, "null_condition_emb");
 
-    if (!wctx_alloc(&m->wctx, m->backend)) {
+    if (!wctx_alloc(&m->wctx, m->backend, gf.mapping, gf.file_size)) {
         gf_close(&gf);
         return false;
     }

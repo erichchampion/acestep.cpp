@@ -102,7 +102,7 @@ static bool detok_ggml_load(DetokGGML * m, const char * gguf_path) {
         qwen3_load_layer(&m->wctx, gf, &m->layers[i], prefix);
     }
 
-    if (!wctx_alloc(&m->wctx, m->backend)) {
+    if (!wctx_alloc(&m->wctx, m->backend, gf.mapping, gf.file_size)) {
         gf_close(&gf);
         return false;
     }

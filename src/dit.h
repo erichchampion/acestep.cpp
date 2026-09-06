@@ -185,8 +185,7 @@ static struct ggml_tensor * dit_load_proj_in_w(WeightCtx *         wctx,
         const float * s = (const float *) raw;
         cvt([&](int i) { return s[i]; });
     } else {
-        ace_fatal(1, "[GGUF] FATAL: unsupported type %d for '%s' in proj_in pre-permute\n", src->type,
-                  name.c_str());
+        ace_fatal(1, "[GGUF] FATAL: unsupported type %d for '%s' in proj_in pre-permute\n", src->type, name.c_str());
     }
     wctx->pending.push_back({ dst, data, n * sizeof(float), 0 });
     wctx->staging.push_back(std::move(buf));
@@ -240,8 +239,7 @@ static struct ggml_tensor * dit_load_proj_out_w(WeightCtx *         wctx,
         const float * s = (const float *) raw;
         cvt([&](int i) { return s[i]; });
     } else {
-        ace_fatal(1, "[GGUF] FATAL: unsupported type %d for '%s' in proj_out pre-permute\n", src->type,
-                  name.c_str());
+        ace_fatal(1, "[GGUF] FATAL: unsupported type %d for '%s' in proj_out pre-permute\n", src->type, name.c_str());
     }
     wctx->pending.push_back({ dst, data, n * sizeof(float), 0 });
     wctx->staging.push_back(std::move(buf));
@@ -426,7 +424,7 @@ static bool dit_ggml_load(DiTGGML *    m,
     }
 
     // Allocate backend buffer and copy weights
-    if (!wctx_alloc(&m->wctx, m->backend)) {
+    if (!wctx_alloc(&m->wctx, m->backend, gf.mapping, gf.file_size)) {
         gf_close(&gf);
         return false;
     }

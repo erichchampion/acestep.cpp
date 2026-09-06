@@ -42,18 +42,22 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <utility>
 
 #if defined(__GNUC__) || defined(__clang__)
-#    define ACE_FATAL_PRINTF_FMT __attribute__((format(printf, 2, 3)))
+#    define ACE_FATAL_PRINTF_FMT     __attribute__((format(printf, 2, 3)))
+#    define ACE_WARN_ONCE_PRINTF_FMT __attribute__((format(printf, 2, 3)))
 #else
 #    define ACE_FATAL_PRINTF_FMT
+#    define ACE_WARN_ONCE_PRINTF_FMT
 #endif
 
 // Carries the exit code the CLI would have used and the formatted message.
 // Defined unconditionally; only thrown under ACESTEP_FATAL_THROWS.
 struct ace_fatal_error : std::runtime_error {
     int code;
+
     ace_fatal_error(int c, std::string msg) : std::runtime_error(std::move(msg)), code(c) {}
 };
 
@@ -89,4 +93,21 @@ struct ace_fatal_error : std::runtime_error {
     va_end(ap);
     exit(code);
 #endif
+}
+
+// Print a warning keyed by `key` at most once per process, no matter how many
+// translation units include this header: the key set is a function-local static of an
+// external-linkage inline function, so it is one entity per linked image -- the same
+// ODR reasoning as ace_backend_config() in backend-config.h (and with the same
+// dylib caveat). Engine diagnostics during load run on one thread, so the set is
+// not synchronized; do not call from concurrent code.
+inline ACE_WARN_ONCE_PRINTF_FMT void ace_warn_once(const char * key, const char * fmt, ...) {
+    static std::unordered_set<std::string> warned;
+    if (!warned.insert(key).second) {
+        return;  // already warned about this key
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
 }
