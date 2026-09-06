@@ -41,7 +41,10 @@ struct STFile {
 #ifdef _WIN32
     HANDLE fh, mh;
 #else
-    int fd;
+    // -1, not 0, is "no fd" -- the same sentinel discipline GGUFModel documents:
+    // `*st = {}` zero-fills, and st_close closes fd >= 0, so a plain `int fd`
+    // would make every zeroed-never-opened (or already-closed) STFile close stdin.
+    int fd = -1;
 #endif
 };
 
