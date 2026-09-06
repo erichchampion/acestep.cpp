@@ -208,6 +208,34 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
     // Mark as weight buffer so ggml_backend_sched assigns ops to the correct
     // backend based on weight location (avoids fallback through expansion).
     ggml_backend_buffer_set_usage(wctx->buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+#ifndef NDEBUG
+    // Enforce the PendingCopy overlap invariant (see the struct comment) in debug
+    // builds: a duplicated file range would fault the second copy's read once the
+    // first release has run. O(n^2) over a few hundred entries is nothing next to
+    // the copies it guards.
+    for (size_t i = 0; i < wctx->pending.size(); i++) {
+        if (!wctx->pending[i].file_src) {
+            continue;
+        }
+        for (size_t j = i + 1; j < wctx->pending.size(); j++) {
+            const WeightCtx::PendingCopy & a = wctx->pending[i];
+            const WeightCtx::PendingCopy & b = wctx->pending[j];
+            if (!b.file_src) {
+                continue;
+            }
+            const uintptr_t as = (uintptr_t) a.file_src;
+            const uintptr_t ae = as + a.file_nbytes;
+            const uintptr_t bs = (uintptr_t) b.file_src;
+            const uintptr_t be = bs + b.file_nbytes;
+            if (as < be && bs < ae) {
+                fprintf(stderr,
+                        "[WeightCtx] FATAL: two pending copies share file bytes -- tied weights "
+                        "must push one copy\n");
+                return false;
+            }
+        }
+    }
+#endif
     // The hatch is decided once per load, here -- not inside the release helper -- so
     // the off switch is one decision a second caller cannot forget to re-apply.
     const bool disabled = wctx_page_unmap_disabled();
@@ -253,6 +281,9 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
         }
     }
 #else
+    (void) recorded;  // no mechanism on this platform: the counters are still
+    (void) unmapped;  // accumulated for symmetry but there is nothing to report
+    (void) failed;
     fprintf(stderr, "[WeightCtx] Loaded %zu tensors, %.1f MB into backend\n", wctx->pending.size(),
             (float) total / (1024 * 1024));
 #endif

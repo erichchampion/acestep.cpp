@@ -72,11 +72,11 @@ static void gf_close(GGUFModel * gf) {
         // released staged pages. Unmapping over holes works on macOS and Linux
         // (verified), but hole tolerance is implementation behaviour rather than a
         // POSIX guarantee -- so a failure here means the whole mapping stays resident
-        // until process exit, silently. Warn once rather than let that masquerade as
-        // a normal close.
+        // until process exit. Plain fprintf, not warn-once: this runs once per model,
+        // and every failing close is a distinct mapping worth its own line.
         if (munmap(gf->mapping, gf->file_size) != 0) {
-            ace_warn_once("[GGUF] WARNING: munmap of the model mapping failed (%s); its pages stay resident\n",
-                          strerror(errno));
+            fprintf(stderr, "[GGUF] WARNING: munmap of the model mapping failed (%s); its pages stay resident\n",
+                    strerror(errno));
         }
     }
     // fd defaults to -1 (see GGUFModel), so >= 0 closes a real descriptor --

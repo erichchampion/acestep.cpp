@@ -235,8 +235,6 @@ static void qw3lm_copy_kv(Qwen3LM * m, int src, int dst) {
 }
 
 // Load model weights from GGUF
-static void qw3lm_free(Qwen3LM * m);  // forward: the load-failure path frees through it
-
 static bool qw3lm_load(Qwen3LM * m, const char * gguf_path, int max_seq_len, int n_kv_sets) {
     *m = {};
 
@@ -276,10 +274,12 @@ static bool qw3lm_load(Qwen3LM * m, const char * gguf_path, int max_seq_len, int
 
     // The only wctx_alloc caller that may not discard the bool: a failed backend
     // allocation leaves buffer == NULL, and a module that reports success anyway
-    // dereferences it on the first prefill. (Every other loader checks.)
+    // dereferences it on the first prefill. (Every other loader checks.) No
+    // self-teardown here: store_require_lm's LoadGuard owns it, same as the
+    // other five loaders -- freeing through qw3lm_free too would tear the
+    // half-built module down twice.
     if (!wctx_alloc(&m->wctx, m->backend)) {
         gf_close(&gf);
-        qw3lm_free(m);
         return false;
     }
     gf_close(&gf);
