@@ -128,7 +128,7 @@ static bool wctx_release_pages(void * start, size_t len) {
     return munmap(start, len) == 0;
 }
 
-static const char * wctx_release_op = "munmap";
+inline const char * wctx_release_op = "munmap";  // inline: odr-used by the inline warn-once below
 #    else
 // Linux: madvise(MADV_DONTNEED) does work on file mappings there and keeps the
 // mapping intact -- same drop-and-refault semantics for these read-only staged pages.
@@ -136,7 +136,7 @@ static bool wctx_release_pages(void * start, size_t len) {
     return madvise(start, len, MADV_DONTNEED) == 0;
 }
 
-static const char * wctx_release_op = "madvise";
+inline const char * wctx_release_op = "madvise";  // inline: odr-used by the inline warn-once below
 #    endif
 
 // Release the staged GGUF mmap pages a just-copied tensor occupied: the whole pages
@@ -226,19 +226,16 @@ static size_t wctx_unmap_file_pages(const void *, size_t, const void *, size_t, 
 #endif
 
 static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
-    wctx->buffer = ggml_backend_alloc_ctx_tensors(wctx->ctx, backend);
-    if (!wctx->buffer) {
-        fprintf(stderr, "[WeightCtx] FATAL: failed to allocate backend buffer\n");
-        return false;
-    }
-    // Mark as weight buffer so ggml_backend_sched assigns ops to the correct
-    // backend based on weight location (avoids fallback through expansion).
-    ggml_backend_buffer_set_usage(wctx->buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
-    // Enforce the PendingCopy overlap invariant (see the struct comment): a duplicated
-    // file range would fault the second copy's read once the first release has run.
-    // Unconditional -- shipped builds are Release, so a NDEBUG-gated check would guard
-    // nothing that ships -- and cheap: O(n^2) pointer compares over a few hundred
-    // entries, nothing next to the multi-GB copies it runs between.
+    // Enforce the PendingCopy overlap invariant (see the struct comment) BEFORE
+    // anything is allocated or released: a duplicated file range would fault the
+    // second copy's read once the first release has run, and failing only after the
+    // buffer was committed would leave wctx_alloc's failure path holding a live
+    // multi-GB allocation with pending still armed. Unconditional -- shipped builds
+    // are Release, so a NDEBUG-gated check would guard nothing that ships -- and
+    // cheap: O(n^2) pointer compares over a few hundred entries, nothing next to the
+    // multi-GB copies it runs between. Same-mapping only: two independent GGUFs can
+    // never overlap while both are live, and a recycled address from a closed
+    // mapping is not the same file bytes.
     for (size_t i = 0; i < wctx->pending.size(); i++) {
         if (!wctx->pending[i].file_src) {
             continue;
@@ -247,7 +244,7 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
         const uintptr_t ae = as + wctx->pending[i].file_nbytes;
         for (size_t j = i + 1; j < wctx->pending.size(); j++) {
             const WeightCtx::PendingCopy & b = wctx->pending[j];
-            if (!b.file_src) {
+            if (!b.file_src || b.file_base != wctx->pending[i].file_base) {
                 continue;
             }
             const uintptr_t bs = (uintptr_t) b.file_src;
@@ -260,6 +257,14 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
             }
         }
     }
+    wctx->buffer = ggml_backend_alloc_ctx_tensors(wctx->ctx, backend);
+    if (!wctx->buffer) {
+        fprintf(stderr, "[WeightCtx] FATAL: failed to allocate backend buffer\n");
+        return false;
+    }
+    // Mark as weight buffer so ggml_backend_sched assigns ops to the correct
+    // backend based on weight location (avoids fallback through expansion).
+    ggml_backend_buffer_set_usage(wctx->buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
     // The hatch is decided once per load, here -- not inside the release helper -- so
     // the off switch is one decision a second caller cannot forget to re-apply.
     const bool disabled = wctx_page_unmap_disabled();

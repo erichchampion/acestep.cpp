@@ -976,12 +976,16 @@ static bool adapter_merge(WeightCtx *       wctx,
                           ggml_backend_t    backend) {
     // Merges read the base weights straight out of gf.mapping, which wctx_alloc
     // punches holes in as it copies -- so the ordering (merge first, alloc second)
-    // is a correctness rule, not a preference. Enforce it: once the buffer exists,
-    // some of those source pages are already unmapped and the upload would fault.
+    // is a correctness rule, not a preference. Enforce it -- but gracefully: the one
+    // caller already turns a false return into a clean failed load, which beats
+    // exiting the process (the default build) or unwinding mid-request (the app).
+    // Once the buffer exists some source pages may be released and the upload could
+    // fault, so refuse to run rather than guess.
     if (wctx->buffer != nullptr) {
-        ace_fatal(1,
-                  "[Adapter] FATAL: adapter merge after wctx_alloc; the base weight pages may already be "
-                  "released\n");
+        fprintf(stderr,
+                "[Adapter] FATAL: adapter merge after wctx_alloc; the base weight pages may already be "
+                "released\n");
+        return false;
     }
     std::string sf_path;
     std::string cfg_dir;
