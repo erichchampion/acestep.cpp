@@ -22,11 +22,15 @@
 
 static const int FRAMES_PER_SECOND = 25;
 
-// Locale immune scalar reader. std::from_chars handles ints on every stdlib
-// and floats on every stdlib except libc++ before v20 (AppleClang ships an
-// old libc++). There we hand roll a tiny C locale parser supporting decimal
-// and optional exponent. Returns ptr past consumed bytes, or first on parse
-// failure.
+// Locale immune scalar reader. std::from_chars handles ints on every stdlib.
+// Floats: Apple's libc++ annotates them unavailable below macOS 26 regardless
+// of the header version -- availability follows the deployment target, not
+// _LIBCPP_VERSION -- so the hand parser serves older libc++ AND any Apple
+// deployment target below 26; the app floor is macOS 26 / iOS 26 (#21), which
+// makes the library path the one that runs everywhere that matters. Do not
+// re-widen the hand-parser guard to all Apple builds for an availability
+// error: raise the deployment target instead. Supports decimal and optional
+// exponent. Returns ptr past consumed bytes, or first on parse failure.
 static const char * scan_num(const char * first, const char * last, int & v) {
     auto r = std::from_chars(first, last, v);
     return r.ec == std::errc{} ? r.ptr : first;
