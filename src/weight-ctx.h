@@ -30,12 +30,12 @@
 #ifdef __APPLE__
 #    include <sys/mman.h>  // munmap
 #    include <unistd.h>    // sysconf, _SC_PAGESIZE
-
-#    include <cerrno>      // errno
 #elif defined(__linux__)
 #    include <sys/mman.h>  // madvise, MADV_DONTNEED
 #    include <unistd.h>    // sysconf, _SC_PAGESIZE
 #endif
+
+#include <cerrno>  // errno, for the release-failure warning
 
 struct WeightCtx {
     struct ggml_context * ctx;
@@ -97,31 +97,51 @@ static bool wctx_page_unmap_disabled(void) {
     return disabled;
 }
 
-#ifdef __APPLE__
-// Release the staged GGUF mmap pages a just-copied tensor occupied, by unmapping the
-// whole pages fully inside its byte range. The mmap is staging, not residency
-// (gguf-weights.h copies each tensor into the backend buffer, then gf_close munmaps
-// the rest), so once ggml_backend_tensor_set has consumed a tensor its file pages are
-// dead weight. posix_madvise(POSIX_MADV_DONTNEED) -- and MADV_DONTNEED/MADV_FREE --
-// are no-ops on macOS (measured with mincore: they free nothing), so a partial munmap
-// is the only thing that actually drops the pages and lowers peak clean-page residency
-// across a large load. gf_close later munmaps the whole original range, which tolerates
-// these interior holes.
+#if defined(__APPLE__) || defined(__linux__)
+// The per-platform release primitive over a page-aligned interior range. Same
+// contract on both: drop the pages, return false + set errno on failure.
+#    if defined(__APPLE__)
+// munmap is the only call that works on macOS: the madvise family (POSIX_MADV_DONTNEED,
+// MADV_DONTNEED, MADV_FREE) is a no-op there -- measured with mincore, they free
+// nothing. munmap is destructive (an unexpected re-read faults instead of refaulting),
+// which is why the containment and interior-only rules in the caller matter.
+static bool wctx_release_pages(void * start, size_t len) {
+    return munmap(start, len) == 0;
+}
+
+static const char * wctx_release_op = "munmap";
+#    else
+// Linux: madvise(MADV_DONTNEED) does work on file mappings there and keeps the
+// mapping intact -- same drop-and-refault semantics for these read-only staged pages.
+static bool wctx_release_pages(void * start, size_t len) {
+    return madvise(start, len, MADV_DONTNEED) == 0;
+}
+
+static const char * wctx_release_op = "madvise";
+#    endif
+
+// Release the staged GGUF mmap pages a just-copied tensor occupied: the whole pages
+// fully inside its byte range. The mmap is staging, not residency (gguf-weights.h
+// copies each tensor into the backend buffer, then gf_close munmaps the rest), so once
+// ggml_backend_tensor_set has consumed a tensor its file pages are dead weight.
+// Releasing them per tensor keeps peak clean-page residency across a large load near
+// one tensor instead of the whole file; gf_close later releases the whole original
+// range, which tolerates these interior holes.
 //
-// Copy-before-unmap needs no guard call: ggml_backend_tensor_set is synchronous by
+// Copy-before-release needs no guard call: ggml_backend_tensor_set is synchronous by
 // construction -- ggml_backend_buffer_i has no async member, so a backend cannot
 // defer a set_tensor -- and this is the synchronous variant, not
 // ggml_backend_tensor_set_async. The src is fully read when the call returns, and
-// nothing reads a tensor's src again afterwards. Unlike madvise, munmap is NOT safe
-// on an unexpected re-read (it would fault, not refault), which is why the rules
-// below are strict:
+// nothing reads a tensor's src again afterwards.
 //
 // Only whole pages fully inside BOTH [src, src+nbytes) and the file mapping are
-// unmapped: start rounds up and end rounds down, so a page shared with an adjacent
+// released: start rounds up and end rounds down, so a page shared with an adjacent
 // (possibly not-yet-copied) tensor survives, and a src not contained in the mapping --
 // a heap staging buffer (adapter merge, the f32 and pre-permute loaders) or a stack
-// scalar -- is skipped outright. So this only ever unmaps interior pages holding this
-// one tensor's bytes, and only after its copy has read them.
+// scalar -- is skipped outright. The containment test is unreachable for correctly
+// recorded copies (wctx_push_file_copy records in-mapping sources, and wctx_alloc
+// gates on file_src), and that is the point: it keeps a future mis-recording a
+// harmless no-op instead of a destructive call on the wrong memory.
 static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void * file_base, size_t file_len) {
     if (!file_base || file_len == 0 || nbytes == 0 || wctx_page_unmap_disabled()) {
         return 0;
@@ -143,63 +163,24 @@ static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void 
     if (end <= start) {
         return 0;                                          // tensor spans less than one whole interior page
     }
-    if (munmap((void *) start, (size_t) (end - start)) != 0) {
-        // A real failure must not look like the legitimate "nothing to unmap"
+    if (!wctx_release_pages((void *) start, (size_t) (end - start))) {
+        // A real failure must not look like the legitimate "nothing to release"
         // returns above: warn once so a systematically broken release is visible
         // instead of masquerading as "unmapped 0.0 MB".
-        ace_warn_once("wctx-munmap-failed",
-                      "[WeightCtx] WARNING: munmap of a staged tensor's pages failed "
-                      "(%s); page release is not taking effect\n",
-                      strerror(errno));
-        return 0;
-    }
-    return (size_t) (end - start);
-}
-#elif defined(__linux__)
-// Linux twin of the Apple body, with madvise(MADV_DONTNEED) in place of munmap:
-// there the madvise family does work on file mappings, and it keeps the mapping
-// intact -- the same interior-page rounding and return value, one call swapped.
-// (Built by CI; behaviourally identical release semantics.)
-static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void * file_base, size_t file_len) {
-    if (!file_base || file_len == 0 || nbytes == 0 || wctx_page_unmap_disabled()) {
-        return 0;
-    }
-    static const long ps = sysconf(_SC_PAGESIZE);
-    if (ps <= 0) {
-        return 0;
-    }
-    const uintptr_t page = (uintptr_t) ps;
-    const uintptr_t s    = (uintptr_t) src;
-    const uintptr_t e    = s + nbytes;
-    const uintptr_t fb   = (uintptr_t) file_base;
-    const uintptr_t fe   = fb + file_len;
-    if (s < fb || e > fe) {
-        return 0;
-    }
-    const uintptr_t start = (s + page - 1) & ~(page - 1);
-    const uintptr_t end   = e & ~(page - 1);
-    if (end <= start) {
-        return 0;
-    }
-    if (madvise((void *) start, (size_t) (end - start), MADV_DONTNEED) != 0) {
-        ace_warn_once("wctx-madvise-failed",
-                      "[WeightCtx] WARNING: madvise of a staged tensor's pages failed "
-                      "(%s); page release is not taking effect\n",
-                      strerror(errno));
+        ace_warn_once(
+            "[WeightCtx] WARNING: %s of a staged tensor's pages failed "
+            "(%s); page release is not taking effect\n",
+            wctx_release_op, strerror(errno));
         return 0;
     }
     return (size_t) (end - start);
 }
 #else
-// No mechanism on this platform (Windows has neither munmap nor madvise for file
-// mappings): the staged pages simply stay until gf_close. The log still reports
+// No release mechanism on this platform (Windows has neither munmap nor madvise for
+// file mappings): the staged pages simply stay until gf_close. The log still reports
 // what happened -- an honest "unmapped 0.0 MB" for a platform this engine is not
 // shipped on.
-static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void * file_base, size_t file_len) {
-    (void) src;
-    (void) nbytes;
-    (void) file_base;
-    (void) file_len;
+static size_t wctx_unmap_file_pages(const void *, size_t, const void *, size_t) {
     return 0;
 }
 #endif
