@@ -201,7 +201,7 @@ static void wctx_push_file_copy(WeightCtx *          wctx,
                                 size_t               nbytes,
                                 size_t               offset,
                                 const GGUFModel &    gf) {
-    wctx->pending.push_back({ tensor, file_src, nbytes, offset, file_src, nbytes, gf.mapping, gf.file_size });
+    wctx->pending.push_back(wctx_make_file_copy(tensor, file_src, nbytes, offset, gf.mapping, gf.file_size));
 }
 
 // Load a tensor from GGUF into the weight context.

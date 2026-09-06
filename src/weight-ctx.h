@@ -89,6 +89,20 @@ struct WeightCtx {
     std::vector<std::unique_ptr<float[]>> staging;
 };
 
+// The one place a file-backed PendingCopy is built, named beside the struct it
+// names: every field is a pointer or a size, so a transposed 8-element positional
+// literal would compile and silently break release. Only wctx_push_file_copy
+// (gguf-weights.h) constructs file copies; everything else -- heap staging, stack
+// scalars -- pushes the 4-field form and gets no release by definition.
+inline WeightCtx::PendingCopy wctx_make_file_copy(struct ggml_tensor * tensor,
+                                                  const void *         file_src,
+                                                  size_t               nbytes,
+                                                  size_t               offset,
+                                                  const void *         file_base,
+                                                  size_t               file_len) {
+    return { tensor, file_src, nbytes, offset, file_src, nbytes, file_base, file_len };
+}
+
 static void wctx_init(WeightCtx * wctx, int n_tensors) {
     size_t                  ctx_size = (size_t) n_tensors * ggml_tensor_overhead() + 1024;
     struct ggml_init_params params   = {
@@ -226,40 +240,49 @@ static size_t wctx_unmap_file_pages(const void *, size_t, const void *, size_t, 
 #endif
 
 static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
+    // The hatch is decided once per load, here -- not inside the release helper -- so
+    // the off switch is one decision a second caller cannot forget to re-apply, and
+    // it rules out the whole mechanism: with release off, overlapping copies are
+    // harmless duplicate writes, so the sweep below is skipped too.
+    const bool disabled = wctx_page_unmap_disabled();
     // Enforce the PendingCopy overlap invariant (see the struct comment) BEFORE
     // anything is allocated or released: a duplicated file range would fault the
     // second copy's read once the first release has run, and failing only after the
     // buffer was committed would leave wctx_alloc's failure path holding a live
-    // multi-GB allocation with pending still armed. Unconditional -- shipped builds
-    // are Release, so a NDEBUG-gated check would guard nothing that ships -- and
-    // cheap: O(n^2) pointer compares over a few hundred entries, nothing next to the
-    // multi-GB copies it runs between. Same-mapping only: two independent GGUFs can
-    // never overlap while both are live, and a recycled address from a closed
-    // mapping is not the same file bytes.
-    for (size_t i = 0; i < wctx->pending.size(); i++) {
-        if (!wctx->pending[i].file_src) {
-            continue;
-        }
-        const uintptr_t as = (uintptr_t) wctx->pending[i].file_src;
-        const uintptr_t ae = as + wctx->pending[i].file_nbytes;
-        for (size_t j = i + 1; j < wctx->pending.size(); j++) {
-            const WeightCtx::PendingCopy & b = wctx->pending[j];
-            if (!b.file_src || b.file_base != wctx->pending[i].file_base) {
+    // multi-GB allocation with pending still armed. Unconditional when release is
+    // on -- shipped builds are Release, so a NDEBUG-gated check would guard nothing
+    // that ships -- and cheap: O(n^2) pointer compares over a few hundred entries,
+    // nothing next to the multi-GB copies it runs between. Same-mapping only: two
+    // independent GGUFs can never overlap while both are live, and a recycled
+    // address from a closed mapping is not the same file bytes.
+    if (!disabled) {
+        for (size_t i = 0; i < wctx->pending.size(); i++) {
+            if (!wctx->pending[i].file_src) {
                 continue;
             }
-            const uintptr_t bs = (uintptr_t) b.file_src;
-            const uintptr_t be = bs + b.file_nbytes;
-            if (as < be && bs < ae) {
-                fprintf(stderr,
-                        "[WeightCtx] FATAL: two pending copies share file bytes -- tied weights "
-                        "must push one copy\n");
-                return false;
+            const uintptr_t as = (uintptr_t) wctx->pending[i].file_src;
+            const uintptr_t ae = as + wctx->pending[i].file_nbytes;
+            for (size_t j = i + 1; j < wctx->pending.size(); j++) {
+                const WeightCtx::PendingCopy & b = wctx->pending[j];
+                if (!b.file_src || b.file_base != wctx->pending[i].file_base) {
+                    continue;
+                }
+                const uintptr_t bs = (uintptr_t) b.file_src;
+                const uintptr_t be = bs + b.file_nbytes;
+                if (as < be && bs < ae) {
+                    fprintf(stderr,
+                            "[WeightCtx] FATAL: two pending copies share file bytes -- tied weights "
+                            "must push one copy\n");
+                    return false;
+                }
             }
         }
     }
     wctx->buffer = ggml_backend_alloc_ctx_tensors(wctx->ctx, backend);
     if (!wctx->buffer) {
-        fprintf(stderr, "[WeightCtx] FATAL: failed to allocate backend buffer\n");
+        fprintf(stderr,
+                "[WeightCtx] FATAL: failed to allocate backend buffer (is the model too large for "
+                "this device?)\n");
         return false;
     }
     // Mark as weight buffer so ggml_backend_sched assigns ops to the correct
@@ -267,11 +290,10 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
     ggml_backend_buffer_set_usage(wctx->buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
     // The hatch is decided once per load, here -- not inside the release helper -- so
     // the off switch is one decision a second caller cannot forget to re-apply.
-    const bool disabled = wctx_page_unmap_disabled();
-    size_t     total    = 0;
-    size_t     recorded = 0;  // staged bytes with a recorded file range
-    size_t     unmapped = 0;
-    size_t     failed   = 0;
+    size_t total    = 0;
+    size_t recorded = 0;  // staged bytes with a recorded file range
+    size_t unmapped = 0;
+    size_t failed   = 0;
     for (auto & pc : wctx->pending) {
         ggml_backend_tensor_set(pc.tensor, pc.src, pc.offset, pc.nbytes);
         total += pc.nbytes;
@@ -306,7 +328,9 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
         }
     }
 #else
-    note[0] = '\0';  // no mechanism on this platform: nothing to report
+    note[0] = '\0';   // no mechanism on this platform: nothing to report
+    (void) recorded;  // still accumulated for symmetry; nothing to print them against
+    (void) unmapped;
 #endif
     fprintf(stderr, "[WeightCtx] Loaded %zu tensors, %.1f MB into backend%s\n", wctx->pending.size(),
             (float) total / (1024 * 1024), note);
