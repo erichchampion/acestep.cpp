@@ -54,6 +54,15 @@ struct WeightCtx {
         // Kept separate from src/nbytes so an adapter merge can repoint src at its
         // merged heap staging and the original mapping pages still get released by
         // wctx_alloc -- no second mapping parameter to mis-pair at the call site.
+        //
+        // Invariant: two PendingCopys must never name overlapping file ranges. The
+        // first release unmaps the pages, and the second copy's read then faults on
+        // Apple (on Linux madvise would silently refault, hiding the same bug). Tied
+        // weights -- one GGUF byte range serving two tensors -- are the natural way
+        // to violate this; push one copy and reuse the tensor instead. Loaders that
+        // convert out of the mapping (norms, biases, the pre-permutes) push plain
+        // copies with these fields null; their (small) source pages release at
+        // gf_close instead, which is part of the gap the completion line reports.
         const void * file_src    = nullptr;
         size_t       file_nbytes = 0;
         const void * file_base   = nullptr;
@@ -87,14 +96,12 @@ static void wctx_init(WeightCtx * wctx, int n_tensors) {
 // device ever misbehaves. "=0" or unset means release runs. This is a diagnostic
 // switch, deliberately not part of the AceBackendConfig API: an application has no
 // business disabling memory release, it exists for measurement and emergencies.
-// Platform-neutral on purpose -- it gates the release on every platform, not just
-// Apple, so it lives outside the ifdefs below.
+// Deliberately NOT cached: the A/B use case flips it between loads in one process, so
+// a latched value would make the second leg measure the first. getenv is a linear
+// scan of the environment -- nothing against a multi-GB weight copy.
 static bool wctx_page_unmap_disabled(void) {
-    static const bool disabled = [] {
-        const char * v = std::getenv("ACE_NO_PAGE_UNMAP");
-        return v != nullptr && v[0] != '\0' && strcmp(v, "0") != 0;
-    }();
-    return disabled;
+    const char * v = std::getenv("ACE_NO_PAGE_UNMAP");
+    return v != nullptr && v[0] != '\0' && strcmp(v, "0") != 0;
 }
 
 #if defined(__APPLE__) || defined(__linux__)
@@ -122,17 +129,21 @@ static const char * wctx_release_op = "madvise";
 
 // Release the staged GGUF mmap pages a just-copied tensor occupied: the whole pages
 // fully inside its byte range. The mmap is staging, not residency (gguf-weights.h
-// copies each tensor into the backend buffer, then gf_close munmaps the rest), so once
-// ggml_backend_tensor_set has consumed a tensor its file pages are dead weight.
+// copies each tensor into the backend buffer, then gf_close releases the rest), so
+// once ggml_backend_tensor_set has consumed a tensor its file pages are dead weight.
 // Releasing them per tensor keeps peak clean-page residency across a large load near
 // one tensor instead of the whole file; gf_close later releases the whole original
 // range, which tolerates these interior holes.
 //
-// Copy-before-release needs no guard call: ggml_backend_tensor_set is synchronous by
-// construction -- ggml_backend_buffer_i has no async member, so a backend cannot
-// defer a set_tensor -- and this is the synchronous variant, not
-// ggml_backend_tensor_set_async. The src is fully read when the call returns, and
-// nothing reads a tensor's src again afterwards.
+// Copy-before-release: wctx_alloc calls ggml_backend_tensor_set -- the synchronous
+// variant, never ggml_backend_tensor_set_async. The buffer-level iface it dispatches
+// to (ggml_backend_buffer_i::set_tensor) has no deferred form; the async operations
+// that exist live on the backend-level ggml_backend_i and are separate API calls
+// this code does not use. Verified per vendored backend that the synchronous call
+// consumes src before returning: CPU memcpy, Metal blit + semaphore wait (shared
+// buffers are a memcpy), CUDA memcpyAsync + cudaStreamSynchronize, Vulkan write with
+// waitForFences. The src is fully read when the call returns, and nothing reads a
+// tensor's src again afterwards.
 //
 // Only whole pages fully inside BOTH [src, src+nbytes) and the file mapping are
 // released: start rounds up and end rounds down, so a page shared with an adjacent
@@ -142,11 +153,16 @@ static const char * wctx_release_op = "madvise";
 // recorded copies (wctx_push_file_copy records in-mapping sources, and wctx_alloc
 // gates on file_src), and that is the point: it keeps a future mis-recording a
 // harmless no-op instead of a destructive call on the wrong memory.
-static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void * file_base, size_t file_len) {
-    if (!file_base || file_len == 0 || nbytes == 0 || wctx_page_unmap_disabled()) {
-        return 0;
-    }
-    static const long ps = sysconf(_SC_PAGESIZE);  // process-invariant; query once, not per tensor
+//
+// failed_bytes accumulates the ranges the kernel refused to release, so wctx_alloc
+// can report the shortfall for THIS load -- a persistent failure must not be
+// invisible just because its first occurrence already warned.
+static size_t wctx_unmap_file_pages(const void * src,
+                                    size_t       nbytes,
+                                    const void * file_base,
+                                    size_t       file_len,
+                                    size_t *     failed_bytes) {
+    const long ps = sysconf(_SC_PAGESIZE);  // nanoseconds against a multi-GB copy; no caching
     if (ps <= 0) {
         return 0;
     }
@@ -164,23 +180,21 @@ static size_t wctx_unmap_file_pages(const void * src, size_t nbytes, const void 
         return 0;                                          // tensor spans less than one whole interior page
     }
     if (!wctx_release_pages((void *) start, (size_t) (end - start))) {
-        // A real failure must not look like the legitimate "nothing to release"
-        // returns above: warn once so a systematically broken release is visible
-        // instead of masquerading as "unmapped 0.0 MB".
+        // The strerror detail once per process; the per-load summary below makes
+        // every later failure visible regardless.
         ace_warn_once(
-            "[WeightCtx] WARNING: %s of a staged tensor's pages failed "
-            "(%s); page release is not taking effect\n",
+            "[WeightCtx] WARNING: %s of a staged tensor's pages failed (%s); page release is not "
+            "taking effect\n",
             wctx_release_op, strerror(errno));
+        *failed_bytes += (size_t) (end - start);
         return 0;
     }
     return (size_t) (end - start);
 }
 #else
 // No release mechanism on this platform (Windows has neither munmap nor madvise for
-// file mappings): the staged pages simply stay until gf_close. The log still reports
-// what happened -- an honest "unmapped 0.0 MB" for a platform this engine is not
-// shipped on.
-static size_t wctx_unmap_file_pages(const void *, size_t, const void *, size_t) {
+// file mappings): the staged pages simply stay until gf_close.
+static size_t wctx_unmap_file_pages(const void *, size_t, const void *, size_t, size_t *) {
     return 0;
 }
 #endif
@@ -194,8 +208,13 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
     // Mark as weight buffer so ggml_backend_sched assigns ops to the correct
     // backend based on weight location (avoids fallback through expansion).
     ggml_backend_buffer_set_usage(wctx->buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
-    size_t total    = 0;
-    size_t unmapped = 0;
+    // The hatch is decided once per load, here -- not inside the release helper -- so
+    // the off switch is one decision a second caller cannot forget to re-apply.
+    const bool disabled = wctx_page_unmap_disabled();
+    size_t     total    = 0;
+    size_t     recorded = 0;  // staged bytes with a recorded file range
+    size_t     unmapped = 0;
+    size_t     failed   = 0;
     for (auto & pc : wctx->pending) {
         ggml_backend_tensor_set(pc.tensor, pc.src, pc.offset, pc.nbytes);
         total += pc.nbytes;
@@ -203,20 +222,40 @@ static bool wctx_alloc(WeightCtx * wctx, ggml_backend_t backend) {
             // Release the pages this copy came from -- recorded at push time, so it
             // still names the original mapping pages even after an adapter merge
             // repointed src at a heap staging buffer.
-            unmapped += wctx_unmap_file_pages(pc.file_src, pc.file_nbytes, pc.file_base, pc.file_len);
+            recorded += pc.file_nbytes;
+            if (!disabled) {
+                unmapped += wctx_unmap_file_pages(pc.file_src, pc.file_nbytes, pc.file_base, pc.file_len, &failed);
+            }
         }
     }
-    if (wctx_page_unmap_disabled()) {
+#if defined(__APPLE__) || defined(__linux__)
+    if (disabled) {
         // Name the hatch explicitly: a deliberate off must not read like a
         // release that ran and freed nothing.
         fprintf(stderr,
                 "[WeightCtx] Loaded %zu tensors, %.1f MB into backend (page release disabled by ACE_NO_PAGE_UNMAP)\n",
                 wctx->pending.size(), (float) total / (1024 * 1024));
     } else {
+        // "X of Y": the gap is the boundary pages shared between adjacent tensors,
+        // plus every copy made from heap staging -- both release at gf_close. The
+        // reader sees the residual and its scale instead of guessing what 0.0 MB
+        // means for a module of sub-page tensors.
         fprintf(stderr,
-                "[WeightCtx] Loaded %zu tensors, %.1f MB into backend (unmapped %.1f MB of staged file pages)\n",
-                wctx->pending.size(), (float) total / (1024 * 1024), (float) unmapped / (1024 * 1024));
+                "[WeightCtx] Loaded %zu tensors, %.1f MB into backend (unmapped %.1f of %.1f MB of staged file "
+                "pages)\n",
+                wctx->pending.size(), (float) total / (1024 * 1024), (float) unmapped / (1024 * 1024),
+                (float) recorded / (1024 * 1024));
+        if (failed > 0) {
+            fprintf(stderr,
+                    "[WeightCtx] WARNING: %.1f MB of staged pages could not be released this load; they "
+                    "stay resident until gf_close\n",
+                    (float) failed / (1024 * 1024));
+        }
     }
+#else
+    fprintf(stderr, "[WeightCtx] Loaded %zu tensors, %.1f MB into backend\n", wctx->pending.size(),
+            (float) total / (1024 * 1024));
+#endif
     wctx->pending.clear();
     wctx->staging.clear();
     return true;

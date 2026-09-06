@@ -40,6 +40,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -103,12 +104,16 @@ struct ace_fatal_error : std::runtime_error {
 // with a mismatch silently suppressing or duplicating the warning. The set is a
 // function-local static of an external-linkage inline function, so it is one entity
 // per linked image -- the same ODR reasoning as ace_backend_config() in
-// backend-config.h (and with the same dylib caveat). Engine diagnostics during load
-// run on one thread, so the set is not synchronized; do not call from concurrent code.
+// backend-config.h (and with the same dylib caveat). Mutex-guarded, so a warning on
+// one thread can never corrupt the set for another; diagnostics run off the hot path.
 inline ACE_WARN_ONCE_PRINTF_FMT void ace_warn_once(const char * fmt, ...) {
+    static std::mutex                      mtx;
     static std::unordered_set<std::string> warned;
-    if (!warned.insert(fmt).second) {
-        return;  // already warned about this
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (!warned.insert(fmt).second) {
+            return;  // already warned about this
+        }
     }
     va_list ap;
     va_start(ap, fmt);

@@ -471,14 +471,14 @@ static bool adapter_merge_on_backend(WeightCtx *                                
     // file_base/file_len, untouched by the swap above), so wctx_alloc releases the
     // base weight's staged pages exactly as it does for an unmerged tensor -- an
     // adapter load gets the same residency reduction as a plain one, and the release
-    // shows up in its "unmapped N MB" line. Nothing is unmapped here, mid-merge: the
+    // shows up in its "unmapped N MB" line. Nothing is released here, mid-merge: the
     // pages are only dead once every pending entry has been copied.
     //
-    // Key the entry out so a second merge targeting the same base tensor cannot
-    // re-run against it: after the swap a repeat would silently apply the adapter
-    // delta a second time (and once wctx_alloc has run, base_ptr is unmapped).
-    // Skipping with the warning below is the loud, safe outcome.
-    pending_idx.erase(pc_it);
+    // A second merge targeting the same base tensor is last-wins and safe as-is: it
+    // re-reads the pristine base from the mapping (the merge never writes back to
+    // base_ptr), recomputes, and replaces pc->src. Within one pass that cannot happen
+    // anyway -- both merge paths visit each base tensor once -- and merges always run
+    // before wctx_alloc, so the released pages are never read here.
     wctx->staging.push_back(std::move(staging_buf));
 
     ggml_backend_buffer_free(buf);

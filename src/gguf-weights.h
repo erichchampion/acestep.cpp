@@ -17,8 +17,10 @@
 #include "gguf.h"
 #include "weight-ctx.h"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 #ifdef _WIN32
@@ -66,7 +68,16 @@ static void gf_close(GGUFModel * gf) {
     }
 #else
     if (gf->mapping) {
-        munmap(gf->mapping, gf->file_size);
+        // After a 2.7 load this range carries interior holes where wctx_alloc already
+        // released staged pages. Unmapping over holes works on macOS and Linux
+        // (verified), but hole tolerance is implementation behaviour rather than a
+        // POSIX guarantee -- so a failure here means the whole mapping stays resident
+        // until process exit, silently. Warn once rather than let that masquerade as
+        // a normal close.
+        if (munmap(gf->mapping, gf->file_size) != 0) {
+            ace_warn_once("[GGUF] WARNING: munmap of the model mapping failed (%s); its pages stay resident\n",
+                          strerror(errno));
+        }
     }
     // fd defaults to -1 (see GGUFModel), so >= 0 closes a real descriptor --
     // including a legitimate fd 0 -- while the -1 sentinel makes this safe to
