@@ -666,6 +666,13 @@ int ace_synth_job_run_vae(AceSynth * ctx, AceSynthJob * job, AceAudio * out, Ace
     return ops_vae_decode(ctx, job->batch_n, out, job->state, progress);
 }
 
+int ace_synth_job_run_vae_take(AceSynth * ctx, AceSynthJob * job, int take, AceAudio * out, AceProgress progress) {
+    if (!ctx || !job || !out || take < 0 || take >= job->batch_n) {
+        return -1;
+    }
+    return ops_vae_decode_one(ctx, take, out, job->state, progress);
+}
+
 void ace_synth_job_free(AceSynthJob * job) {
     delete job;
 }

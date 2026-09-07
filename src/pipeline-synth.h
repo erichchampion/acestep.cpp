@@ -92,6 +92,15 @@ const float * ace_synth_job_get_latent(const AceSynthJob * job, int track_idx, i
 // Returns 0 on success, -1 on error or cancellation.
 int ace_synth_job_run_vae(AceSynth * ctx, AceSynthJob * job, AceAudio * out, AceProgress progress = {});
 
+// Phase 2 for ONE take: splice + VAE decode of just track `take`'s latent
+// into *out. Decode-on-demand for embedders: first audio for take 0 does not
+// wait on the VAE decoding takes 1..n; call again for the other takes, in
+// any order. The job stays valid and the remaining takes stay decodable
+// after a failed or cancelled call. Returns 0 on success, -1 on a bad take
+// index, error, or cancellation.
+int ace_synth_job_run_vae_take(AceSynth * ctx, AceSynthJob * job, int take, AceAudio * out,
+                               AceProgress progress = {});
+
 void ace_synth_job_free(AceSynthJob * job);
 
 void ace_audio_free(AceAudio * audio);

@@ -895,6 +895,88 @@ int ops_dit_generate(const AceSynth * ctx, int batch_n, SynthState & s, AceProgr
     return 0;
 }
 
+// Latent splice for ONE track: keep s.output for track b inside [t0, t1),
+// copy s.cover_latents outside. Hard cut at frame boundary, the VAE tiled
+// decoder smooths the seam in the waveform.
+static void ops_vae_splice_track(SynthState & s, int b) {
+    int copy_T = s.T_cover < s.T ? s.T_cover : s.T;
+    float * dst = s.output.data() + (size_t) b * s.Oc * s.T;
+    for (int t = 0; t < copy_T; t++) {
+        if (t < s.repaint_t0 || t >= s.repaint_t1) {
+            memcpy(dst + (size_t) t * 64, s.cover_latents.data() + (size_t) t * 64, 64 * sizeof(float));
+        }
+    }
+}
+
+// Decode ONE track: run the tiled VAE decoder over track b's latent and fill
+// *out. A decode failure nulls *out and returns 0 (soft fail -- the batch
+// loop continues to other tracks, exactly as it always has); a cancellation
+// returns -1 (the caller aborts). out may point at one element of a batch
+// array or at a standalone AceAudio -- the element is all this function sees.
+static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceAudio * out, SynthState & s,
+                                AceProgress progress) {
+    int                T_latent    = s.T;
+    int                T_audio_max = T_latent * 1920;
+    std::vector<float> audio(2 * T_audio_max);
+
+    float * dit_out = s.output.data() + (size_t) b * s.Oc * s.T;
+
+    s.timer.reset();
+    int T_audio = vae_ggml_decode_tiled(vae, dit_out, T_latent, audio.data(), T_audio_max, ctx->params.vae_chunk,
+                                        ctx->params.vae_overlap, progress);
+    if (T_audio < 0) {
+        if (ace_cancelled(progress, ACE_STAGE_VAE_DECODE)) {
+            fprintf(stderr, "[VAE-Decode Batch%d] Cancelled\n", b);
+            return -1;
+        }
+        fprintf(stderr, "[VAE-Decode Batch%d] ERROR: decode failed\n", b);
+        out->samples     = NULL;
+        out->n_samples   = 0;
+        out->sample_rate = 48000;
+        return 0;
+    }
+    fprintf(stderr, "[VAE-Decode Batch%d] Decode: %.1f ms\n", b, s.timer.ms());
+
+    if (b == 0) {
+        debug_dump_2d(&s.dbg, "vae_audio", audio.data(), 2, T_audio);
+    }
+
+    int n_total    = 2 * T_audio;
+    out->samples = (float *) malloc((size_t) n_total * sizeof(float));
+    if (!out->samples) {
+        fprintf(stderr, "[VAE-Decode Batch%d] ERROR: OOM allocating output (%d samples)\n", b, n_total);
+        out->n_samples   = 0;
+        out->sample_rate = 48000;
+        return 0;
+    }
+    memcpy(out->samples, audio.data(), (size_t) n_total * sizeof(float));
+    out->n_samples   = T_audio;
+    out->sample_rate = 48000;
+
+    // Waveform hard splice (audio path only): replace out-of-zone samples
+    // with the original source PCM. The VAE roundtrip is lossy, so this
+    // restores bit-exact fidelity outside the region. Skipped on the
+    // latent path (no original waveform available, single VAE decode is
+    // already the cleanest output we can produce).
+    if ((s.is_repaint || s.is_lego_region) && !s.padded_src.empty()) {
+        int       T_src   = (int) (s.padded_src.size() / 2);
+        const int start_s = (int) ((size_t) s.repaint_t0 * 1920);
+        const int end_s   = (int) ((size_t) s.repaint_t1 * 1920);
+        const int T_clip  = T_audio < T_src ? T_audio : T_src;
+        for (int ch = 0; ch < 2; ch++) {
+            float * pred = out->samples + (size_t) ch * T_audio;
+            for (int si = 0; si < start_s && si < T_clip; si++) {
+                pred[si] = s.padded_src[(size_t) si * 2 + ch];
+            }
+            for (int si = end_s; si < T_clip; si++) {
+                pred[si] = s.padded_src[(size_t) si * 2 + ch];
+            }
+        }
+        fprintf(stderr, "[WAV-Splice Batch%d] hard splice samples [%d, %d) / %d\n", b, start_s, end_s, T_clip);
+    }
+    return 0;
+}
+
 int ops_vae_decode(const AceSynth * ctx, int batch_n, AceAudio * out, SynthState & s, AceProgress progress) {
     VAEGGML * vae = store_require_vae_dec(ctx->store, ctx->vae_dec_key);
     if (!vae) {
@@ -903,84 +985,40 @@ int ops_vae_decode(const AceSynth * ctx, int batch_n, AceAudio * out, SynthState
     }
     ModelHandle vae_guard(ctx->store, vae);
 
-    // Latent splice for repaint/lego: keep s.output inside [t0, t1), copy
-    // s.cover_latents outside. Hard cut at frame boundary, the VAE tiled
-    // decoder smooths the seam in the waveform.
     bool have_region = s.is_repaint || s.is_lego_region;
     if (have_region && s.have_cover && s.T_cover > 0) {
-        int copy_T = s.T_cover < s.T ? s.T_cover : s.T;
         for (int b = 0; b < batch_n; b++) {
-            float * dst = s.output.data() + (size_t) b * s.Oc * s.T;
-            for (int t = 0; t < copy_T; t++) {
-                if (t < s.repaint_t0 || t >= s.repaint_t1) {
-                    memcpy(dst + (size_t) t * 64, s.cover_latents.data() + (size_t) t * 64, 64 * sizeof(float));
-                }
-            }
+            ops_vae_splice_track(s, b);
         }
         fprintf(stderr, "[Latent-Splice] kept generated frames [%d, %d) / %d, source elsewhere\n", s.repaint_t0,
                 s.repaint_t1, s.T);
     }
 
-    int                T_latent    = s.T;
-    int                T_audio_max = T_latent * 1920;
-    std::vector<float> audio(2 * T_audio_max);
-
     for (int b = 0; b < batch_n; b++) {
-        float * dit_out = s.output.data() + b * s.Oc * s.T;
-
-        s.timer.reset();
-        int T_audio = vae_ggml_decode_tiled(vae, dit_out, T_latent, audio.data(), T_audio_max, ctx->params.vae_chunk,
-                                            ctx->params.vae_overlap, progress);
-        if (T_audio < 0) {
-            if (ace_cancelled(progress, ACE_STAGE_VAE_DECODE)) {
-                fprintf(stderr, "[VAE-Decode Batch%d] Cancelled\n", b);
-                return -1;
-            }
-            fprintf(stderr, "[VAE-Decode Batch%d] ERROR: decode failed\n", b);
-            out[b].samples     = NULL;
-            out[b].n_samples   = 0;
-            out[b].sample_rate = 48000;
-            continue;
-        }
-        fprintf(stderr, "[VAE-Decode Batch%d] Decode: %.1f ms\n", b, s.timer.ms());
-
-        if (b == 0) {
-            debug_dump_2d(&s.dbg, "vae_audio", audio.data(), 2, T_audio);
-        }
-
-        int n_total    = 2 * T_audio;
-        out[b].samples = (float *) malloc((size_t) n_total * sizeof(float));
-        if (!out[b].samples) {
-            fprintf(stderr, "[VAE-Decode Batch%d] ERROR: OOM allocating output (%d samples)\n", b, n_total);
-            out[b].n_samples   = 0;
-            out[b].sample_rate = 48000;
-            continue;
-        }
-        memcpy(out[b].samples, audio.data(), (size_t) n_total * sizeof(float));
-        out[b].n_samples   = T_audio;
-        out[b].sample_rate = 48000;
-
-        // Waveform hard splice (audio path only): replace out-of-zone samples
-        // with the original source PCM. The VAE roundtrip is lossy, so this
-        // restores bit-exact fidelity outside the region. Skipped on the
-        // latent path (no original waveform available, single VAE decode is
-        // already the cleanest output we can produce).
-        if (have_region && !s.padded_src.empty()) {
-            int       T_src   = (int) (s.padded_src.size() / 2);
-            const int start_s = (int) ((size_t) s.repaint_t0 * 1920);
-            const int end_s   = (int) ((size_t) s.repaint_t1 * 1920);
-            const int T_clip  = T_audio < T_src ? T_audio : T_src;
-            for (int ch = 0; ch < 2; ch++) {
-                float * pred = out[b].samples + (size_t) ch * T_audio;
-                for (int si = 0; si < start_s && si < T_clip; si++) {
-                    pred[si] = s.padded_src[(size_t) si * 2 + ch];
-                }
-                for (int si = end_s; si < T_clip; si++) {
-                    pred[si] = s.padded_src[(size_t) si * 2 + ch];
-                }
-            }
-            fprintf(stderr, "[WAV-Splice Batch%d] hard splice samples [%d, %d) / %d\n", b, start_s, end_s, T_clip);
+        if (ops_vae_decode_track(vae, ctx, b, &out[b], s, progress) != 0) {
+            return -1;
         }
     }
     return 0;
+}
+
+// Decode exactly one track of the job: same splice + tiled decode as the
+// batch path, scoped to `track`. Decode-on-demand for embedders (#20 follow
+// up): first audio for take 0 must not wait on the VAE decoding takes 1..n.
+// The other tracks' latents stay parked in the job, decodable afterwards.
+int ops_vae_decode_one(const AceSynth * ctx, int track, AceAudio * out, SynthState & s, AceProgress progress) {
+    VAEGGML * vae = store_require_vae_dec(ctx->store, ctx->vae_dec_key);
+    if (!vae) {
+        fprintf(stderr, "[VAE-Decode] FATAL: store_require_vae_dec failed\n");
+        return -1;
+    }
+    ModelHandle vae_guard(ctx->store, vae);
+
+    if ((s.is_repaint || s.is_lego_region) && s.have_cover && s.T_cover > 0) {
+        ops_vae_splice_track(s, track);
+        fprintf(stderr, "[Latent-Splice] kept generated frames [%d, %d) / %d, source elsewhere\n", s.repaint_t0,
+                s.repaint_t1, s.T);
+    }
+
+    return ops_vae_decode_track(vae, ctx, track, out, s, progress);
 }

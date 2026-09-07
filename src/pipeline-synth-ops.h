@@ -66,3 +66,8 @@ int ops_dit_generate(const AceSynth * ctx, int batch_n, SynthState & s, AceProgr
 // source latents elsewhere) followed by VAE decode for every batch item.
 // Returns 0 on success, -1 on error/cancel.
 int ops_vae_decode(const AceSynth * ctx, int batch_n, AceAudio * out, SynthState & s, AceProgress progress);
+
+// Decode exactly one track of the job into *out. Same splice and tiled decode
+// as ops_vae_decode, scoped to `track`; the other tracks' latents stay parked
+// in the job state and remain decodable. `track` must be within the batch.
+int ops_vae_decode_one(const AceSynth * ctx, int track, AceAudio * out, SynthState & s, AceProgress progress);
