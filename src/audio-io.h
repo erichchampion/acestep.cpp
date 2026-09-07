@@ -4,9 +4,10 @@
 // Writes WAV (16-bit PCM) or MP3 (via mp3enc).
 // Functions in THIS header return planar stereo float: [L: T samples][R:
 // T samples]. Two neighbours are deliberately different, so check which side
-// of the boundary you are on: wav.h's raw reader returns interleaved (it is
-// deinterleaved on read), and the synthesis pipeline's src/ref input takes
-// time-major interleaved -- while the pipeline's AceAudio output is planar,
+// of the boundary you are on: wav.h's raw reader returns time-major
+// interleaved stereo; the helpers in this header deinterleave it to planar on
+// read, and the synthesis pipeline's src/ref input takes time-major
+// interleaved stereo -- while the pipeline's AceAudio output is planar,
 // like this header's returns. Part of acestep.cpp. MIT license.
 
 #include "task-types.h"
