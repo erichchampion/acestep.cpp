@@ -26,6 +26,7 @@ option(ACESTEP_BUILD_TOOLS
 
 # version.h: embed git commit hash into all binaries.
 # runs on every build, only rewrites if the hash changed.
+if(ACESTEP_BUILD_TOOLS)
 set(VERSION_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/version.h")
 add_custom_target(version ALL
     COMMAND "${CMAKE_COMMAND}" "-DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}" "-DOUTPUT=${VERSION_OUTPUT}"
@@ -33,6 +34,7 @@ add_custom_target(version ALL
     BYPRODUCTS "${VERSION_OUTPUT}"
     COMMENT "Checking git version"
 )
+endif()
 
 # pthread: required explicitly on older glibc (< 2.34) where libpthread
 # is not merged into libc. Modern distros link it implicitly but aarch64
@@ -120,7 +122,9 @@ macro(link_ggml_backends target)
     if(TARGET ggml-sycl AND GGML_SYCL)
         target_link_options(${target} PRIVATE -fsycl)
     endif()
-    add_dependencies(${target} version)
+    if(ACESTEP_BUILD_TOOLS)
+        add_dependencies(${target} version)
+    endif()
 endmacro()
 
 # yyjson (MIT, fast JSON parser/writer)
