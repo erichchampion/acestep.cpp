@@ -13,6 +13,12 @@ add_executable(test-backend-config test-backend-config.cpp)
 target_link_libraries(test-backend-config PRIVATE acestep-core)
 link_ggml_backends(test-backend-config)
 
+# test-audio-layout: the channel-layout contract at the pipeline boundary
+# (#28). Needs only the VAE GGUF: run with --vae <gguf>.
+add_executable(test-audio-layout test-audio-layout.cpp)
+target_link_libraries(test-audio-layout PRIVATE acestep-core)
+link_ggml_backends(test-audio-layout)
+
 # test-philox: Philox RNG reference dumper.
 add_executable(test-philox test-philox.cpp)
 target_include_directories(test-philox PRIVATE ${CMAKE_SOURCE_DIR}/src)
