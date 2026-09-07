@@ -37,7 +37,12 @@ def test_pytorch_logits(model_dir, prompt_tokens):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.float32  # match GGML f32 compute
 
-    # Move weights to device
+    # Move weights to device. Checkpoints vary in key style: some export
+    # with the "model." prefix (Qwen HF layout), the 5Hz LMs without it.
+    # Normalize to the prefixed form the code below indexes.
+    if "model.embed_tokens.weight" not in weights and "embed_tokens.weight" in weights:
+        weights = { ("model." + k if not k.startswith("model.") else k): v for k, v in weights.items() }
+
     for k in weights:
         weights[k] = weights[k].to(device=device, dtype=dtype)
 

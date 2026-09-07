@@ -5,7 +5,12 @@ build/
 tests/*/
 
 checkpoints/
+models
 models/*.gguf
+tests/pytorch_initial_noise_*.pt
+tests/logits*.bin
+tests/tokens*.csv
+tests/lm-request0.json
 adapters/*/
 adapters/*.safetensors
 __pycache__/

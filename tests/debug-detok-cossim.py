@@ -16,7 +16,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(SCRIPT_DIR)
 GGML_BIN    = os.path.join(ROOT, "build", "ace-synth")
 MODELS_DIR  = os.path.join(ROOT, "models")
-DIT_MODEL   = "acestep-v15-sft-BF16.gguf"
+# Q8_0 sft: the BF16 GGUF this script once pinned is not in the distributed
+# catalogue; Q8_0 is the highest-fidelity sft that is.
+DIT_MODEL   = "acestep-v15-sft-Q8_0.gguf"
 
 FSQ_LEVELS = [8, 8, 8, 5, 5, 5]
 
@@ -119,16 +121,20 @@ def main():
     sys.path.insert(0, os.path.join(ROOT, '..', 'ACE-Step-1.5'))
     from acestep.handler import AceStepHandler
 
+    # cuda when present, else mps, else cpu: the detokenizer is small, and
+    # the anchor must run wherever the reference does.
+    device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+
     handler = AceStepHandler()
     handler.initialize_service(
         project_root=ROOT,
         config_path='acestep-v15-sft',
-        device='cuda',
+        device=device,
     )
     model = handler.model
     detok = model.detokenizer
 
-    codes_tensor = torch.tensor([codes], dtype=torch.long, device='cuda').unsqueeze(-1)
+    codes_tensor = torch.tensor([codes], dtype=torch.long, device=device).unsqueeze(-1)
 
     with torch.no_grad():
         # FSQ dequant + project_out
@@ -171,7 +177,7 @@ def main():
     # FSQ decode
     fsq_manual = np.array([fsq_decode_index(c) for c in codes])
     fsq_layer = model.tokenizer.quantizer.layers[0]
-    idx_tensor = torch.tensor([[[codes[0]]]], dtype=torch.long, device='cuda')
+    idx_tensor = torch.tensor([[[codes[0]]]], dtype=torch.long, device=device)
     raw_fsq = fsq_layer.indices_to_codes(idx_tensor)
     raw_fsq_np = raw_fsq[0, 0, 0].float().cpu().detach().numpy()
     stats("FSQ decode tok0", fsq_manual[0], raw_fsq_np)

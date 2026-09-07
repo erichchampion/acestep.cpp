@@ -1,0 +1,583 @@
+=== re-anchor 2026-09-07T17:56:13Z chip=Apple-M1-Max engine=c0d22ce ===
+--- debug-dit-cossim (turbo Q4_K_M, shared noise) ---
+[Request] Parsed ggml-turbo/request0.json
+[Request] seed=42 lm_batch=1 synth_batch=1
+[Request] caption: An upbeat and anthemic pop-rock track driven by bright, slig...
+[Request] lyrics: 490 bytes
+[Request] bpm=83 dur=88 key=G major ts=4 lang=fr
+[Request] lm: temp=0.85 cfg=2.0 top_p=0.90 top_k=0
+[Request] dit: steps=8 guidance=0.0 shift=3.0
+[Request] task_type: text2music
+[Request] solver: euler (stork_substeps=10)
+[Request] lm_mode: generate
+[Request] output_format: mp3
+[Request] synth_model: acestep-v15-turbo-Q4_K_M.gguf
+[Request] vae: vae-BF16.gguf
+[Request] audio_codes: (present)
+[Ace-Synth] Batch: 1 request(s)
+[Registry] Qwen3-Embedding-0.6B-Q8_0.gguf -> Text-Enc
+[Registry] acestep-5Hz-lm-0.6B-Q8_0.gguf -> LM
+[Registry] acestep-5Hz-lm-1.7B-Q8_0.gguf -> LM
+[Registry] acestep-v15-sft-Q8_0.gguf -> DiT
+[Registry] acestep-v15-turbo-Q4_K_M.gguf -> DiT
+[Registry] acestep-v15-turbo-Q8_0.gguf -> DiT
+[Registry] vae-BF16.gguf -> VAE
+[Store] Created (policy=STRICT)
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
+[Synth-Load] Ready: turbo=yes, fa=no, batch_cfg=yes
+[Resolve-Params] max audio codes across batch: 434 (86.8s @ 5Hz)
+[Resolve-T] T=2170, S=1085
+[Resolve-T] seed=42, steps=8, guidance=1.0, shift=3.0, duration=88.0s
+[BPE] Loaded from GGUF: 151643 vocab, 151387 merges
+ggml_metal_device_init: tensor API disabled for pre-M5 and pre-A19 devices
+ggml_metal_library_init: using embedded metal library
+ggml_metal_library_init: loaded in 0.012 sec
+ggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)
+ggml_metal_device_init: GPU name:   MTL0 (Apple M1 Max)
+ggml_metal_device_init: GPU family: MTLGPUFamilyApple7  (1007)
+ggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)
+ggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)
+ggml_metal_device_init: simdgroup reduction   = true
+ggml_metal_device_init: simdgroup matrix mul. = true
+ggml_metal_device_init: has unified memory    = true
+ggml_metal_device_init: has bfloat            = true
+ggml_metal_device_init: has tensor            = false
+ggml_metal_device_init: use residency sets    = true
+ggml_metal_device_init: use shared buffers    = true
+ggml_metal_device_init: recommendedMaxWorkingSetSize  = 55662.79 MB
+ggml_metal_init: allocating
+ggml_metal_init: found device: Apple M1 Max
+ggml_metal_init: picking default device: Apple M1 Max
+ggml_metal_init: use fusion         = true
+ggml_metal_init: use concurrency    = true
+ggml_metal_init: use graph optimize = true
+[Load] TextEncoder backend: MTL0 (CPU threads: 8)
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/Qwen3-Embedding-0.6B-Q8_0.gguf: 310 tensors, data at offset 5337664
+[Load] TextEncoder: 28L, H=1024, Nh=16/8
+[Qwen3] Attn: Q+K+V fused
+[Qwen3] MLP: gate+up fused
+[WeightCtx] Loaded 310 tensors, 742.7 MB into backend (unmapped 739.4 of 742.7 MB of staged file pages)
+[Store] Load TextEnc: 1064 ms
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_get_rows_bf16', name = 'kernel_get_rows_bf16'
+ggml_metal_library_compile_pipeline: loaded kernel_get_rows_bf16                          0x10345ff20 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_rms_norm_mul_f32_4', name = 'kernel_rms_norm_mul_f32_4'
+ggml_metal_library_compile_pipeline: loaded kernel_rms_norm_mul_f32_4                     0x103460720 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_q8_0_f32', name = 'kernel_mul_mm_q8_0_f32_bci=0_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q8_0_f32_bci=0_bco=1            0x103460f20 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f32_f32', name = 'kernel_cpy_f32_f32'
+ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f32                            0x103461720 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_rope_neox_f32', name = 'kernel_rope_neox_f32_imrope=0'
+ggml_metal_library_compile_pipeline: loaded kernel_rope_neox_f32_imrope=0                 0x103462ee0 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1             0x1034631e0 | th_max =  832 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_soft_max_f16', name = 'kernel_soft_max_f16'
+ggml_metal_library_compile_pipeline: loaded kernel_soft_max_f16                           0x1034634e0 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=1_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=1_bco=1             0x1034637e0 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0      0x728850000 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_swiglu_f32', name = 'kernel_swiglu_f32'
+ggml_metal_library_compile_pipeline: loaded kernel_swiglu_f32                             0x728850300 | th_max = 1024 | th_width =   32
+[Debug] text_hidden: [70, 1024] first4: 4.978124 -5.514876 0.318823 -22.383480
+[Debug] lyric_embed: [167, 1024] first4: 0.029175 0.032227 -0.022339 -0.028809
+[Store] Unload TextEnc (742.7 MB)
+ggml_metal_free: deallocating
+ggml_metal_init: allocating
+ggml_metal_init: found device: Apple M1 Max
+ggml_metal_init: picking default device: Apple M1 Max
+ggml_metal_init: use fusion         = true
+ggml_metal_init: use concurrency    = true
+ggml_metal_init: use graph optimize = true
+[Load] CondEncoder backend: MTL0 (CPU threads: 8)
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
+[Load] LyricEncoder: 8L
+[Qwen3] Attn: Q+K fused, V separate
+[Qwen3] MLP: gate+up fused
+[Load] TimbreEncoder: 4L
+[Qwen3] Attn: Q+K fused, V separate
+[Qwen3] MLP: gate+up fused
+[WeightCtx] Loaded 140 tensors, 352.5 MB into backend (unmapped 350.9 of 352.5 MB of staged file pages)
+[Load] CondEncoder: lyric(8L), timbre(4L), text_proj, null_cond
+[Store] Load CondEnc: 486 ms
+[CondEnc] Lyric sliding mask: 167x167, window=128
+[CondEnc] Timbre sliding mask: 1x1, window=128
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_q6_K_f32', name = 'kernel_mul_mm_q6_K_f32_bci=0_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q6_K_f32_bci=0_bco=1            0x728850600 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_q4_K_f32', name = 'kernel_mul_mm_q4_K_f32_bci=0_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q4_K_f32_bci=0_bco=1            0x728850900 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_soft_max_f32', name = 'kernel_soft_max_f32'
+ggml_metal_library_compile_pipeline: loaded kernel_soft_max_f32                           0x728850c00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_bf16_f32_4', name = 'kernel_mul_mv_bf16_f32_4_nsg=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_bf16_f32_4_nsg=1                0x728850f00 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=1_cb=0'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=1_cb=0      0x728851200 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_q6_K_f32', name = 'kernel_mul_mv_q6_K_f32_nsg=2'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_q6_K_f32_nsg=2                  0x728851500 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_q4_K_f32', name = 'kernel_mul_mv_q4_K_f32_nsg=2'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_q4_K_f32_nsg=2                  0x728851800 | th_max =  768 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32_4', name = 'kernel_mul_mv_f32_f32_4_nsg=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_4_nsg=1                 0x728851b00 | th_max =  768 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32_short', name = 'kernel_mul_mv_f32_f32_short_nsg=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_short_nsg=1             0x728851e00 | th_max = 1024 | th_width =   32
+[Encode] Packed: lyric=167 + timbre=1 + text=70 = 238 tokens
+[Encode-Text Batch0] 70+167 tokens -> enc_S=238, 48.2 ms
+[Debug] enc_hidden: [238, 2048] first4: 1.760119 -0.046689 -0.128880 0.057824
+[Store] Unload CondEnc (352.5 MB)
+ggml_metal_free: deallocating
+ggml_metal_init: allocating
+ggml_metal_init: found device: Apple M1 Max
+ggml_metal_init: picking default device: Apple M1 Max
+ggml_metal_init: use fusion         = true
+ggml_metal_init: use concurrency    = true
+ggml_metal_init: use graph optimize = true
+[Load] Detokenizer backend: MTL0 (CPU threads: 8)
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
+[WeightCtx] Loaded 30 tensors, 64.7 MB into backend (unmapped 64.3 of 64.7 MB of staged file pages)
+[Load] Detokenizer: FSQ(6->2048) + 2L encoder(S=5, 2048->64)
+[Store] Load FSQ-Detok: 95 ms
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_bf16_f32_short', name = 'kernel_mul_mv_bf16_f32_short_nsg=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_bf16_f32_short_nsg=1            0x728852100 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_repeat_f32', name = 'kernel_repeat_f32'
+ggml_metal_library_compile_pipeline: loaded kernel_repeat_f32                             0x728852400 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_ext_q6_K_f32_r1_5', name = 'kernel_mul_mv_ext_q6_K_f32_r1_5_nsg=2_nxpsg=8'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_q6_K_f32_r1_5_nsg=2_nxpsg=8      0x728852700 | th_max =  640 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_ext_q4_K_f32_r1_5', name = 'kernel_mul_mv_ext_q4_K_f32_r1_5_nsg=2_nxpsg=8'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_q4_K_f32_r1_5_nsg=2_nxpsg=8      0x728852a00 | th_max =  640 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_ext_f32_f32_r1_5', name = 'kernel_mul_mv_ext_f32_f32_r1_5_nsg=2_nxpsg=8'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_f32_f32_r1_5_nsg=2_nxpsg=8      0x728852d00 | th_max =  640 | th_width =   32
+[Context] Decoded: 434 codes -> 2170 frames (86.8s @ 25Hz)
+[Build-Context Batch0] Detokenizer: 883.8 ms, 434 codes
+[Debug] detok_output: [2170, 64] first4: -0.105276 1.439657 0.307319 -0.637006
+[Store] Unload FSQ-Detok (64.7 MB)
+ggml_metal_free: deallocating
+[Init-Noise Batch0] Philox noise seed=42, [2170, 64] solver=euler
+[Debug] noise: [2170, 64] first4: 0.194336 2.156250 -0.171875 0.847656
+[Debug] context: [2170, 128] first4: -0.105276 1.439657 0.307319 -0.637006
+[Init-Noise] Starting: T=2170, S=1085, enc_S=238, steps=8, batch=1 (cover)
+ggml_metal_init: allocating
+ggml_metal_init: found device: Apple M1 Max
+ggml_metal_init: picking default device: Apple M1 Max
+ggml_metal_init: use fusion         = true
+ggml_metal_init: use concurrency    = true
+ggml_metal_init: use graph optimize = true
+[Load] DiT backend: MTL0 (CPU threads: 8)
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
+[DiT] Self-attn: Q+K fused, V separate
+[DiT] Cross-attn: all separate
+[DiT] MLP: gate+up fused
+[Load] null_condition_emb found (CFG available)
+[WeightCtx] Loaded 478 tensors, 895.6 MB into backend (unmapped 885.5 of 890.5 MB of staged file pages)
+[Load] DiT: 24 layers, H=2048, Nh=16/8, D=128
+[Store] Load DiT: 1224 ms
+[DiT] Batch N=1, T=2170, S=1085, enc_S=238
+[DiT] Graph: 2063 nodes
+[DiT] Solver: ODE Euler (1 NFE/step, order 1)
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=10_cnt=1'
+ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=10_cnt=1              0x728853000 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_timestep_embedding_f32', name = 'kernel_timestep_embedding_f32'
+ggml_metal_library_compile_pipeline: loaded kernel_timestep_embedding_f32                 0x728853300 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=1_nf=1_rb=1_cb=0'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=1_nf=1_rb=1_cb=0      0x728853600 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=106_cnt=1'
+ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=106_cnt=1           0x728853900 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=1_cb=1'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=1_cb=1      0x728853c00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=0_cb=0'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=0_cb=0      0x728878000 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=1'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=1      0x728878300 | th_max = 1024 | th_width =   32
+[Debug] tproj: [12288] first4: 0.260934 -0.160421 -0.090493 0.048629
+[Debug] temb: [2048] first4: 0.000206 -0.133914 -0.034444 0.065020
+[Debug] temb_t: [2048] first4: 0.000970 0.025693 -0.052101 0.063330
+[Debug] temb_r: [2048] first4: -0.000764 -0.159607 0.017657 0.001690
+[Debug] sinusoidal_t: [256] first4: 0.562407 0.789701 0.439822 -0.023583
+[Debug] sinusoidal_r: [256] first4: 1.000000 1.000000 1.000000 1.000000
+[Debug] temb_lin1_t: [2048] first4: -0.049286 -0.053324 -0.012254 -0.047666
+[Debug] temb_lin1_r: [2048] first4: -0.015463 -0.031534 -0.021259 0.006135
+[Debug] hidden_after_proj_in: [2048, 1085] first4: -1.050163 -0.991790 0.528103 0.456383
+[Debug] proj_in_input: [192, 2170] first4: -0.105276 1.439657 0.307319 -0.637006
+[Debug] enc_after_cond_emb: [2048, 238] first4: -0.177558 0.742935 0.275699 -0.548267
+[Debug] layer0_sa_input: [2048, 1085] first4: -0.725961 -0.772612 -0.041960 0.261693
+[Debug] layer0_q_after_rope: [128, 16] first4: -0.177558 0.742935 0.275699 -0.548267
+[Debug] layer0_k_after_rope: [128, 8] first4: -1.601133 0.161945 -0.479878 0.455009
+[Debug] layer0_sa_output: [2048, 1085] first4: -1.601133 0.161945 -0.479878 0.455009
+[Debug] layer0_attn_out: [2048, 1085] first4: -1.579770 -1.063091 0.063837 0.465219
+[Debug] layer0_after_self_attn: [2048, 1085] first4: -1.579770 -1.063091 0.063837 0.465219
+[Debug] layer0_after_cross_attn: [2048, 1085] first4: -1.706963 -0.847652 -0.427845 0.500965
+[Debug] hidden_after_layer0: [2048, 1085] first4: -8.912197 0.418649 48.718388 -0.776349
+[Debug] hidden_after_layer6: [2048, 1085] first4: -21.589592 -1.263385 30.617277 -3.776878
+[Debug] hidden_after_layer12: [2048, 1085] first4: -16.993237 -13.126072 63.340042 28.515461
+[Debug] hidden_after_layer18: [2048, 1085] first4: -16.712191 10.695428 49.382164 16.872412
+[Debug] hidden_after_layer23: [2048, 1085] first4: -17.726339 9.814024 175.467545 130.355881
+[Debug] dit_step0_vt: [2170, 64] first4: -0.137297 1.084366 0.236834 2.193382
+[Debug] dit_step0_xt: [2170, 64] first4: 0.200577 2.106961 -0.182640 0.747957
+[DiT] Step 1/8 t=1.000
+[Debug] dit_step1_vt: [2170, 64] first4: -0.073675 1.212396 -0.293647 1.832326
+[Debug] dit_step1_xt: [2170, 64] first4: 0.204595 2.040830 -0.166623 0.648012
+[DiT] Step 2/8 t=0.955
+[Debug] dit_step2_vt: [2170, 64] first4: -0.043454 1.204895 0.067216 2.196790
+[Debug] dit_step2_xt: [2170, 64] first4: 0.207492 1.960504 -0.171104 0.501559
+[DiT] Step 3/8 t=0.900
+[Debug] dit_step3_vt: [2170, 64] first4: 0.234405 1.170191 0.275844 2.509086
+[Debug] dit_step3_xt: [2170, 64] first4: 0.187959 1.862988 -0.194091 0.292469
+[DiT] Step 4/8 t=0.833
+[Debug] dit_step4_vt: [2170, 64] first4: 0.336897 1.077099 0.096983 2.592783
+[Debug] dit_step4_xt: [2170, 64] first4: 0.151862 1.747584 -0.204482 0.014671
+[DiT] Step 5/8 t=0.750
+[Debug] dit_step5_vt: [2170, 64] first4: 0.232381 1.004297 -0.401117 2.696773
+[Debug] dit_step5_xt: [2170, 64] first4: 0.118665 1.604113 -0.147180 -0.370583
+[DiT] Step 6/8 t=0.643
+[Debug] dit_step6_vt: [2170, 64] first4: -0.108672 0.943681 -1.037611 2.767514
+[Debug] dit_step6_xt: [2170, 64] first4: 0.140400 1.415377 0.060342 -0.924085
+[DiT] Step 7/8 t=0.500
+[Debug] dit_step7_vt: [2170, 64] first4: -0.429991 0.817075 -1.598431 3.262279
+[Debug] dit_x0: [2170, 64] first4: 0.269397 1.170255 0.539872 -1.902769
+[DiT] Step 8/8 t=0.300
+[DiT-Generate] Total: 6172.0 ms (6172.0 ms/sample)
+[Debug] dit_output: [2170, 64] first4: 0.269397 1.170255 0.539872 -1.902769
+[Store] Unload DiT (895.6 MB)
+ggml_metal_free: deallocating
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/vae-BF16.gguf: 365 tensors, data at offset 30048
+ggml_metal_init: allocating
+ggml_metal_init: found device: Apple M1 Max
+ggml_metal_init: picking default device: Apple M1 Max
+ggml_metal_init: use fusion         = true
+ggml_metal_init: use concurrency    = true
+ggml_metal_init: use graph optimize = true
+[Load] VAE backend: MTL0 (CPU threads: 8)
+[VAE] Backend: MTL0, Weight buffer: 161.1 MB
+[VAE] Loaded: 5 blocks, upsample=1920x, F32 activations
+[Store] Load VAE-Dec: 484 ms
+[VAE] Tiled decode: 3 tiles (chunk=1024, overlap=64, stride=896)
+[VAE] Graph: 479 nodes, T_latent=960
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_im2col_f16', name = 'kernel_im2col_f16'
+ggml_metal_library_compile_pipeline: loaded kernel_im2col_f16                             0x728878600 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f16', name = 'kernel_mul_mm_f16_f16_bci=0_bco=0'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f16_bci=0_bco=0             0x728878900 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=0_cb=1'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=0_cb=1      0x728878c00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_snake_f32', name = 'kernel_snake_f32'
+ggml_metal_library_compile_pipeline: loaded kernel_snake_f32                              0x728878f00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=0_bco=0'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=0_bco=0             0x728879200 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_col2im_1d_f32', name = 'kernel_col2im_1d_f32'
+ggml_metal_library_compile_pipeline: loaded kernel_col2im_1d_f32                          0x728879500 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f16_f16_4', name = 'kernel_mul_mv_f16_f16_4_nsg=4'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f16_f16_4_nsg=4                 0x728879800 | th_max = 1024 | th_width =   32
+[VAE] Upsample factor: 1920.00 (expected ~1920)
+[VAE] Graph: 479 nodes, T_latent=1024
+[VAE] Graph: 479 nodes, T_latent=442
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f16', name = 'kernel_mul_mm_f16_f16_bci=0_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f16_bci=0_bco=1             0x728879b00 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=0_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=0_bco=1             0x728879e00 | th_max =  896 | th_width =   32
+[VAE] Tiled decode done: 3 tiles -> T_audio=4166400 (86.80s @ 48kHz)
+[VAE-Decode Batch0] Decode: 16869.4 ms
+[Debug] vae_audio: [2, 4166400] first4: 0.000496 0.001206 0.000962 0.001492
+[Store] Unload VAE-Dec (161.1 MB)
+ggml_metal_free: deallocating
+[MP3] Encoding 86.8s @ 128 kbps, 48000 Hz stereo
+[MP3] 1388928 bytes (12.0:1), 1315 ms (66.00x realtime), 10 threads
+[MP3] Wrote ggml-turbo/request00.mp3
+[Ace-Synth] All done
+2026-09-07 10:56:43.399 | WARNING  | acestep.training.lora_injection:<module>:74 - PEFT library not installed. LoRA training will not be available.
+2026-09-07 10:56:43.400 | WARNING  | acestep.training.lora_utils:<module>:17 - PEFT library not installed. LoRA training will not be available.
+2026-09-07 10:56:43.400 | WARNING  | acestep.training.lokr_utils:<module>:24 - LyCORIS library not installed. LoKr training/inference unavailable. Install with: pip install lycoris-lora
+2026-09-07 10:56:43.401 | WARNING  | acestep.training.data_module:<module>:25 - Lightning not installed. Training module will not be available.
+2026-09-07 10:56:43.402 | WARNING  | acestep.training.trainer:<module>:29 - Lightning Fabric not installed. Training will use basic training loop.
+2026-09-07 10:56:43.402 | WARNING  | acestep.training.trainer:<module>:40 - bitsandbytes not installed. Using standard AdamW.
+2026-09-07 10:56:43.423 | WARNING  | acestep.core.generation.handler.init_service_setup:_resolve_initialize_device:28 - [initialize_service] CUDA requested but unavailable. Falling back to MPS.
+2026-09-07 10:56:44.362 | INFO     | acestep.core.generation.handler.init_service_loader:_load_main_model_from_checkpoint:163 - [initialize_service] Attempting to load model with attention implementation: sdpa
+2026-09-07 10:56:51.749 | INFO     | acestep.core.generation.handler.mlx_dit_init:_init_mlx_dit:22 - [MLX-DiT] MLX not available on this platform; skipping.
+2026-09-07 10:56:51.749 | INFO     | acestep.core.generation.handler.mlx_vae_init:_init_mlx_vae:37 - [MLX-VAE] MLX not available on this platform; skipping.
+2026-09-07 10:56:51.750 | INFO     | acestep.core.generation.handler.generate_music:generate_music:199 - [generate_music] Starting generation...
+2026-09-07 10:56:51.750 | INFO     | acestep.core.generation.handler.generate_music:generate_music:202 - [generate_music] Preparing inputs...
+2026-09-07 10:56:51.761 | INFO     | acestep.core.generation.handler.conditioning_target:_prepare_target_latents_and_wavs:41 - [generate_music] Decoding audio codes for item 0...
+2026-09-07 10:56:52.147 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_precomputed_lm_hints:31 - [generate_music] Decoding audio codes for LM hints for item 0...
+2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:119 - 
+======================================================================
+2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:120 - 🔍 [DEBUG] DiT TEXT ENCODER INPUT (Inference)
+2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:121 - ======================================================================
+2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:122 - text_prompt:
+# Instruction
+Generate audio semantic tokens based on the given conditions:
+
+# Caption
+An upbeat and anthemic pop-rock track driven by bright, slightly overdriven
+
+# Metas
+- bpm: 83
+- timesignature: 4
+- keyscale: G major
+- duration: 88 seconds
+<|endoftext|>
+
+2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:123 - ======================================================================
+2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:124 - lyrics_text:
+# Languages
+fr
+
+# Lyric
+# Lyric
+[Intro - Guitar Riff]
+[Verse 1]
+Dans le monde des tutos virtuels
+G ta toise en nouvelle passion
+Avec Ggendoline et Pumbé à midi
+La communauté, c'est l'unité
+Quel joie, une clé
+
+[Chorus]
+Dans le monde des tutos virtuels
+Gândoline et Pumbé à midi
+Une famille à connecter, c'est vrai
+D'un enfant qui voit toi fusionner
+
+[Guitar Solo]
+
+[Verse 2]
+Dans le monde des tutos virtuels
+Gândoline, Pumbé à midi
+Une famille à connecter, c'est vrai
+D'un enfant qui voit toi fusionner<|endoftext|>
+2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:125 - ======================================================================
+
+2026-09-07 10:56:52.252 | INFO     | acestep.core.generation.handler.conditioning_embed:preprocess_batch:110 - [preprocess_batch] Inferring prompt embeddings...
+2026-09-07 10:56:52.505 | INFO     | acestep.core.generation.handler.conditioning_embed:preprocess_batch:113 - [preprocess_batch] Inferring lyric embeddings...
+2026-09-07 10:56:52.509 | INFO     | acestep.core.generation.handler.service_generate_execute:_execute_service_generate_diffusion:131 - [service_generate] Generating audio... (DiT backend: PyTorch (mps))
+2026-09-07 10:56:53.018 | INFO     | acestep.core.generation.handler.service_generate_execute:_execute_service_generate_diffusion:211 - [service_generate] DiT diffusion via PyTorch (mps)...
+2026-09-07 10:57:00.760 | INFO     | acestep.core.generation.handler.generate_music_decode:_prepare_generate_music_decode_state:42 - [generate_music] Model generation completed. Decoding latents...
+2026-09-07 10:57:00.760 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_prepare_generate_music_decode_state:64 - [generate_music] pred_latents: torch.Size([1, 2170, 64]), dtype=torch.float32
+2026-09-07 10:57:00.760 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_prepare_generate_music_decode_state:65 - [generate_music] time_costs: {'encoder_time_cost': 0.10581803321838379, 'diffusion_time_cost': 7.635914087295532, 'diffusion_per_step_time_cost': 0.9544892609119415, 'total_time_cost': 7.741732120513916, 'offload_time_cost': 0.0}
+2026-09-07 10:57:00.785 | INFO     | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:119 - [generate_music] Decoding latents with VAE...
+2026-09-07 10:57:00.790 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:143 - [generate_music] Before VAE decode: allocated=0.00GB, max=0.00GB
+2026-09-07 10:57:00.790 | INFO     | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:156 - [generate_music] MPS device: skipping VRAM check (unified memory), keeping VAE on MPS
+2026-09-07 10:57:00.790 | INFO     | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:180 - [generate_music] Using tiled VAE decode to reduce VRAM usage...
+2026-09-07 10:57:00.791 | INFO     | acestep.core.generation.handler.vae_decode:tiled_decode:56 - [tiled_decode] chunk_size=512, offload_wav_to_cpu=False, latents_shape=torch.Size([1, 64, 2170])
+2026-09-07 10:57:00.791 | INFO     | acestep.core.generation.handler.vae_decode:tiled_decode:68 - [tiled_decode] VAE decode via PyTorch MPS; reducing chunk_size from 512 to 32 and overlap from 64 to 8 to avoid MPS conv output limit.
+2026-09-07 10:57:13.068 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:201 - [generate_music] After VAE decode: allocated=0.00GB, max=0.00GB
+2026-09-07 10:57:13.171 | INFO     | acestep.core.generation.handler.generate_music_payload:_build_generate_music_success_payload:35 - [generate_music] VAE decode completed. Preparing audio tensors...
+2026-09-07 10:57:13.173 | INFO     | acestep.core.generation.handler.generate_music_payload:_build_generate_music_success_payload:47 - [generate_music] Done! Generated 1 audio tensors.
+[Request] Loaded request0.json
+[Turbo] steps=8, shift=3.0 | acestep-v15-turbo-Q4_K_M.gguf
+[GGML] Running acestep-v15-turbo-Q4_K_M.gguf...
+[GGML] Done, 47 dump files
+[Python] Initializing acestep-v15-turbo...
+[Python] Generating (acestep-v15-turbo, 8 steps)...
+Using precomputed LM hints
+Using precomputed LM hints
+[Python] predictVelocity t=1.0000 mean=0.04146796 shape=[1, 238, 2048]
+[Python] predictVelocity t=0.9545 mean=0.05500258 shape=[1, 238, 2048]
+[Python] predictVelocity t=0.9000 mean=0.06071971 shape=[1, 238, 2048]
+[Python] predictVelocity t=0.8333 mean=0.06443837 shape=[1, 238, 2048]
+[Python] predictVelocity t=0.7500 mean=0.06586695 shape=[1, 238, 2048]
+[Python] predictVelocity t=0.6429 mean=0.07056092 shape=[1, 238, 2048]
+[Python] predictVelocity t=0.5000 mean=0.07144891 shape=[1, 238, 2048]
+[Python] predictVelocity t=0.3000 mean=0.07606279 shape=[1, 238, 2048]
+!!! LATENT PRE-VAE (PYTORCH) !!! mean=-0.068976 std=1.023077 peak=7.270741 correlation=-0.021774
+[Python] Wrote python-turbo/output.wav: 4166400 samples (86.80s @ 48kHz stereo)
+[Python] Done, 40 dump files
+[Turbo] Cosine similarities GGML vs Python
+  stage                          GGML vs Python
+  text_hidden                          0.999011
+  lyric_embed                          1.000000
+  enc_hidden                           0.996449
+  detok_output                         0.999641
+  context                              0.999770
+  noise                                1.000000
+  temb_t                               0.999907
+  hidden_after_proj_in                 0.999926
+  enc_after_cond_emb                   0.996970
+  layer0_sa_output                     0.998475
+  hidden_after_layer0                  0.999722
+  hidden_after_layer6                  0.999464
+  hidden_after_layer12                 0.995682
+  hidden_after_layer18                 0.993408
+  hidden_after_layer23                 0.988826
+  dit_step0_vt                         0.962480
+  dit_step0_xt                         0.999921
+  dit_step1_vt                         0.960299
+  dit_step1_xt                         0.999733
+  dit_step2_vt                         0.973462
+  dit_step2_xt                         0.999383
+  dit_step3_vt                         0.975624
+  dit_step3_xt                         0.998656
+  dit_step4_vt                         0.971460
+  dit_step4_xt                         0.996879
+  dit_step5_vt                         0.967022
+  dit_step5_xt                         0.992577
+  dit_step6_vt                         0.962108
+  dit_step6_xt                         0.983909
+  dit_step7_vt                         0.952272
+  dit_x0                               0.970354
+  vae_audio                            0.901585
+  vae_audio (STFT cosine)              0.966859
+[Turbo] Error growth GGML vs Python
+  stage                         cos    max_err   mean_err     mean_A      std_A     mean_B      std_B
+  dit_step0_xt             0.999921   0.162052   0.008163  -0.002245   0.973154  -0.002312   0.972948
+  dit_step1_xt             0.999733   0.257939   0.014808  -0.005083   0.943189  -0.005313   0.942701
+  dit_step2_xt             0.999383   0.370861   0.022089  -0.008989   0.910207  -0.009360   0.909230
+  dit_step3_xt             0.998656   0.524977   0.031438  -0.014235   0.875289  -0.014730   0.873884
+  dit_step4_xt             0.996879   0.795719   0.045638  -0.021132   0.843833  -0.021788   0.842075
+  dit_step5_xt             0.992577   1.141199   0.067843  -0.030976   0.827420  -0.031868   0.825379
+  dit_step6_xt             0.983909   1.691090   0.102460  -0.045035   0.858506  -0.046157   0.856243
+--- debug-lm-logits (0.6B planner, first-token logits) ---
+[Request] Parsed lm-request.json
+[Request] seed=158961132 lm_batch=1 synth_batch=1
+[Request] caption: An upbeat and anthemic pop-rock track driven by bright, slig...
+[Request] lyrics: 490 bytes
+[Request] bpm=83 dur=88 key=G major ts=4 lang=fr
+[Request] lm: temp=0.85 cfg=2.0 top_p=0.90 top_k=0
+[Request] dit: steps=8 guidance=1.0 shift=3.0
+[Request] task_type: text2music
+[Request] solver: euler (stork_substeps=10)
+[Request] lm_mode: generate
+[Request] output_format: mp3
+[Request] lm_model: acestep-5Hz-lm-0.6B-Q8_0.gguf
+[Request] audio_codes: (none)
+[Registry] Qwen3-Embedding-0.6B-Q8_0.gguf -> Text-Enc
+[Registry] acestep-5Hz-lm-0.6B-Q8_0.gguf -> LM
+[Registry] acestep-5Hz-lm-1.7B-Q8_0.gguf -> LM
+[Registry] acestep-v15-sft-Q8_0.gguf -> DiT
+[Registry] acestep-v15-turbo-Q4_K_M.gguf -> DiT
+[Registry] acestep-v15-turbo-Q8_0.gguf -> DiT
+[Registry] vae-BF16.gguf -> VAE
+[Store] Created (policy=STRICT)
+[Ace-LM] Ready: path=../models/acestep-5Hz-lm-0.6B-Q8_0.gguf, max_seq=8192, max_batch=1, fa=yes, fsm=yes
+ggml_metal_device_init: tensor API disabled for pre-M5 and pre-A19 devices
+ggml_metal_library_init: using embedded metal library
+ggml_metal_library_init: loaded in 0.011 sec
+ggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)
+ggml_metal_device_init: GPU name:   MTL0 (Apple M1 Max)
+ggml_metal_device_init: GPU family: MTLGPUFamilyApple7  (1007)
+ggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)
+ggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)
+ggml_metal_device_init: simdgroup reduction   = true
+ggml_metal_device_init: simdgroup matrix mul. = true
+ggml_metal_device_init: has unified memory    = true
+ggml_metal_device_init: has bfloat            = true
+ggml_metal_device_init: has tensor            = false
+ggml_metal_device_init: use residency sets    = true
+ggml_metal_device_init: use shared buffers    = true
+ggml_metal_device_init: recommendedMaxWorkingSetSize  = 55662.79 MB
+ggml_metal_init: allocating
+ggml_metal_init: found device: Apple M1 Max
+ggml_metal_init: picking default device: Apple M1 Max
+ggml_metal_init: use fusion         = true
+ggml_metal_init: use concurrency    = true
+ggml_metal_init: use graph optimize = true
+[Load] LM backend: MTL0 (CPU threads: 8)
+[GGUF] ../models/acestep-5Hz-lm-0.6B-Q8_0.gguf: 310 tensors, data at offset 5339520
+[LM-Config] 28L, H=1024, V=217204, Nh=16, Nkv=8, D=128, tied=1
+[Qwen3] Attn: Q+K+V fused
+[Qwen3] MLP: gate+up fused
+[WeightCtx] Loaded 310 tensors, 671.9 MB into backend (unmapped 668.5 of 671.9 MB of staged file pages)
+[LM-KV] Allocated 2 sets x 28 layers (4D batched), 1792.0 MB
+[Store] Load LM: 1017 ms
+[LM] Partial head: 65559 rows (151645..217204), 68.0 MB
+[BPE] Loaded from GGUF: 151643 vocab, 151387 merges
+[FSM] Prefix trees: bpm=301, dur=601, key=106, lang=53, tsig=5 nodes
+[LM-Debug] Tokens -> ./tokens.csv (260)
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_get_rows_q8_0', name = 'kernel_get_rows_q8_0'
+ggml_metal_library_compile_pipeline: loaded kernel_get_rows_q8_0                          0x103281870 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_rms_norm_mul_f32_4', name = 'kernel_rms_norm_mul_f32_4'
+ggml_metal_library_compile_pipeline: loaded kernel_rms_norm_mul_f32_4                     0x103282070 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_q8_0_f32', name = 'kernel_mul_mm_q8_0_f32_bci=0_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q8_0_f32_bci=0_bco=1            0x103282870 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f32_f32', name = 'kernel_cpy_f32_f32'
+ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f32                            0x103283070 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_rope_neox_f32', name = 'kernel_rope_neox_f32_imrope=0'
+ggml_metal_library_compile_pipeline: loaded kernel_rope_neox_f32_imrope=0                 0x103283870 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f32_f16', name = 'kernel_cpy_f32_f16'
+ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f16                            0x103283b70 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_pad', name = 'kernel_flash_attn_ext_pad_mask=1_ncpsg=64'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_pad_mask=1_ncpsg=64      0x103283e70 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_blk', name = 'kernel_flash_attn_ext_blk_nqptg=8_ncpsg=64'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_blk_nqptg=8_ncpsg=64      0x103284170 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_f16_dk128_dv128', name = 'kernel_flash_attn_ext_f16_dk128_dv128_mask=1_sinks=0_bias=0_scap=0_kvpad=1_bcm=1_ns10=128_ns20=128_nsg=4'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_f16_dk128_dv128_mask=1_sinks=0_bias=0_scap=0_kvpad=1_bcm=1_ns10=128_ns20=128_nsg=4      0x74120c000 | th_max =  640 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0      0x74120c300 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_swiglu_f32', name = 'kernel_swiglu_f32'
+ggml_metal_library_compile_pipeline: loaded kernel_swiglu_f32                             0x74120c600 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_q8_0_f32', name = 'kernel_mul_mv_q8_0_f32_nsg=4'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_q8_0_f32_nsg=4                  0x74120c900 | th_max = 1024 | th_width =   32
+[LM-Debug] Logits -> ./logits.bin (217204 floats, argmax=189788)
+[LM-Phase2] N=1, CoT[0]:
+bpm: 83
+caption: An upbeat and anthemic pop-rock track driven by bright, slightly overdriven
+duration: 88
+keyscale: G major
+language: fr
+timesignature: 4
+[LM-Phase2] max_tokens: 540, CFG: 2.00, seeds: 3812928112..3812928112
+[LM-Phase2] Prefill 84ms (shared, 1 cond + 1 uncond)
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_ext_q8_0_f32_r1_2', name = 'kernel_mul_mv_ext_q8_0_f32_r1_2_nsg=2_nxpsg=16'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_q8_0_f32_r1_2_nsg=2_nxpsg=16      0x74120cc00 | th_max =  832 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_pad', name = 'kernel_flash_attn_ext_pad_mask=1_ncpsg=32'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_pad_mask=1_ncpsg=32      0x74120cf00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_vec_f16_dk128_dv128', name = 'kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=1_sink=0_bias=0_scap=0_kvpad=1_ns10=128_ns20=128_nsg=1_nwg=32'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=1_sink=0_bias=0_scap=0_kvpad=1_ns10=128_ns20=128_nsg=1_nwg=32      0x74120d200 | th_max =  448 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_vec_reduce', name = 'kernel_flash_attn_ext_vec_reduce_dv=128_nwg=32'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_reduce_dv=128_nwg=32      0x74120d500 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_vec_f16_dk128_dv128', name = 'kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=1_sink=0_bias=0_scap=0_kvpad=0_ns10=128_ns20=128_nsg=1_nwg=32'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=1_sink=0_bias=0_scap=0_kvpad=0_ns10=128_ns20=128_nsg=1_nwg=32      0x74120d800 | th_max =  448 | th_width =   32
+[LM-Phase2] Step 50, 1 active, 51 total codes, 86.1 tok/s
+[LM-Phase2] Step 100, 1 active, 101 total codes, 82.7 tok/s
+[LM-Phase2] Step 150, 1 active, 151 total codes, 79.8 tok/s
+[LM-Phase2] Step 200, 1 active, 201 total codes, 78.6 tok/s
+[LM-Phase2] Step 250, 1 active, 251 total codes, 76.4 tok/s
+[LM-Phase2] Step 300, 1 active, 301 total codes, 74.1 tok/s
+[LM-Phase2] Step 350, 1 active, 351 total codes, 74.7 tok/s
+[LM-Phase2] Step 400, 1 active, 401 total codes, 75.3 tok/s
+[LM-Phase2] Decode 5786ms
+[LM-Phase2 Batch0] seed=3812928112, 436 codes
+[Ace-LM] Total 5957ms | seed=158961132
+[Store] Unload LM (671.9 MB)
+ggml_metal_free: deallocating
+[Request] Wrote lm-request0.json
+[Test] Prompt: 260 tokens, first 10: [151644, 8948, 198, 2, 29051, 198, 31115, 7699, 41733, 11211]
+[Python] logits: min=-25.6958 max=57.9166
+[Python] argmax: 189788 (val=57.9166)
+[Python] top5: [189788 175676 177212 175164 176988]
+[GGML] logits: min=-25.6750 max=57.9257
+[GGML] argmax: 189788 (val=57.9257)
+[GGML] top5: [189788 175676 175164 175684 176988]
+[Test] Cosine similarity Python<>GGML: 1.000004
+[Test] Top-10 overlap: 9/10
+--- debug-detok-cossim (sft Q8_0, FSQ detokenizer) ---
+2026-09-07 10:57:54.327 | WARNING  | acestep.training.lora_injection:<module>:74 - PEFT library not installed. LoRA training will not be available.
+2026-09-07 10:57:54.327 | WARNING  | acestep.training.lora_utils:<module>:17 - PEFT library not installed. LoRA training will not be available.
+2026-09-07 10:57:54.328 | WARNING  | acestep.training.lokr_utils:<module>:24 - LyCORIS library not installed. LoKr training/inference unavailable. Install with: pip install lycoris-lora
+2026-09-07 10:57:54.328 | WARNING  | acestep.training.data_module:<module>:25 - Lightning not installed. Training module will not be available.
+2026-09-07 10:57:54.329 | WARNING  | acestep.training.trainer:<module>:29 - Lightning Fabric not installed. Training will use basic training loop.
+2026-09-07 10:57:54.329 | WARNING  | acestep.training.trainer:<module>:40 - bitsandbytes not installed. Using standard AdamW.
+2026-09-07 10:57:55.489 | INFO     | acestep.core.generation.handler.init_service_loader:_load_main_model_from_checkpoint:163 - [initialize_service] Attempting to load model with attention implementation: sdpa
+2026-09-07 10:58:03.353 | INFO     | acestep.core.generation.handler.mlx_dit_init:_init_mlx_dit:22 - [MLX-DiT] MLX not available on this platform; skipping.
+2026-09-07 10:58:03.353 | INFO     | acestep.core.generation.handler.mlx_vae_init:_init_mlx_vae:37 - [MLX-VAE] MLX not available on this platform; skipping.
+[Input] 434 codes, first 5: [43316, 18426, 13366, 59455, 17783]
+[GGML] Running ace-synth...
+[GGML] Done
+[GGML] detok_output: [2170, 64]
+[Python] Loading model...
+[Python] detok output: (2170, 64)
+[Compare] GGML vs Python (2170 frames)
+detok_output (full)       cos=0.999997 maxdiff=0.014995 meandiff=0.002429 [OK]
+token 0 (5 frames)        cos=0.999997 maxdiff=0.010540 meandiff=0.002364 [OK]
+token 1 (5 frames)        cos=0.999997 maxdiff=0.011659 meandiff=0.002479 [OK]
+token 2 (5 frames)        cos=0.999998 maxdiff=0.010190 meandiff=0.002326 [OK]
+token 3 (5 frames)        cos=0.999997 maxdiff=0.011429 meandiff=0.002502 [OK]
+token 4 (5 frames)        cos=0.999997 maxdiff=0.011116 meandiff=0.002437 [OK]
+Frame 0 (ch 0-7):
+GGML:   [-0.12499239  1.4376724   0.30796295 -0.62476015  0.01190138  0.63452274
+ -0.7094975   0.48085338]
+Python: [-0.12518956  1.4350303   0.30819416 -0.6242545   0.01530789  0.6384447
+ -0.7085331   0.47734383]
+[Math validation] Python intermediates vs manual compute
+FSQ decode tok0           cos=1.000000 maxdiff=0.000000 meandiff=0.000000 [OK]
+project_out tok0          cos=1.000000 maxdiff=0.000000 meandiff=0.000000 [OK]
+embed_tokens tok0         cos=1.000000 maxdiff=0.000000 meandiff=0.000000 [OK]
+special_tokens tok0       cos=1.000000 maxdiff=0.000000 meandiff=0.000000 [OK]
+[Summary]
+PASS: cos=0.999997

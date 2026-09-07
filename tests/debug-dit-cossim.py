@@ -221,7 +221,19 @@ def run_python(dump_dir, req, cfg, adapter_dir=None):
     model.prepare_condition = hooked_prepare
 
     orig_noise = model.prepare_noise
+    noise_from = globals().get("_NOISE_FROM")
     def hooked_noise(*a, **kw):
+        if noise_from:
+            # MPS/CPU anchors: torch's RNG there is not the CUDA Philox the
+            # engine reproduces, so two different noises would be compared.
+            # Sharing the GGML dump isolates the model comparison -- the same
+            # protocol the removed --noise-file flag served, in reverse.
+            import torch
+            ref = orig_noise(*a, **kw)
+            data, shape = load_dump(noise_from)
+            n = torch.from_numpy(data.reshape(shape)).to(dtype=ref.dtype, device=ref.device).unsqueeze(0)
+            _dumps["noise"] = n[0].clone()
+            return n
         n = orig_noise(*a, **kw)
         _dumps["noise"] = n[0].clone()
         return n
@@ -486,12 +498,15 @@ def main():
                     help="which model to test (default: turbo)")
     ap.add_argument("--quant", default="BF16",
                     help="quantization suffix for GGUF (default: BF16, e.g. Q6_K, Q8_0)")
+    ap.add_argument("--noise-from", default=None,
+                    help="load the GGML noise dump for the Python side (MPS/CPU anchors: torch RNG there differs from the engine's CUDA-philox RNG)")
     ap.add_argument("--adapters", default=None,
                     help="path to adapter directory (optional)")
     args = ap.parse_args()
 
     req = load_request()
 
+    globals()["_NOISE_FROM"] = args.noise_from
     modes = list(MODE_CONFIG.keys()) if args.mode == "all" else [args.mode]
     ok = True
     for m in modes:

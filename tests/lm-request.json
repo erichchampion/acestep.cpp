@@ -1,0 +1,19 @@
+{
+  "caption": "An upbeat and anthemic pop-rock track driven by bright, slightly overdriven",
+  "lyrics": "# Lyric\n[Intro - Guitar Riff]\n[Verse 1]\nDans le monde des tutos virtuels\nG ta toise en nouvelle passion\nAvec Ggendoline et Pumb\u00e9 \u00e0 midi\nLa communaut\u00e9, c'est l'unit\u00e9\nQuel joie, une cl\u00e9\n\n[Chorus]\nDans le monde des tutos virtuels\nG\u00e2ndoline et Pumb\u00e9 \u00e0 midi\nUne famille \u00e0 connecter, c'est vrai\nD'un enfant qui voit toi fusionner\n\n[Guitar Solo]\n\n[Verse 2]\nDans le monde des tutos virtuels\nG\u00e2ndoline, Pumb\u00e9 \u00e0 midi\nUne famille \u00e0 connecter, c'est vrai\nD'un enfant qui voit toi fusionner",
+  "bpm": 83,
+  "duration": 88.0,
+  "keyscale": "G major",
+  "timesignature": "4",
+  "vocal_language": "fr",
+  "seed": 158961132,
+  "thinking": false,
+  "lm_temperature": 0.85,
+  "lm_cfg_scale": 2.0,
+  "lm_top_p": 0.9,
+  "lm_negative_prompt": "NO USER INPUT",
+  "inference_steps": 8,
+  "guidance_scale": 1.0,
+  "shift": 3.0,
+  "lm_model": "acestep-5Hz-lm-0.6B-Q8_0.gguf"
+}
