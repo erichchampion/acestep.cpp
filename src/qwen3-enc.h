@@ -380,6 +380,7 @@ static void qwen3_forward(Qwen3GGML * m, const int * token_ids, int S, float * o
     size_t                  ctx_size = 2048 * ggml_tensor_overhead() + ggml_graph_overhead();
     struct ggml_init_params gp       = { ctx_size, NULL, true };
     struct ggml_context *   ctx      = ggml_init(gp);
+    struct GgmlCtxGuard { ggml_context* p; ~GgmlCtxGuard(){ if(p) ggml_free(p); } } _ctx_guard{ctx};
 
     struct ggml_cgraph * gf = ggml_new_graph_custom(ctx, 4096, false);
 
@@ -445,7 +446,7 @@ static void qwen3_forward(Qwen3GGML * m, const int * token_ids, int S, float * o
     ggml_backend_tensor_get(out, output, 0, H * S * sizeof(float));
 
     ggml_backend_sched_reset(m->sched);
-    ggml_free(ctx);
+    // _ctx_guard frees ctx
 }
 
 // Embedding lookup via ggml graph (reuses text encoder weights + scheduler)
@@ -457,6 +458,7 @@ static void qwen3_embed_lookup(Qwen3GGML * m, const int * token_ids, int S, floa
     size_t                  ctx_size = 16 * ggml_tensor_overhead() + ggml_graph_overhead();
     struct ggml_init_params gp       = { ctx_size, NULL, true };
     struct ggml_context *   ctx      = ggml_init(gp);
+    struct GgmlCtxGuard { ggml_context* p; ~GgmlCtxGuard(){ if(p) ggml_free(p); } } _ctx_guard{ctx};
     struct ggml_cgraph *    gf       = ggml_new_graph(ctx);
 
     struct ggml_tensor * t_ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, S);
@@ -476,7 +478,7 @@ static void qwen3_embed_lookup(Qwen3GGML * m, const int * token_ids, int S, floa
     ggml_backend_tensor_get(out, output, 0, (size_t) H * S * sizeof(float));
 
     ggml_backend_sched_reset(m->sched);
-    ggml_free(ctx);
+    // _ctx_guard frees ctx
 }
 
 // Free

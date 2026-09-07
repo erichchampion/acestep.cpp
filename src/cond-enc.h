@@ -187,6 +187,7 @@ static void cond_ggml_forward(CondGGML *           m,
     size_t                  ctx_size = 4096 * ggml_tensor_overhead() + ggml_graph_overhead();
     struct ggml_init_params gp       = { ctx_size, NULL, true };
     struct ggml_context *   ctx      = ggml_init(gp);
+    struct GgmlCtxGuard { ggml_context* p; ~GgmlCtxGuard(){ if(p) ggml_free(p); } } _ctx_guard{ctx};
     struct ggml_cgraph *    gf       = ggml_new_graph_custom(ctx, 8192, false);
 
     // Positions for lyric (bidirectional, 0..S_lyric-1)
@@ -377,7 +378,7 @@ static void cond_ggml_forward(CondGGML *           m,
             S_total);
 
     ggml_backend_sched_reset(m->sched);
-    ggml_free(ctx);
+    // _ctx_guard frees ctx
 }
 
 // Free
