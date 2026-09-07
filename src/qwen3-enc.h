@@ -11,6 +11,7 @@
 // Final: RMSNorm
 
 #pragma once
+#include "ace-fatal.h"
 #include "backend.h"
 #include "ggml-backend.h"
 #include "ggml.h"
@@ -341,6 +342,7 @@ static bool qwen3_load_text_encoder(Qwen3GGML * m, const char * gguf_path) {
         fprintf(stderr, "[Load] FATAL: cannot load %s\n", gguf_path);
         return false;
     }
+    GgufCloser gfc(&gf);
 
     // embed(1) + 28 layers * 11 weights + final_norm(1) = 310
     int n_tensors = 1 + m->cfg.n_layers * 11 + 1;
@@ -411,8 +413,7 @@ static void qwen3_forward(Qwen3GGML * m, const int * token_ids, int S, float * o
 
     // Allocate
     if (!ggml_backend_sched_alloc_graph(m->sched, gf)) {
-        fprintf(stderr, "[TextEncoder] FATAL: failed to allocate graph (%d tokens)\n", S);
-        exit(1);
+        ace_fatal(1, "[TextEncoder] FATAL: failed to allocate graph (%d tokens)\n", S);
     }
 
     // Set inputs
@@ -468,8 +469,7 @@ static void qwen3_embed_lookup(Qwen3GGML * m, const int * token_ids, int S, floa
     ggml_build_forward_expand(gf, out);
 
     if (!ggml_backend_sched_alloc_graph(m->sched, gf)) {
-        fprintf(stderr, "[TextEncoder] FATAL: failed to allocate graph (embed lookup, %d tokens)\n", S);
-        exit(1);
+        ace_fatal(1, "[TextEncoder] FATAL: failed to allocate graph (embed lookup, %d tokens)\n", S);
     }
     ggml_backend_tensor_set(t_ids, token_ids, 0, S * sizeof(int));
     ggml_backend_sched_graph_compute(m->sched, gf);
