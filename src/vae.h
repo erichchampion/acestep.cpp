@@ -486,7 +486,13 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
             fprintf(stderr, "[VAE] Cancelled at tile 0/1\n");
             return -1;
         }
-        return vae_ggml_decode(m, latent, T_latent, audio_out, max_T_audio);
+        int T_audio = vae_ggml_decode(m, latent, T_latent, audio_out, max_T_audio);
+        if (T_audio > 0) {
+            // The whole decode is one tile: stream it too (#52), planar
+            // [ch0: T_audio][ch1: T_audio] as vae_ggml_decode wrote it.
+            ace_pcm(progress, audio_out, audio_out + T_audio, T_audio);
+        }
+        return T_audio;
     }
 
     int stride    = chunk_size - 2 * overlap;
@@ -563,6 +569,11 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
                                 core_len * sizeof(float));
         ggml_backend_tensor_get(m->graph_output, audio_out + max_T_audio + audio_write_pos,
                                 (tile_T + trim_start) * sizeof(float), core_len * sizeof(float));
+        // Stream this tile's core PCM (#52) before advancing: planar, the two
+        // channels just written. ch1 sits at the +max_T_audio staging offset
+        // until the post-loop compaction, so hand that pointer, not the final
+        // one. Contract: the consumer copies within the call.
+        ace_pcm(progress, audio_out + audio_write_pos, audio_out + max_T_audio + audio_write_pos, core_len);
         audio_write_pos += core_len;
     }
 

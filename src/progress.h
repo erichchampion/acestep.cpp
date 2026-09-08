@@ -51,6 +51,17 @@ enum AceStage {
 struct AceProgress {
     bool (*fn)(void * data, AceStage stage, int step, int total) = nullptr;
     void * data                                                  = nullptr;
+
+    // Streaming tile decode (#52). Optionally called once per completed VAE
+    // decode tile with that tile's PCM: contiguous, non-overlapping, in order,
+    // PLANAR per channel (left and right each `n_frames` at 48 kHz). The
+    // pointers are into the caller's decode buffer and valid only for the
+    // duration of the call -- a consumer must copy, not retain. nullptr (the
+    // default) streams nothing, so callers that only want progress are
+    // unchanged. It lets a consumer start playback after tile 1 rather than
+    // after the whole decode; `fn`'s (stage, step, total) still delimit the
+    // tiles, and `pcm` carries their audio.
+    void (*pcm)(void * data, const float * left, const float * right, int n_frames) = nullptr;
 };
 
 // The single place the pipelines poll for progress: reports (stage, step, total)
@@ -65,4 +76,13 @@ static inline bool ace_progress(const AceProgress & p, AceStage stage, int step,
 // tell it from a real report; returns true if cancelled.
 static inline bool ace_cancelled(const AceProgress & p, AceStage stage) {
     return p.fn && p.fn(p.data, stage, -1, -1);
+}
+
+// Stream one completed decode tile's PCM (#52). No-op when no pcm callback is
+// set, so it is free to call from the decode loop unconditionally. See the pcm
+// field above for the buffer-lifetime contract (valid for the call only).
+static inline void ace_pcm(const AceProgress & p, const float * left, const float * right, int n_frames) {
+    if (p.pcm) {
+        p.pcm(p.data, left, right, n_frames);
+    }
 }
