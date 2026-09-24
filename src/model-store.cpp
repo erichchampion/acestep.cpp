@@ -105,8 +105,9 @@ struct ModelStore {
 
     // What store_purge took out of service while it was still in use. A GPU
     // module a caller holds is freed by the store_release that drops its last
-    // reference; a CPU entry (no refcount -- callers keep raw pointers into
-    // it) lives until store_free. Neither is ever found by a lookup again.
+    // reference. DiT metadata -- the one CPU entry a context keeps a pointer
+    // to (AceSynth::meta) past a call -- lives until store_free. Neither is
+    // ever found by a lookup again.
     std::unordered_map<void *, GpuEntry> retired_gpu;
     std::vector<CpuEntry>                retired_cpu;
 
@@ -118,6 +119,13 @@ struct ModelStore {
 // refcount > 0: that would mean two mutually exclusive modules are live at
 // once, which violates the contract in STRICT mode.
 static void evict_all_except(ModelStore * s, const ModelKey & keep) {
+    // A module store_purge retired while held is still resident: in STRICT it
+    // conflicts with the one about to load exactly as a cached one would.
+    for (const auto & kv : s->retired_gpu) {
+        fprintf(stderr, "[Store] FATAL: loading while retired %s is still held (refcount=%d) in STRICT mode\n",
+                kv.second.label, kv.second.refcount);
+        abort();
+    }
     for (auto it = s->gpu.begin(); it != s->gpu.end();) {
         ModelKeyEq eq;
         if (eq(it->first, keep)) {
@@ -240,14 +248,21 @@ void store_purge(ModelStore * s) {
         }
     }
     s->gpu.clear();
-    // CPU: callers hold raw pointers with no refcount, so nothing here can be
-    // freed safely -- only unhooked, so the next lookup reads the file again.
-    for (auto * table : { &s->bpe_by_path, &s->silence_by_path, &s->fsm_by_path, &s->dit_meta_by_path }) {
+    // CPU. BPE, silence and FSM are fetched and used inside ONE call (the FSM
+    // is copied per call), and calls do not overlap a purge, so they are
+    // freed now. DiT metadata is the exception: a synth context keeps its
+    // pointer (AceSynth::meta) across calls, so it is unhooked and retired
+    // until store_free -- bounded by one small entry per DiT per purge.
+    for (auto * table : { &s->bpe_by_path, &s->silence_by_path, &s->fsm_by_path }) {
         for (auto & kv : *table) {
-            s->retired_cpu.push_back(kv.second);
+            kv.second.deleter(kv.second.ptr);
         }
         table->clear();
     }
+    for (auto & kv : s->dit_meta_by_path) {
+        s->retired_cpu.push_back(kv.second);
+    }
+    s->dit_meta_by_path.clear();
 }
 
 // Each require_* follows the same shape: lock, check cache, evict if needed,
@@ -751,6 +766,10 @@ size_t store_vram_bytes(const ModelStore * s) {
     for (const auto & kv : s->gpu) {
         total += kv.second.bytes;
     }
+    // Retired modules are still resident until their last release.
+    for (const auto & kv : s->retired_gpu) {
+        total += kv.second.bytes;
+    }
     return total;
 }
 
@@ -759,5 +778,6 @@ int store_gpu_module_count(const ModelStore * s) {
         return 0;
     }
     std::lock_guard<std::mutex> lock(s->mtx);
-    return (int) s->gpu.size();
+    // Retired modules are still resident until their last release.
+    return (int) (s->gpu.size() + s->retired_gpu.size());
 }
