@@ -417,6 +417,17 @@ int ace_understand_generate(AceUnderstand *      ctx,
     return 0;
 }
 
+bool ace_understand_is_current(const AceUnderstand * ctx) {
+    if (!ctx) {
+        return false;
+    }
+    if (ctx->have_lm && store_key_identity(ctx->lm_key) != ctx->lm_key.file_id) {
+        return false;
+    }
+    return store_key_identity(ctx->vae_enc_key) == ctx->vae_enc_key.file_id &&
+           store_key_identity(ctx->fsq_tok_key) == ctx->fsq_tok_key.file_id;
+}
+
 void ace_understand_free(AceUnderstand * ctx) {
     if (!ctx) {
         return;

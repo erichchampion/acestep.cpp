@@ -65,6 +65,9 @@ int ace_understand_generate(AceUnderstand *      ctx,
                             int *                T_latent_out = nullptr,
                             AceProgress          progress     = {});
 
+// Whether the files this context loaded are still the files at their paths
+// (#309); false once one was replaced or deleted: load the context again.
+bool ace_understand_is_current(const AceUnderstand * ctx);
 void ace_understand_free(AceUnderstand * ctx);
 
 // Read the LM ModelKey the context builds for store_require_lm. Used by

@@ -44,6 +44,9 @@ int ace_lm_generate(AceLm *            ctx,
                     AceProgress        progress = {},
                     int                mode     = LM_MODE_GENERATE);
 
+// Whether the LM file this context loaded is still the file at its path
+// (#309); false once it was replaced or deleted: load the context again.
+bool ace_lm_is_current(const AceLm * ctx);
 void ace_lm_free(AceLm * ctx);
 
 // Read the LM ModelKey the context builds for store_require_lm. Used by

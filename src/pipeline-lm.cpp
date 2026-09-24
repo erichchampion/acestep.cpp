@@ -882,6 +882,10 @@ int ace_lm_generate(AceLm *            ctx,
     return 0;
 }
 
+bool ace_lm_is_current(const AceLm * ctx) {
+    return ctx && store_key_identity(ctx->lm_key) == ctx->lm_key.file_id;
+}
+
 void ace_lm_free(AceLm * ctx) {
     if (!ctx) {
         return;

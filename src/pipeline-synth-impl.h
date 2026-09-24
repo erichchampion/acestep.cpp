@@ -33,6 +33,10 @@ struct AceSynth {
     // A reload must not free the context under a parked take.
     std::atomic<int> refs{ 1 };
 
+    // The paths `params` points at, owned here: a job can keep this context
+    // past the caller's strings (ace_synth_retain).
+    std::string own_text_encoder, own_dit, own_vae, own_adapter, own_dump_dir;
+
     // CPU metadata, shared with the store's entry, and `meta` points at it.
     // Gives ops access to silence_full, null_cond_cpu, is_turbo and the DiT
     // config without loading the DiT. Shared rather than borrowed so the

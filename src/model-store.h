@@ -94,8 +94,8 @@ struct ModelKey {
     std::string file_id;
 };
 
-// The identity of the file at `path` now (device, inode, size, change and
-// modification times); empty if it cannot be stat'ed (gone, or unreadable).
+// The identity of the file at `path` now (device, inode, size and
+// modification time); empty if it cannot be stat'ed (gone, or unreadable).
 std::string store_file_identity(const std::string & path);
 
 // The identity of the files behind `k` now: its path's, plus its adapter's

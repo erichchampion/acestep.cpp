@@ -228,14 +228,12 @@ void store_free(ModelStore * s) {
     delete s;
 }
 
-// The change time too: an inode reused for a file of the same size whose
-// modification time was copied over still differs there.
+// Not the change time: a Finder tag or a chmod changes it, and the bytes
+// are the same file.
 #ifdef __APPLE__
 #    define MTIME_OF(st) (st).st_mtimespec
-#    define CTIME_OF(st) (st).st_ctimespec
 #else
 #    define MTIME_OF(st) (st).st_mtim
-#    define CTIME_OF(st) (st).st_ctim
 #endif
 
 std::string store_file_identity(const std::string & path) {
@@ -245,8 +243,7 @@ std::string store_file_identity(const std::string & path) {
     }
     return std::to_string((long long) st.st_dev) + ":" + std::to_string((long long) st.st_ino) + ":" +
            std::to_string((long long) st.st_size) + ":" + std::to_string((long long) MTIME_OF(st).tv_sec) + "." +
-           std::to_string((long long) MTIME_OF(st).tv_nsec) + ":" + std::to_string((long long) CTIME_OF(st).tv_sec) +
-           "." + std::to_string((long long) CTIME_OF(st).tv_nsec);
+           std::to_string((long long) MTIME_OF(st).tv_nsec);
 }
 
 std::string store_key_identity(const ModelKey & k) {

@@ -56,6 +56,18 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params) {
     AceSynth * ctx = new AceSynth();
     ctx->store     = store;
     ctx->params    = *params;
+    // Own the strings: a job may keep this context after the caller's go.
+    auto own = [](std::string & slot, const char *& p) {
+        if (p) {
+            slot = p;
+            p    = slot.c_str();
+        }
+    };
+    own(ctx->own_text_encoder, ctx->params.text_encoder_path);
+    own(ctx->own_dit, ctx->params.dit_path);
+    own(ctx->own_vae, ctx->params.vae_path);
+    own(ctx->own_adapter, ctx->params.adapter_path);
+    own(ctx->own_dump_dir, ctx->params.dump_dir);
 
     // Which files this context reads, fixed now (#309): the metadata below
     // and every module an op requires come from these, and a file replaced
