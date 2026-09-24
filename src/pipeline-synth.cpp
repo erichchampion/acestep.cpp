@@ -769,8 +769,8 @@ bool ace_synth_is_current(const AceSynth * ctx) {
 
 void ace_synth_retain(AceSynth * ctx) {
     if (ctx) {
+        store_hold_key(ctx->store, ctx->vae_dec_key);  // may throw: nothing taken yet
         ctx->refs.fetch_add(1, std::memory_order_relaxed);
-        store_hold_key(ctx->store, ctx->vae_dec_key);
     }
 }
 
@@ -778,7 +778,11 @@ void ace_synth_release(AceSynth * ctx) {
     if (!ctx) {
         return;
     }
-    store_drop_key(ctx->store, ctx->vae_dec_key);
+    // A failure freeing a stale module must not keep the context alive.
+    try {
+        store_drop_key(ctx->store, ctx->vae_dec_key);
+    } catch (...) {
+    }
     unref(ctx);
 }
 
