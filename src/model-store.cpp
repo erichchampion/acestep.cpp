@@ -103,13 +103,10 @@ struct ModelStore {
     std::unordered_map<std::string, CpuEntry> fsm_by_path;
     std::unordered_map<std::string, CpuEntry> dit_meta_by_path;
 
-    // What store_purge took out of service while it was still in use. A GPU
-    // module a caller holds is freed by the store_release that drops its last
-    // reference. DiT metadata -- the one CPU entry a context keeps a pointer
-    // to (AceSynth::meta) past a call -- lives until store_free. Neither is
-    // ever found by a lookup again.
+    // GPU modules store_purge took out of service while a caller held them:
+    // never found by a lookup again, counted as resident, and freed by the
+    // store_release that drops their last reference.
     std::unordered_map<void *, GpuEntry> retired_gpu;
-    std::vector<CpuEntry>                retired_cpu;
 
     mutable std::mutex mtx;
 };
@@ -217,13 +214,9 @@ void store_free(ModelStore * s) {
     for (auto & kv : s->dit_meta_by_path) {
         kv.second.deleter(kv.second.ptr);
     }
-    // Retired entries: whatever store_purge took out of service and nothing
-    // has released since (GPU), and every CPU entry it unhooked.
+    // Modules store_purge retired that nothing has released since.
     for (auto & kv : s->retired_gpu) {
         kv.second.deleter(kv.second.ptr);
-    }
-    for (auto & e : s->retired_cpu) {
-        e.deleter(e.ptr);
     }
     delete s;
 }
@@ -233,36 +226,42 @@ void store_purge(ModelStore * s) {
         return;
     }
     std::lock_guard<std::mutex> lock(s->mtx);
-    // GPU: an idle module is freed now; one in use is retired -- out of the
+    // Planned before anything is freed, so a throw (bad_alloc growing a
+    // container) leaves the store exactly as it was -- never a freed module
+    // still in the lookup table for the next cache hit, or a second free.
+    std::vector<GpuEntry> idle;
+    idle.reserve(s->gpu.size());
+    s->retired_gpu.reserve(s->retired_gpu.size() + s->gpu.size());
+    for (auto & kv : s->gpu) {
+        if (kv.second.refcount == 0) {
+            idle.push_back(kv.second);
+        }
+    }
+    // Nothing below throws. A module a caller holds is retired: out of the
     // lookup table at once, so the next require of its key loads the file
     // afresh, and freed by the release that drops its last reference.
     for (auto & kv : s->gpu) {
         GpuEntry & e = kv.second;
         s->handle_to_key.erase(e.ptr);
-        if (e.refcount == 0) {
-            fprintf(stderr, "[Store] Purge %s (%.1f MB)\n", e.label, (float) e.bytes / (1024.0f * 1024.0f));
-            e.deleter(e.ptr);
-        } else {
+        if (e.refcount > 0) {
             fprintf(stderr, "[Store] Retire %s (refcount=%d)\n", e.label, e.refcount);
             s->retired_gpu.emplace(e.ptr, e);
         }
     }
     s->gpu.clear();
-    // CPU. BPE, silence and FSM are fetched and used inside ONE call (the FSM
-    // is copied per call), and calls do not overlap a purge, so they are
-    // freed now. DiT metadata is the exception: a synth context keeps its
-    // pointer (AceSynth::meta) across calls, so it is unhooked and retired
-    // until store_free -- bounded by one small entry per DiT per purge.
-    for (auto * table : { &s->bpe_by_path, &s->silence_by_path, &s->fsm_by_path }) {
+    for (auto & e : idle) {
+        fprintf(stderr, "[Store] Purge %s (%.1f MB)\n", e.label, (float) e.bytes / (1024.0f * 1024.0f));
+        e.deleter(e.ptr);
+    }
+    // CPU entries are all freed: BPE, silence and FSM are used within one
+    // call (the FSM is copied per call), DiT metadata is copied into the
+    // synth context that uses it, and a purge never runs inside a call.
+    for (auto * table : { &s->bpe_by_path, &s->silence_by_path, &s->fsm_by_path, &s->dit_meta_by_path }) {
         for (auto & kv : *table) {
             kv.second.deleter(kv.second.ptr);
         }
         table->clear();
     }
-    for (auto & kv : s->dit_meta_by_path) {
-        s->retired_cpu.push_back(kv.second);
-    }
-    s->dit_meta_by_path.clear();
 }
 
 // Each require_* follows the same shape: lock, check cache, evict if needed,

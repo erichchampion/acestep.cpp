@@ -58,14 +58,18 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params) {
     ctx->params    = *params;
 
     // DiTMeta: config + silence_latent + null_condition_emb + is_turbo,
-    // fetched once, valid for the store lifetime. Avoids loading the DiT
-    // itself just to read a few CPU-side tensors.
-    ctx->meta = store_dit_meta(store, params->dit_path);
-    if (!ctx->meta) {
+    // read through the store's cache and COPIED into the context (a few MB,
+    // once per load), so a store_purge may free the cached entry while this
+    // context is alive. Avoids loading the DiT itself just to read a few
+    // CPU-side tensors.
+    const DiTMeta * cached = store_dit_meta(store, params->dit_path);
+    if (!cached) {
         fprintf(stderr, "[Synth-Load] FATAL: DiT metadata unavailable for %s\n", params->dit_path);
         delete ctx;
         return NULL;
     }
+    ctx->meta_own = *cached;
+    ctx->meta     = &ctx->meta_own;
     ctx->Oc     = ctx->meta->cfg.out_channels;           // 64
     ctx->ctx_ch = ctx->meta->cfg.in_channels - ctx->Oc;  // 128
 

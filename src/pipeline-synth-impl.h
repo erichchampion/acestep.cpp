@@ -26,9 +26,11 @@ struct AceSynth {
     ModelStore *   store;
     AceSynthParams params;
 
-    // CPU metadata pointer. Owned by the store, valid for the store lifetime
-    // (always longer than AceSynth). Gives ops access to silence_full,
-    // null_cond_cpu, is_turbo and the DiT config without loading the DiT.
+    // CPU metadata: a COPY of the store's entry, owned here, and `meta`
+    // points at it. Gives ops access to silence_full, null_cond_cpu, is_turbo
+    // and the DiT config without loading the DiT. Owned rather than borrowed
+    // so store_purge can free the store's entry while this context lives.
+    DiTMeta         meta_own;
     const DiTMeta * meta;
 
     // Derived constants mirrored for inline use in ops.

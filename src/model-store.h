@@ -104,9 +104,9 @@ void         store_free(ModelStore * s);
 // cache is keyed by path and would otherwise keep serving the old bytes.
 // An idle GPU module is freed now. One a caller still holds is retired:
 // dropped from lookups at once, freed by its last store_release, and counted
-// as resident until then. BPE, silence and FSM are freed (each is used within
-// one call); DiT metadata, which a synth context keeps, is unhooked and kept
-// until store_free. Callers must not purge from inside a store call.
+// as resident until then. Every CPU entry is freed: BPE, silence and FSM are
+// used within one call, and a synth context keeps its own copy of the DiT
+// metadata. Callers must not purge from inside a store call.
 void         store_purge(ModelStore * s);
 
 // Typed GPU module accessors. Each returns a pointer owned by the store;
