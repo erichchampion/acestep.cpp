@@ -59,9 +59,12 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params) {
 
     // DiTMeta: config + silence_latent + null_condition_emb + is_turbo,
     // read through the store's cache and COPIED into the context (a few MB,
-    // once per load), so a store_purge may free the cached entry while this
+    // once per load), so the store may free the cached entry while this
     // context is alive. Avoids loading the DiT itself just to read a few
-    // CPU-side tensors.
+    // CPU-side tensors. The file's identity is taken FIRST: were the file
+    // replaced between the two, the recorded identity is the older one and
+    // every run refuses -- never new metadata passed off as old.
+    ctx->dit_file_id       = store_file_identity(params->dit_path);
     const DiTMeta * cached = store_dit_meta(store, params->dit_path);
     if (!cached) {
         fprintf(stderr, "[Synth-Load] FATAL: DiT metadata unavailable for %s\n", params->dit_path);
@@ -607,6 +610,10 @@ static AceSynthJob * run_complete(AceSynth *         ctx,
 // Phase 1 entry point. Dispatches on reqs[0].task_type to the right task
 // function. task_type is always set: request_init defaults it to text2music,
 // the JSON parser ignores empty strings.
+bool ace_synth_is_current(const AceSynth * ctx) {
+    return ctx && !ctx->dit_file_id.empty() && store_file_identity(ctx->params.dit_path) == ctx->dit_file_id;
+}
+
 AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
                                     const AceRequest * reqs,
                                     const float *      src_audio,
@@ -620,6 +627,10 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
                                     int                batch_n,
                                     AceProgress        progress) {
     if (!ctx || !reqs || batch_n < 1 || batch_n > 9) {
+        return NULL;
+    }
+    if (!ace_synth_is_current(ctx)) {
+        fprintf(stderr, "[Synth] ERROR: %s changed since this pipeline loaded; load it again\n", ctx->params.dit_path);
         return NULL;
     }
     const std::string & task = reqs[0].task_type;

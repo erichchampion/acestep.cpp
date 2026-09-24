@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <sys/stat.h>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -36,6 +37,7 @@ struct ModelKeyHash {
     size_t operator()(const ModelKey & k) const noexcept {
         size_t h = std::hash<int>{}(static_cast<int>(k.kind));
         h ^= std::hash<std::string>{}(k.path) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+        h ^= std::hash<std::string>{}(k.file_id) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
         if (k.kind == MODEL_LM) {
             h ^= std::hash<int>{}(k.max_seq) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
             h ^= std::hash<int>{}(k.n_kv_sets) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
@@ -52,7 +54,7 @@ struct ModelKeyHash {
 
 struct ModelKeyEq {
     bool operator()(const ModelKey & a, const ModelKey & b) const noexcept {
-        if (a.kind != b.kind || a.path != b.path) {
+        if (a.kind != b.kind || a.path != b.path || a.file_id != b.file_id) {
             return false;
         }
         if (a.kind == MODEL_LM) {
@@ -84,8 +86,9 @@ using HandleMap = std::unordered_map<void *, ModelKey>;
 // CPU-resident entries. No eviction, no refcount. Keyed by path only for
 // BPE/silence/FSM/DiTMeta, since those have no other variation.
 struct CpuEntry {
-    void * ptr;
-    void (*deleter)(void *);
+    void *      ptr;
+    void        (*deleter)(void *);
+    std::string file_id;  // the file read, as ModelKey::file_id (#309)
 };
 
 }  // namespace
@@ -103,7 +106,8 @@ struct ModelStore {
     std::unordered_map<std::string, CpuEntry> fsm_by_path;
     std::unordered_map<std::string, CpuEntry> dit_meta_by_path;
 
-    // GPU modules store_purge took out of service while a caller held them:
+    // GPU modules taken out of service (their file changed) while a caller
+    // held them:
     // never found by a lookup again, counted as resident, and freed by the
     // store_release that drops their last reference.
     std::unordered_map<void *, GpuEntry> retired_gpu;
@@ -116,7 +120,7 @@ struct ModelStore {
 // refcount > 0: that would mean two mutually exclusive modules are live at
 // once, which violates the contract in STRICT mode.
 static void evict_all_except(ModelStore * s, const ModelKey & keep) {
-    // A module store_purge retired while held is still resident: in STRICT it
+    // A module retired while held is still resident: in STRICT it
     // conflicts with the one about to load exactly as a cached one would.
     for (const auto & kv : s->retired_gpu) {
         fprintf(stderr, "[Store] FATAL: loading while retired %s is still held (refcount=%d) in STRICT mode\n",
@@ -214,53 +218,140 @@ void store_free(ModelStore * s) {
     for (auto & kv : s->dit_meta_by_path) {
         kv.second.deleter(kv.second.ptr);
     }
-    // Modules store_purge retired that nothing has released since.
+    // Modules retired that nothing has released since.
     for (auto & kv : s->retired_gpu) {
         kv.second.deleter(kv.second.ptr);
     }
     delete s;
 }
 
-void store_purge(ModelStore * s) {
+#ifdef __APPLE__
+#    define MTIME_OF(st) (st).st_mtimespec
+#else
+#    define MTIME_OF(st) (st).st_mtim
+#endif
+
+std::string store_file_identity(const std::string & path) {
+    struct stat st;
+    if (path.empty() || stat(path.c_str(), &st) != 0) {
+        return "";
+    }
+    return std::to_string((long long) st.st_dev) + ":" + std::to_string((long long) st.st_ino) + ":" +
+           std::to_string((long long) st.st_size) + ":" + std::to_string((long long) MTIME_OF(st).tv_sec) + "." +
+           std::to_string((long long) MTIME_OF(st).tv_nsec);
+}
+
+// Caller holds s->mtx. Take GPU entries out of service: free the idle ones,
+// retire the held ones (out of lookups, freed by their last release). Planned
+// before anything is freed, so a throw leaves the store as it was.
+static void drop_gpu_entries(ModelStore * s, const std::vector<ModelKey> & keys) {
+    if (keys.empty()) {
+        return;
+    }
+    s->retired_gpu.reserve(s->retired_gpu.size() + keys.size());
+    std::vector<GpuEntry> idle;
+    idle.reserve(keys.size());
+    std::vector<std::pair<void *, GpuEntry>> held;
+    held.reserve(keys.size());
+    for (const auto & k : keys) {
+        auto it = s->gpu.find(k);
+        if (it == s->gpu.end()) {
+            continue;
+        }
+        if (it->second.refcount == 0) {
+            idle.push_back(it->second);
+        } else {
+            held.emplace_back(it->second.ptr, it->second);
+        }
+    }
+    // Retiring allocates a node per held entry: do it before anything is
+    // erased or freed, and undo it on a throw, so the store is untouched.
+    try {
+        for (auto & h : held) {
+            s->retired_gpu.emplace(h.first, h.second);
+        }
+    } catch (...) {
+        for (auto & h : held) {
+            s->retired_gpu.erase(h.first);
+        }
+        throw;
+    }
+    // Nothing below allocates.
+    for (const auto & k : keys) {
+        auto it = s->gpu.find(k);
+        if (it == s->gpu.end()) {
+            continue;
+        }
+        if (it->second.refcount > 0) {
+            fprintf(stderr, "[Store] Retire %s (refcount=%d): its file changed\n", it->second.label,
+                    it->second.refcount);
+        }
+        s->handle_to_key.erase(it->second.ptr);
+        s->gpu.erase(it);
+    }
+    for (auto & e : idle) {
+        fprintf(stderr, "[Store] Release %s (%.1f MB): its file changed\n", e.label,
+                (float) e.bytes / (1024.0f * 1024.0f));
+        e.deleter(e.ptr);
+    }
+}
+
+// Caller holds s->mtx. The key as the store caches it: `k` with the identity
+// of its file NOW -- and, since that is about to be looked up, any cached
+// module for the same kind and path but an OLDER file taken out of service
+// first (a replaced weight's bytes will never be looked up again).
+static ModelKey keyed_now(ModelStore * s, const ModelKey & k) {
+    ModelKey now = k;
+    now.file_id  = store_file_identity(k.path);
+    std::vector<ModelKey> superseded;
+    for (const auto & kv : s->gpu) {
+        if (kv.first.kind == k.kind && kv.first.path == k.path && kv.first.file_id != now.file_id) {
+            superseded.push_back(kv.first);
+        }
+    }
+    drop_gpu_entries(s, superseded);
+    return now;
+}
+
+// Caller holds s->mtx. The cached CPU entry for `path` if its file is the
+// one it was read from; a stale one is freed and erased (CPU entries are
+// used within one call, and a synth context keeps its own copy of the DiT
+// metadata, so nothing holds one between calls).
+static CpuEntry * cpu_hit(std::unordered_map<std::string, CpuEntry> & table, const std::string & path,
+                          const std::string & file_id) {
+    auto it = table.find(path);
+    if (it == table.end()) {
+        return nullptr;
+    }
+    if (it->second.file_id == file_id) {
+        return &it->second;
+    }
+    it->second.deleter(it->second.ptr);
+    table.erase(it);
+    return nullptr;
+}
+
+void store_release_stale(ModelStore * s) {
     if (!s) {
         return;
     }
     std::lock_guard<std::mutex> lock(s->mtx);
-    // Planned before anything is freed, so a throw (bad_alloc growing a
-    // container) leaves the store exactly as it was -- never a freed module
-    // still in the lookup table for the next cache hit, or a second free.
-    std::vector<GpuEntry> idle;
-    idle.reserve(s->gpu.size());
-    s->retired_gpu.reserve(s->retired_gpu.size() + s->gpu.size());
-    for (auto & kv : s->gpu) {
-        if (kv.second.refcount == 0) {
-            idle.push_back(kv.second);
+    std::vector<ModelKey> stale;
+    for (const auto & kv : s->gpu) {
+        if (store_file_identity(kv.first.path) != kv.first.file_id) {
+            stale.push_back(kv.first);
         }
     }
-    // Nothing below throws. A module a caller holds is retired: out of the
-    // lookup table at once, so the next require of its key loads the file
-    // afresh, and freed by the release that drops its last reference.
-    for (auto & kv : s->gpu) {
-        GpuEntry & e = kv.second;
-        s->handle_to_key.erase(e.ptr);
-        if (e.refcount > 0) {
-            fprintf(stderr, "[Store] Retire %s (refcount=%d)\n", e.label, e.refcount);
-            s->retired_gpu.emplace(e.ptr, e);
-        }
-    }
-    s->gpu.clear();
-    for (auto & e : idle) {
-        fprintf(stderr, "[Store] Purge %s (%.1f MB)\n", e.label, (float) e.bytes / (1024.0f * 1024.0f));
-        e.deleter(e.ptr);
-    }
-    // CPU entries are all freed: BPE, silence and FSM are used within one
-    // call (the FSM is copied per call), DiT metadata is copied into the
-    // synth context that uses it, and a purge never runs inside a call.
+    drop_gpu_entries(s, stale);
     for (auto * table : { &s->bpe_by_path, &s->silence_by_path, &s->fsm_by_path, &s->dit_meta_by_path }) {
-        for (auto & kv : *table) {
-            kv.second.deleter(kv.second.ptr);
+        for (auto it = table->begin(); it != table->end();) {
+            if (store_file_identity(it->first) != it->second.file_id) {
+                it->second.deleter(it->second.ptr);
+                it = table->erase(it);
+            } else {
+                ++it;
+            }
         }
-        table->clear();
     }
 }
 
@@ -384,8 +475,9 @@ template <typename T> struct LoadGuard {
     LoadGuard & operator=(const LoadGuard &) = delete;
 };
 
-Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & k) {
+Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
+    const ModelKey k = keyed_now(s, key_in);
     if (auto * hit = cache_hit<Qwen3LM>(s, k)) {
         return hit;
     }
@@ -408,8 +500,9 @@ Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & k) {
     return m;
 }
 
-Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & k) {
+Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
+    const ModelKey k = keyed_now(s, key_in);
     if (auto * hit = cache_hit<Qwen3GGML>(s, k)) {
         return hit;
     }
@@ -432,8 +525,9 @@ Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & k) {
     return m;
 }
 
-CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & k) {
+CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
+    const ModelKey k = keyed_now(s, key_in);
     if (auto * hit = cache_hit<CondGGML>(s, k)) {
         return hit;
     }
@@ -456,8 +550,9 @@ CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & k) {
     return m;
 }
 
-DiTGGML * store_require_dit(ModelStore * s, const ModelKey & k) {
+DiTGGML * store_require_dit(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
+    const ModelKey k = keyed_now(s, key_in);
     if (auto * hit = cache_hit<DiTGGML>(s, k)) {
         return hit;
     }
@@ -481,8 +576,9 @@ DiTGGML * store_require_dit(ModelStore * s, const ModelKey & k) {
     return m;
 }
 
-VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & k) {
+VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
+    const ModelKey k = keyed_now(s, key_in);
     if (auto * hit = cache_hit<VAEEncoder>(s, k)) {
         return hit;
     }
@@ -503,8 +599,9 @@ VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & k) {
     return m;
 }
 
-VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & k) {
+VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
+    const ModelKey k = keyed_now(s, key_in);
     if (auto * hit = cache_hit<VAEGGML>(s, k)) {
         return hit;
     }
@@ -525,8 +622,9 @@ VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & k) {
     return m;
 }
 
-TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & k) {
+TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
+    const ModelKey k = keyed_now(s, key_in);
     if (auto * hit = cache_hit<TokGGML>(s, k)) {
         return hit;
     }
@@ -549,8 +647,9 @@ TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & k) {
     return m;
 }
 
-DetokGGML * store_require_fsq_detok(ModelStore * s, const ModelKey & k) {
+DetokGGML * store_require_fsq_detok(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
+    const ModelKey k = keyed_now(s, key_in);
     if (auto * hit = cache_hit<DetokGGML>(s, k)) {
         return hit;
     }
@@ -578,7 +677,7 @@ void store_release(ModelStore * s, void * handle) {
         return;
     }
     std::lock_guard<std::mutex> lock(s->mtx);
-    // A module store_purge retired while this caller held it: freed with the
+    // A module retired while this caller held it: freed with the
     // last reference, never returned to the lookup table.
     auto retired = s->retired_gpu.find(handle);
     if (retired != s->retired_gpu.end()) {
@@ -618,9 +717,9 @@ void store_release(ModelStore * s, void * handle) {
 BPETokenizer * store_bpe(ModelStore * s, const char * lm_path) {
     std::lock_guard<std::mutex> lock(s->mtx);
     std::string                 key = lm_path ? lm_path : "";
-    auto                        it  = s->bpe_by_path.find(key);
-    if (it != s->bpe_by_path.end()) {
-        return static_cast<BPETokenizer *>(it->second.ptr);
+    const std::string           fid = store_file_identity(key);
+    if (CpuEntry * it = cpu_hit(s->bpe_by_path, key, fid)) {
+        return static_cast<BPETokenizer *>(it->ptr);
     }
     auto * bpe = new BPETokenizer();
     if (!load_bpe_from_gguf(bpe, lm_path)) {
@@ -632,6 +731,7 @@ BPETokenizer * store_bpe(ModelStore * s, const char * lm_path) {
     e.deleter = [](void * p) {
         delete static_cast<BPETokenizer *>(p);
     };
+    e.file_id = fid;
     s->bpe_by_path.emplace(key, e);
     return bpe;
 }
@@ -639,9 +739,9 @@ BPETokenizer * store_bpe(ModelStore * s, const char * lm_path) {
 const float * store_silence(ModelStore * s, const char * dit_path) {
     std::lock_guard<std::mutex> lock(s->mtx);
     std::string                 key = dit_path ? dit_path : "";
-    auto                        it  = s->silence_by_path.find(key);
-    if (it != s->silence_by_path.end()) {
-        return static_cast<const std::vector<float> *>(it->second.ptr)->data();
+    const std::string           fid = store_file_identity(key);
+    if (CpuEntry * it = cpu_hit(s->silence_by_path, key, fid)) {
+        return static_cast<const std::vector<float> *>(it->ptr)->data();
     }
     GGUFModel gf = {};
     if (!gf_load(&gf, dit_path)) {
@@ -663,6 +763,7 @@ const float * store_silence(ModelStore * s, const char * dit_path) {
     e.deleter = [](void * p) {
         delete static_cast<std::vector<float> *>(p);
     };
+    e.file_id = fid;
     s->silence_by_path.emplace(key, e);
     return vec->data();
 }
@@ -675,9 +776,9 @@ MetadataFSM * store_fsm(ModelStore * s, const char * lm_path, int vocab_size) {
     }
     std::lock_guard<std::mutex> lock(s->mtx);
     std::string                 key = lm_path ? lm_path : "";
-    auto                        it  = s->fsm_by_path.find(key);
-    if (it != s->fsm_by_path.end()) {
-        return static_cast<MetadataFSM *>(it->second.ptr);
+    const std::string           fid = store_file_identity(key);
+    if (CpuEntry * it = cpu_hit(s->fsm_by_path, key, fid)) {
+        return static_cast<MetadataFSM *>(it->ptr);
     }
     auto * fsm = new MetadataFSM();
     fsm->init(*bpe, vocab_size);
@@ -686,6 +787,7 @@ MetadataFSM * store_fsm(ModelStore * s, const char * lm_path, int vocab_size) {
     e.deleter = [](void * p) {
         delete static_cast<MetadataFSM *>(p);
     };
+    e.file_id = fid;
     s->fsm_by_path.emplace(key, e);
     return fsm;
 }
@@ -693,9 +795,9 @@ MetadataFSM * store_fsm(ModelStore * s, const char * lm_path, int vocab_size) {
 const DiTMeta * store_dit_meta(ModelStore * s, const char * dit_path) {
     std::lock_guard<std::mutex> lock(s->mtx);
     std::string                 key = dit_path ? dit_path : "";
-    auto                        it  = s->dit_meta_by_path.find(key);
-    if (it != s->dit_meta_by_path.end()) {
-        return static_cast<const DiTMeta *>(it->second.ptr);
+    const std::string           fid = store_file_identity(key);
+    if (CpuEntry * it = cpu_hit(s->dit_meta_by_path, key, fid)) {
+        return static_cast<const DiTMeta *>(it->ptr);
     }
     auto * meta = new DiTMeta();
     if (!dit_ggml_load_config(&meta->cfg, dit_path)) {
@@ -752,6 +854,7 @@ const DiTMeta * store_dit_meta(ModelStore * s, const char * dit_path) {
     e.deleter = [](void * p) {
         delete static_cast<DiTMeta *>(p);
     };
+    e.file_id = fid;
     s->dit_meta_by_path.emplace(key, e);
     return meta;
 }

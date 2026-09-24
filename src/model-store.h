@@ -80,7 +80,17 @@ struct ModelKey {
     // DiT-only extras (ignored for other kinds):
     std::string adapter_path;   // "" when no adapter
     float       adapter_scale;  // 1.0f default, significant when adapter_path is set
+    // The FILE at `path` the module was read from (device, inode, size and
+    // modification time). Set by the store on every require -- callers
+    // leave it empty. A weight replaced at the same path (an installed
+    // update) is a different file, so it misses the cache and is read afresh
+    // instead of being served from the old bytes (#309).
+    std::string file_id;
 };
+
+// The identity of the file at `path` now, as ModelKey::file_id records it;
+// empty if it cannot be stat'ed (gone, or unreadable).
+std::string store_file_identity(const std::string & path);
 
 enum EvictPolicy {
     EVICT_STRICT,  // default: at most one GPU module resident at a time
@@ -99,15 +109,15 @@ struct DiTMeta {
 ModelStore * store_create(EvictPolicy policy);
 void         store_free(ModelStore * s);
 
-// Forget every cached module, so the next require or lookup reads its GGUF
-// from disk again -- what a weight REPLACED at the same path needs, since the
-// cache is keyed by path and would otherwise keep serving the old bytes.
-// An idle GPU module is freed now. One a caller still holds is retired:
-// dropped from lookups at once, freed by its last store_release, and counted
-// as resident until then. Every CPU entry is freed: BPE, silence and FSM are
-// used within one call, and a synth context keeps its own copy of the DiT
-// metadata. Callers must not purge from inside a store call.
-void         store_purge(ModelStore * s);
+// Free what no longer matches its file: every cached module and CPU table
+// whose file at its path has changed or gone since it was read. Lookups
+// already miss such entries (the key carries the file's identity); this
+// releases their memory -- a deleted or replaced model's weights -- without
+// waiting for the path to be required again. An idle GPU module is freed; one
+// a caller holds is retired, counted as resident, and freed by its last
+// store_release. Entries whose files are unchanged are untouched. Callers
+// must not call this from inside a store call.
+void         store_release_stale(ModelStore * s);
 
 // Typed GPU module accessors. Each returns a pointer owned by the store;
 // never free it yourself. Returns NULL on load failure.

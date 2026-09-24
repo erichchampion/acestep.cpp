@@ -29,9 +29,14 @@ struct AceSynth {
     // CPU metadata: a COPY of the store's entry, owned here, and `meta`
     // points at it. Gives ops access to silence_full, null_cond_cpu, is_turbo
     // and the DiT config without loading the DiT. Owned rather than borrowed
-    // so store_purge can free the store's entry while this context lives.
+    // so the store can free its entry (the DiT file changed) while this
+    // context lives.
     DiTMeta         meta_own;
     const DiTMeta * meta;
+    // The identity of the DiT file `meta_own` was read from (as
+    // store_file_identity gives it). A run whose DiT file has changed since
+    // is refused: it would pair this metadata with the new file's weights.
+    std::string     dit_file_id;
 
     // Derived constants mirrored for inline use in ops.
     int Oc;      // out_channels (64)

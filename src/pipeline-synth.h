@@ -65,6 +65,11 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 // and ACE_STAGE_VAE_ENCODE while encoding the source and/or timbre reference in
 // Cover-family tasks. Default {} = never cancel, no progress.
 // Returns NULL on error or cancellation.
+// Whether the DiT file this pipeline read its metadata from is still the
+// file at its path. A replaced weight (an installed update) makes it false,
+// and ace_synth_job_run_dit refuses to run: load the pipeline again.
+bool ace_synth_is_current(const AceSynth * ctx);
+
 AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
                                     const AceRequest * reqs,
                                     const float *      src_audio,
