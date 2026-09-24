@@ -120,7 +120,8 @@ ModelStore * store_create(EvictPolicy policy);
 void         store_free(ModelStore * s);
 
 // Free what no longer matches its file: every cached module and CPU table
-// read from a file that has since been replaced or deleted. A lookup never
+// read from a file that has since been replaced or deleted, and that no live
+// pipeline holds (store_hold_key). A lookup never
 // frees anything (a caller may hold a pointer from earlier in its call), so
 // this is what releases a replaced model's memory. An idle GPU module is
 // freed; one a caller holds is retired, counted as resident, and freed by its
@@ -129,6 +130,14 @@ void         store_free(ModelStore * s);
 // CPU-table pointer across it (a pipeline's DiT metadata is shared, and
 // survives).
 void         store_release_stale(ModelStore * s);
+
+// A live pipeline context uses `k` (stamped): store_release_stale keeps its
+// module, so the context -- and the jobs decoding through it -- keep working
+// on the files they were made with after those are replaced. Balanced by
+// store_drop_key when the context goes; the last drop of a stale key frees
+// its idle module then. Counted: contexts sharing a key (the LM) each hold it.
+void         store_hold_key(ModelStore * s, const ModelKey & k);
+void         store_drop_key(ModelStore * s, const ModelKey & k);
 
 // Typed GPU module accessors. Each returns a pointer owned by the store;
 // never free it yourself. Returns NULL on load failure.

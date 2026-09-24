@@ -14,6 +14,7 @@
 #include "pipeline-synth-ops.h"
 #include "task-types.h"
 
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +34,12 @@ void ace_synth_default_params(AceSynthParams * p) {
     p->vae_chunk         = 1024;
     p->vae_overlap       = 64;
     p->dump_dir          = NULL;
+}
+
+// Every key the pipeline requires with, as the store holds them for it.
+static std::array<const ModelKey *, 7> synth_keys(const AceSynth * ctx) {
+    return { &ctx->text_enc_key, &ctx->cond_enc_key, &ctx->fsq_tok_key, &ctx->fsq_detok_key,
+             &ctx->dit_key,      &ctx->vae_enc_key,  &ctx->vae_dec_key };
 }
 
 AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params) {
@@ -133,6 +140,11 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params) {
         fprintf(stderr, "[Synth-Load] Adapter: %s (scale=%.2f)\n", params->adapter_path, params->adapter_scale);
     }
 
+    // The store keeps these files' modules while this pipeline lives, even
+    // once the files are replaced (#309): its jobs decode with them.
+    for (const ModelKey * k : synth_keys(ctx)) {
+        store_hold_key(store, *k);
+    }
     return ctx;
 }
 
@@ -633,24 +645,6 @@ static AceSynthJob * run_complete(AceSynth *         ctx,
 // Phase 1 entry point. Dispatches on reqs[0].task_type to the right task
 // function. task_type is always set: request_init defaults it to text2music,
 // the JSON parser ignores empty strings.
-bool ace_synth_is_current(const AceSynth * ctx) {
-    if (!ctx) {
-        return false;
-    }
-    for (const ModelKey * k : { &ctx->text_enc_key, &ctx->dit_key, &ctx->vae_dec_key }) {
-        if (store_key_identity(*k) != k->file_id) {
-            return false;
-        }
-    }
-    return true;
-}
-
-void ace_synth_retain(AceSynth * ctx) {
-    if (ctx) {
-        ctx->refs.fetch_add(1, std::memory_order_relaxed);
-    }
-}
-
 AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
                                     const AceRequest * reqs,
                                     const float *      src_audio,
@@ -737,5 +731,32 @@ void ace_synth_free(AceSynth * ctx) {
     if (!ctx || ctx->refs.fetch_sub(1, std::memory_order_acq_rel) != 1) {
         return;
     }
+    // Its files' modules are no longer needed by it: a stale one goes now.
+    for (const ModelKey * k : synth_keys(ctx)) {
+        store_drop_key(ctx->store, *k);
+    }
     delete ctx;
 }
+
+bool ace_synth_is_current(const AceSynth * ctx) {
+    if (!ctx) {
+        return false;
+    }
+    for (const ModelKey * k : { &ctx->text_enc_key, &ctx->dit_key, &ctx->vae_dec_key }) {
+        if (store_key_identity(*k) != k->file_id) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void ace_synth_retain(AceSynth * ctx) {
+    if (ctx) {
+        ctx->refs.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+bool ace_synth_vae_is_current(const AceSynth * ctx) {
+    return ctx && store_key_identity(ctx->vae_dec_key) == ctx->vae_dec_key.file_id;
+}
+

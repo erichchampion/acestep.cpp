@@ -94,6 +94,12 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
 
     fprintf(stderr, "[Understand-Load] Ready: lm=%s, fa=%s, fsm=%s\n", ctx->have_lm ? "yes" : "no",
             params->use_fa ? "yes" : "no", params->use_fsm ? "yes" : "no");
+    // Kept while this context lives (#309).
+    store_hold_key(store, ctx->vae_enc_key);
+    store_hold_key(store, ctx->fsq_tok_key);
+    if (ctx->have_lm) {
+        store_hold_key(store, ctx->lm_key);
+    }
     return ctx;
 }
 
@@ -431,6 +437,11 @@ bool ace_understand_is_current(const AceUnderstand * ctx) {
 void ace_understand_free(AceUnderstand * ctx) {
     if (!ctx) {
         return;
+    }
+    store_drop_key(ctx->store, ctx->vae_enc_key);
+    store_drop_key(ctx->store, ctx->fsq_tok_key);
+    if (ctx->have_lm) {
+        store_drop_key(ctx->store, ctx->lm_key);
     }
     delete ctx;
 }

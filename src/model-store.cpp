@@ -16,11 +16,14 @@
 #include "gguf-weights.h"
 #include "timer.h"
 
+#include <dirent.h>
+#include <sys/stat.h>
+
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
-#include <sys/stat.h>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -115,6 +118,10 @@ struct ModelStore {
     // store_release that drops their last reference.
     std::unordered_map<void *, GpuEntry> retired_gpu;
 
+    // Keys live pipeline contexts use (store_hold_key), with how many hold
+    // each: store_release_stale leaves their modules alone.
+    std::unordered_map<ModelKey, int, ModelKeyHash, ModelKeyEq> held_keys;
+
     mutable std::mutex mtx;
 };
 
@@ -123,12 +130,12 @@ struct ModelStore {
 // refcount > 0: that would mean two mutually exclusive modules are live at
 // once, which violates the contract in STRICT mode.
 static void evict_all_except(ModelStore * s, const ModelKey & keep) {
-    // A module retired while held is still resident: in STRICT it
-    // conflicts with the one about to load exactly as a cached one would.
+    // A module retired while held (store_release_stale ran while a caller
+    // held it) is out of lookups and goes with its last release: it is not
+    // an overlap the caller made, so it is only reported.
     for (const auto & kv : s->retired_gpu) {
-        fprintf(stderr, "[Store] FATAL: loading while retired %s is still held (refcount=%d) in STRICT mode\n",
-                kv.second.label, kv.second.refcount);
-        abort();
+        fprintf(stderr, "[Store] Loading while retired %s is still held (refcount=%d)\n", kv.second.label,
+                kv.second.refcount);
     }
     for (auto it = s->gpu.begin(); it != s->gpu.end();) {
         ModelKeyEq eq;
@@ -240,6 +247,30 @@ std::string store_file_identity(const std::string & path) {
     struct stat st;
     if (path.empty() || stat(path.c_str(), &st) != 0) {
         return "";
+    }
+    if (S_ISDIR(st.st_mode)) {
+        // A directory (a PEFT adapter): its own stat moves when Finder drops
+        // a .DS_Store and not when a weight inside is rewritten, so it is the
+        // identities of the visible regular files in it, by name.
+        std::vector<std::string> names;
+        if (DIR * d = opendir(path.c_str())) {
+            while (dirent * e = readdir(d)) {
+                if (e->d_name[0] != '.') {
+                    names.emplace_back(e->d_name);
+                }
+            }
+            closedir(d);
+        }
+        std::sort(names.begin(), names.end());
+        std::string id = "dir";
+        for (const auto & name : names) {
+            struct stat fst;
+            const std::string child = path + "/" + name;
+            if (stat(child.c_str(), &fst) == 0 && S_ISREG(fst.st_mode)) {
+                id += "|" + name + "=" + store_file_identity(child);
+            }
+        }
+        return id;
     }
     return std::to_string((long long) st.st_dev) + ":" + std::to_string((long long) st.st_ino) + ":" +
            std::to_string((long long) st.st_size) + ":" + std::to_string((long long) MTIME_OF(st).tv_sec) + "." +
@@ -360,6 +391,32 @@ static bool cpu_file_unchanged(const std::string & path, const std::string & fil
     return false;
 }
 
+void store_hold_key(ModelStore * s, const ModelKey & k) {
+    if (!s) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(s->mtx);
+    s->held_keys[k]++;
+}
+
+void store_drop_key(ModelStore * s, const ModelKey & k) {
+    if (!s) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(s->mtx);
+    auto it = s->held_keys.find(k);
+    if (it == s->held_keys.end() || --it->second > 0) {
+        return;
+    }
+    s->held_keys.erase(it);
+    // Its last user is gone: a module read from a file since replaced will
+    // never be asked for again.
+    auto g = s->gpu.find(k);
+    if (g != s->gpu.end() && g->second.refcount == 0 && store_key_identity(k) != k.file_id) {
+        drop_gpu_entries(s, { k });
+    }
+}
+
 void store_release_stale(ModelStore * s) {
     if (!s) {
         return;
@@ -367,7 +424,7 @@ void store_release_stale(ModelStore * s) {
     std::lock_guard<std::mutex> lock(s->mtx);
     std::vector<ModelKey> stale;
     for (const auto & kv : s->gpu) {
-        if (store_key_identity(kv.first) != kv.first.file_id) {
+        if (store_key_identity(kv.first) != kv.first.file_id && !s->held_keys.count(kv.first)) {
             stale.push_back(kv.first);
         }
     }

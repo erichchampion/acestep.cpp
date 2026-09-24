@@ -587,6 +587,7 @@ AceLm * ace_lm_load(ModelStore * store, const AceLmParams * params) {
         fprintf(stderr, "[Ace-LM] FP16 clamp enabled\n");
     }
 
+    store_hold_key(store, ctx->lm_key);  // kept while this context lives (#309)
     return ctx;
 }
 
@@ -890,6 +891,7 @@ void ace_lm_free(AceLm * ctx) {
     if (!ctx) {
         return;
     }
+    store_drop_key(ctx->store, ctx->lm_key);
     delete ctx;
 }
 

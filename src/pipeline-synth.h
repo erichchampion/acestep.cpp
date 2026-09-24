@@ -65,12 +65,6 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 // and ACE_STAGE_VAE_ENCODE while encoding the source and/or timbre reference in
 // Cover-family tasks. Default {} = never cancel, no progress.
 // Returns NULL on error or cancellation.
-// Whether the files this pipeline was loaded from are still the files at
-// their paths. After an update replaces one, an op whose module is no longer
-// cached fails rather than read the new file under the old metadata: this
-// says that is why, and the pipeline should be loaded again.
-bool ace_synth_is_current(const AceSynth * ctx);
-
 AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
                                     const AceRequest * reqs,
                                     const float *      src_audio,
@@ -110,6 +104,14 @@ int ace_synth_job_run_vae_take(AceSynth * ctx, AceSynthJob * job, int take, AceA
 void ace_synth_job_free(AceSynthJob * job);
 
 void ace_audio_free(AceAudio * audio);
+
+// Whether the files this pipeline was loaded from are still the files at
+// their paths (#309). The pipeline keeps the modules it loaded while it
+// lives, so it keeps working; but one freed meanwhile (STRICT eviction) is
+// not read again from a replaced file -- load the pipeline again.
+bool ace_synth_is_current(const AceSynth * ctx);
+// The same, for the VAE only: all a parked take's decode reads.
+bool ace_synth_vae_is_current(const AceSynth * ctx);
 
 // A job that decodes through `ctx` after the caller may have freed it
 // (a reload while takes are parked) takes a reference; ace_synth_free drops
