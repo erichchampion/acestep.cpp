@@ -464,7 +464,7 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
 
     s.need_enc_switch = s.use_source_context && !s.is_repaint && !s.is_lego_region && s.rr.audio_cover_strength < 1.0f;
 
-    BPETokenizer * bpe = store_bpe(ctx->store, ctx->params.text_encoder_path);
+    BPETokenizer * bpe = store_bpe(ctx->store, ctx->params.text_encoder_path, ctx->text_enc_key.file_id);
     if (!bpe) {
         fprintf(stderr, "[Encode-Text] FATAL: store_bpe failed\n");
         return -1;

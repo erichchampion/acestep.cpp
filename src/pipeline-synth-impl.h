@@ -15,6 +15,8 @@
 #include "request.h"
 #include "timer.h"
 
+#include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -26,23 +28,26 @@ struct AceSynth {
     ModelStore *   store;
     AceSynthParams params;
 
-    // CPU metadata: a COPY of the store's entry, owned here, and `meta`
-    // points at it. Gives ops access to silence_full, null_cond_cpu, is_turbo
-    // and the DiT config without loading the DiT. Owned rather than borrowed
-    // so the store can free its entry (the DiT file changed) while this
+    // References: the loader's, plus one per job decoding through this
+    // context (ace_synth_retain). ace_synth_free drops one; the last frees.
+    // A reload must not free the context under a parked take.
+    std::atomic<int> refs{ 1 };
+
+    // CPU metadata, shared with the store's entry, and `meta` points at it.
+    // Gives ops access to silence_full, null_cond_cpu, is_turbo and the DiT
+    // config without loading the DiT. Shared rather than borrowed so the
+    // store can free its entry (the DiT file was replaced) while this
     // context lives.
-    DiTMeta         meta_own;
-    const DiTMeta * meta;
-    // The identity of the DiT file `meta_own` was read from (as
-    // store_file_identity gives it). A run whose DiT file has changed since
-    // is refused: it would pair this metadata with the new file's weights.
-    std::string     dit_file_id;
+    std::shared_ptr<const DiTMeta> meta_own;
+    const DiTMeta *                meta;
 
     // Derived constants mirrored for inline use in ops.
     int Oc;      // out_channels (64)
     int ctx_ch;  // in_channels - Oc (128)
 
-    // ModelKeys for the seven GPU modules the pipeline touches.
+    // ModelKeys for the seven GPU modules the pipeline touches, each stamped
+    // at load with the identity of the file it names (ModelKey::file_id):
+    // every op asks for the bytes this context's metadata came from.
     ModelKey text_enc_key;   // Qwen3 text encoder, from text_encoder_path
     ModelKey cond_enc_key;   // condition encoder, from dit_path
     ModelKey fsq_tok_key;    // FSQ tokenizer, from dit_path

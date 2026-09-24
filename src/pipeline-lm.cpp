@@ -575,6 +575,8 @@ AceLm * ace_lm_load(ModelStore * store, const AceLmParams * params) {
     ctx->lm_key.n_kv_sets     = 2 * params->max_batch;
     ctx->lm_key.adapter_path  = "";
     ctx->lm_key.adapter_scale = 1.0f;
+    // The file read, fixed now: every call asks for these bytes (#309).
+    ctx->lm_key.file_id       = store_file_identity(params->model_path);
 
     fprintf(stderr, "[Ace-LM] Ready: path=%s, max_seq=%d, max_batch=%d, fa=%s, fsm=%s\n", params->model_path,
             params->max_seq, params->max_batch, params->use_fa ? "yes" : "no", params->use_fsm ? "yes" : "no");
@@ -631,7 +633,7 @@ int ace_lm_generate(AceLm *            ctx,
 
     // CPU-resident tokenizer and FSM template. Owned by the store, never
     // evicted. FSM must be copied before mutation since the template is shared.
-    BPETokenizer * bpe = store_bpe(ctx->store, ctx->params.model_path);
+    BPETokenizer * bpe = store_bpe(ctx->store, ctx->params.model_path, ctx->lm_key.file_id);
     if (!bpe) {
         fprintf(stderr, "[Ace-LM] ERROR: store_bpe failed\n");
         return -1;
@@ -639,7 +641,7 @@ int ace_lm_generate(AceLm *            ctx,
 
     MetadataFSM * fsm_template = nullptr;
     if (ctx->params.use_fsm) {
-        fsm_template = store_fsm(ctx->store, ctx->params.model_path, model->cfg.vocab_size);
+        fsm_template = store_fsm(ctx->store, ctx->params.model_path, model->cfg.vocab_size, ctx->lm_key.file_id);
         if (!fsm_template) {
             fprintf(stderr, "[Ace-LM] ERROR: store_fsm failed\n");
             return -1;

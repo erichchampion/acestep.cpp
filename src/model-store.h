@@ -56,6 +56,7 @@
 #include "vae.h"
 
 #include <cstddef>
+#include <memory>
 #include <string>
 
 struct ModelStore;
@@ -80,17 +81,26 @@ struct ModelKey {
     // DiT-only extras (ignored for other kinds):
     std::string adapter_path;   // "" when no adapter
     float       adapter_scale;  // 1.0f default, significant when adapter_path is set
-    // The FILE at `path` the module was read from (device, inode, size and
-    // modification time). Set by the store on every require -- callers
-    // leave it empty. A weight replaced at the same path (an installed
-    // update) is a different file, so it misses the cache and is read afresh
-    // instead of being served from the old bytes (#309).
+    // WHICH file at `path` (and at adapter_path) the module is read from:
+    // store_key_identity's value when the caller stamped the key. A pipeline
+    // stamps its keys once, at load, so every require it makes -- however
+    // long its calls run -- asks for the same bytes its metadata came from.
+    // A weight replaced at the same path (an installed update) is another
+    // file: a key stamped after the replacement misses the cache and reads
+    // it afresh, while one stamped before keeps getting its cached module,
+    // or fails to load if that was freed -- never the new file's weights
+    // (#309). Empty means "whatever file is there now": the store stamps it
+    // at the require.
     std::string file_id;
 };
 
-// The identity of the file at `path` now, as ModelKey::file_id records it;
-// empty if it cannot be stat'ed (gone, or unreadable).
+// The identity of the file at `path` now (device, inode, size, change and
+// modification times); empty if it cannot be stat'ed (gone, or unreadable).
 std::string store_file_identity(const std::string & path);
+
+// The identity of the files behind `k` now: its path's, plus its adapter's
+// when it has one. What ModelKey::file_id records.
+std::string store_key_identity(const ModelKey & k);
 
 enum EvictPolicy {
     EVICT_STRICT,  // default: at most one GPU module resident at a time
@@ -110,13 +120,14 @@ ModelStore * store_create(EvictPolicy policy);
 void         store_free(ModelStore * s);
 
 // Free what no longer matches its file: every cached module and CPU table
-// whose file at its path has changed or gone since it was read. Lookups
-// already miss such entries (the key carries the file's identity); this
-// releases their memory -- a deleted or replaced model's weights -- without
-// waiting for the path to be required again. An idle GPU module is freed; one
-// a caller holds is retired, counted as resident, and freed by its last
-// store_release. Entries whose files are unchanged are untouched. Callers
-// must not call this from inside a store call.
+// read from a file that has since been replaced or deleted. A lookup never
+// frees anything (a caller may hold a pointer from earlier in its call), so
+// this is what releases a replaced model's memory. An idle GPU module is
+// freed; one a caller holds is retired, counted as resident, and freed by its
+// last store_release. Entries whose files are unchanged are untouched.
+// Callers must not call this from inside a store call, and must not hold a
+// CPU-table pointer across it (a pipeline's DiT metadata is shared, and
+// survives).
 void         store_release_stale(ModelStore * s);
 
 // Typed GPU module accessors. Each returns a pointer owned by the store;
@@ -140,12 +151,21 @@ DetokGGML *  store_require_fsq_detok(ModelStore * s, const ModelKey & k);
 // must not be used: in EVICT_STRICT it may be unloaded immediately.
 void store_release(ModelStore * s, void * handle);
 
-// CPU-resident accessors. Loaded on first call, kept forever, never evicted.
-// All small (a few MB total). Return NULL on load failure.
-BPETokenizer *  store_bpe(ModelStore * s, const char * lm_path);
-const float *   store_silence(ModelStore * s, const char * dit_path);
-MetadataFSM *   store_fsm(ModelStore * s, const char * lm_path, int vocab_size);
-const DiTMeta * store_dit_meta(ModelStore * s, const char * dit_path);
+// CPU-resident accessors. Loaded on first call and kept until
+// store_release_stale finds their file replaced; never evicted. All small (a
+// few MB total). Return NULL on load failure. `file_id` is the identity
+// (store_file_identity) of the file the caller expects at the path, as a
+// ModelKey's -- empty for whatever is there now. A file that is no longer
+// that one is not read: NULL.
+BPETokenizer *  store_bpe(ModelStore * s, const char * lm_path, const std::string & file_id = "");
+const float *   store_silence(ModelStore * s, const char * dit_path, const std::string & file_id = "");
+MetadataFSM *   store_fsm(ModelStore * s, const char * lm_path, int vocab_size, const std::string & file_id = "");
+const DiTMeta * store_dit_meta(ModelStore * s, const char * dit_path, const std::string & file_id = "");
+// The same metadata, shared: it outlives store_release_stale and the store's
+// own entry for as long as the caller keeps it.
+std::shared_ptr<const DiTMeta> store_dit_meta_shared(ModelStore *        s,
+                                                     const char *        dit_path,
+                                                     const std::string & file_id = "");
 
 // Observability: sum of currently resident GPU module weight buffers, and
 // the count of loaded GPU modules. Used by test-model-store to assert

@@ -65,9 +65,10 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 // and ACE_STAGE_VAE_ENCODE while encoding the source and/or timbre reference in
 // Cover-family tasks. Default {} = never cancel, no progress.
 // Returns NULL on error or cancellation.
-// Whether the DiT file this pipeline read its metadata from is still the
-// file at its path. A replaced weight (an installed update) makes it false,
-// and ace_synth_job_run_dit refuses to run: load the pipeline again.
+// Whether the files this pipeline was loaded from are still the files at
+// their paths. After an update replaces one, an op whose module is no longer
+// cached fails rather than read the new file under the old metadata: this
+// says that is why, and the pipeline should be loaded again.
 bool ace_synth_is_current(const AceSynth * ctx);
 
 AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
@@ -110,4 +111,8 @@ void ace_synth_job_free(AceSynthJob * job);
 
 void ace_audio_free(AceAudio * audio);
 
+// A job that decodes through `ctx` after the caller may have freed it
+// (a reload while takes are parked) takes a reference; ace_synth_free drops
+// one, and the last frees the context.
+void ace_synth_retain(AceSynth * ctx);
 void ace_synth_free(AceSynth * ctx);

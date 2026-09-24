@@ -57,22 +57,25 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params) {
     ctx->store     = store;
     ctx->params    = *params;
 
+    // Which files this context reads, fixed now (#309): the metadata below
+    // and every module an op requires come from these, and a file replaced
+    // later is not read under them.
+    const std::string dit_id     = store_file_identity(params->dit_path);
+    const std::string te_id      = store_file_identity(params->text_encoder_path);
+    const std::string vae_id     = store_file_identity(params->vae_path);
+    const bool        has_adapter = params->adapter_path && params->adapter_path[0];
+
     // DiTMeta: config + silence_latent + null_condition_emb + is_turbo,
-    // read through the store's cache and COPIED into the context (a few MB,
-    // once per load), so the store may free the cached entry while this
-    // context is alive. Avoids loading the DiT itself just to read a few
-    // CPU-side tensors. The file's identity is taken FIRST: were the file
-    // replaced between the two, the recorded identity is the older one and
-    // every run refuses -- never new metadata passed off as old.
-    ctx->dit_file_id       = store_file_identity(params->dit_path);
-    const DiTMeta * cached = store_dit_meta(store, params->dit_path);
-    if (!cached) {
+    // read through the store's cache and shared with it, so the store may
+    // free its entry while this context is alive. Avoids loading the DiT
+    // itself just to read a few CPU-side tensors.
+    ctx->meta_own = store_dit_meta_shared(store, params->dit_path, dit_id);
+    if (!ctx->meta_own) {
         fprintf(stderr, "[Synth-Load] FATAL: DiT metadata unavailable for %s\n", params->dit_path);
         delete ctx;
         return NULL;
     }
-    ctx->meta_own = *cached;
-    ctx->meta     = &ctx->meta_own;
+    ctx->meta = ctx->meta_own.get();
     ctx->Oc     = ctx->meta->cfg.out_channels;           // 64
     ctx->ctx_ch = ctx->meta->cfg.in_channels - ctx->Oc;  // 128
 
@@ -80,26 +83,34 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params) {
     // DiT key because two DiTs with different adapters are distinct modules.
     ctx->text_enc_key.kind = MODEL_TEXT_ENC;
     ctx->text_enc_key.path = params->text_encoder_path;
+    ctx->text_enc_key.file_id = te_id;
 
     ctx->cond_enc_key.kind = MODEL_COND_ENC;
     ctx->cond_enc_key.path = params->dit_path;
+    ctx->cond_enc_key.file_id = dit_id;
 
     ctx->fsq_tok_key.kind = MODEL_FSQ_TOK;
     ctx->fsq_tok_key.path = params->dit_path;
+    ctx->fsq_tok_key.file_id = dit_id;
 
     ctx->fsq_detok_key.kind = MODEL_FSQ_DETOK;
     ctx->fsq_detok_key.path = params->dit_path;
+    ctx->fsq_detok_key.file_id = dit_id;
 
     ctx->dit_key.kind          = MODEL_DIT;
     ctx->dit_key.path          = params->dit_path;
     ctx->dit_key.adapter_path  = params->adapter_path ? params->adapter_path : "";
     ctx->dit_key.adapter_scale = params->adapter_scale;
+    // As store_key_identity builds it, from the ids fixed above.
+    ctx->dit_key.file_id = has_adapter ? dit_id + "|" + store_file_identity(params->adapter_path) : dit_id;
 
     ctx->vae_enc_key.kind = MODEL_VAE_ENC;
     ctx->vae_enc_key.path = params->vae_path;
+    ctx->vae_enc_key.file_id = vae_id;
 
     ctx->vae_dec_key.kind = MODEL_VAE_DEC;
     ctx->vae_dec_key.path = params->vae_path;
+    ctx->vae_dec_key.file_id = vae_id;
 
     fprintf(stderr, "[Synth-Load] Ready: turbo=%s, fa=%s, batch_cfg=%s\n", ctx->meta->is_turbo ? "yes" : "no",
             params->use_fa ? "yes" : "no", params->use_batch_cfg ? "yes" : "no");
@@ -611,7 +622,21 @@ static AceSynthJob * run_complete(AceSynth *         ctx,
 // function. task_type is always set: request_init defaults it to text2music,
 // the JSON parser ignores empty strings.
 bool ace_synth_is_current(const AceSynth * ctx) {
-    return ctx && !ctx->dit_file_id.empty() && store_file_identity(ctx->params.dit_path) == ctx->dit_file_id;
+    if (!ctx) {
+        return false;
+    }
+    for (const ModelKey * k : { &ctx->text_enc_key, &ctx->dit_key, &ctx->vae_dec_key }) {
+        if (store_key_identity(*k) != k->file_id) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void ace_synth_retain(AceSynth * ctx) {
+    if (ctx) {
+        ctx->refs.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
@@ -627,10 +652,6 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
                                     int                batch_n,
                                     AceProgress        progress) {
     if (!ctx || !reqs || batch_n < 1 || batch_n > 9) {
-        return NULL;
-    }
-    if (!ace_synth_is_current(ctx)) {
-        fprintf(stderr, "[Synth] ERROR: %s changed since this pipeline loaded; load it again\n", ctx->params.dit_path);
         return NULL;
     }
     const std::string & task = reqs[0].task_type;
@@ -701,7 +722,7 @@ void ace_audio_free(AceAudio * audio) {
 }
 
 void ace_synth_free(AceSynth * ctx) {
-    if (!ctx) {
+    if (!ctx || ctx->refs.fetch_sub(1, std::memory_order_acq_rel) != 1) {
         return;
     }
     delete ctx;

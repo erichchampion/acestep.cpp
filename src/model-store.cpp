@@ -88,7 +88,8 @@ using HandleMap = std::unordered_map<void *, ModelKey>;
 struct CpuEntry {
     void *      ptr;
     void        (*deleter)(void *);
-    std::string file_id;  // the file read, as ModelKey::file_id (#309)
+    std::string path;     // the file read
+    std::string file_id;  // and which one, as store_file_identity (#309)
 };
 
 }  // namespace
@@ -99,15 +100,17 @@ struct ModelStore {
     std::unordered_map<ModelKey, GpuEntry, ModelKeyHash, ModelKeyEq> gpu;
     HandleMap                                                        handle_to_key;
 
-    // CPU resident tables. Keyed by source path (LM GGUF for BPE/FSM, DiT
-    // GGUF for silence/DiTMeta). Small total footprint, never evicted.
+    // CPU resident tables. Keyed by source path and file identity (LM GGUF
+    // for BPE/FSM, DiT GGUF for silence/DiTMeta; cpu_key). Small total
+    // footprint, never evicted; freed by store_release_stale once their file
+    // is replaced.
     std::unordered_map<std::string, CpuEntry> bpe_by_path;
     std::unordered_map<std::string, CpuEntry> silence_by_path;
     std::unordered_map<std::string, CpuEntry> fsm_by_path;
     std::unordered_map<std::string, CpuEntry> dit_meta_by_path;
 
-    // GPU modules taken out of service (their file changed) while a caller
-    // held them:
+    // GPU modules store_release_stale took out of service (their file was
+    // replaced) while a caller held them:
     // never found by a lookup again, counted as resident, and freed by the
     // store_release that drops their last reference.
     std::unordered_map<void *, GpuEntry> retired_gpu;
@@ -225,10 +228,14 @@ void store_free(ModelStore * s) {
     delete s;
 }
 
+// The change time too: an inode reused for a file of the same size whose
+// modification time was copied over still differs there.
 #ifdef __APPLE__
 #    define MTIME_OF(st) (st).st_mtimespec
+#    define CTIME_OF(st) (st).st_ctimespec
 #else
 #    define MTIME_OF(st) (st).st_mtim
+#    define CTIME_OF(st) (st).st_ctim
 #endif
 
 std::string store_file_identity(const std::string & path) {
@@ -238,7 +245,16 @@ std::string store_file_identity(const std::string & path) {
     }
     return std::to_string((long long) st.st_dev) + ":" + std::to_string((long long) st.st_ino) + ":" +
            std::to_string((long long) st.st_size) + ":" + std::to_string((long long) MTIME_OF(st).tv_sec) + "." +
-           std::to_string((long long) MTIME_OF(st).tv_nsec);
+           std::to_string((long long) MTIME_OF(st).tv_nsec) + ":" + std::to_string((long long) CTIME_OF(st).tv_sec) +
+           "." + std::to_string((long long) CTIME_OF(st).tv_nsec);
+}
+
+std::string store_key_identity(const ModelKey & k) {
+    std::string id = store_file_identity(k.path);
+    if (!k.adapter_path.empty()) {
+        id += "|" + store_file_identity(k.adapter_path);
+    }
+    return id;
 }
 
 // Caller holds s->mtx. Take GPU entries out of service: free the idle ones,
@@ -296,39 +312,55 @@ static void drop_gpu_entries(ModelStore * s, const std::vector<ModelKey> & keys)
     }
 }
 
-// Caller holds s->mtx. The key as the store caches it: `k` with the identity
-// of its file NOW -- and, since that is about to be looked up, any cached
-// module for the same kind and path but an OLDER file taken out of service
-// first (a replaced weight's bytes will never be looked up again).
-static ModelKey keyed_now(ModelStore * s, const ModelKey & k) {
-    ModelKey now = k;
-    now.file_id  = store_file_identity(k.path);
-    std::vector<ModelKey> superseded;
-    for (const auto & kv : s->gpu) {
-        if (kv.first.kind == k.kind && kv.first.path == k.path && kv.first.file_id != now.file_id) {
-            superseded.push_back(kv.first);
-        }
+// The key as the store caches it: `k` as stamped by its caller, or stamped
+// with the files there now when the caller left it empty.
+static ModelKey stamped(const ModelKey & k) {
+    ModelKey out = k;
+    if (out.file_id.empty()) {
+        out.file_id = store_key_identity(k);
     }
-    drop_gpu_entries(s, superseded);
-    return now;
+    return out;
 }
 
-// Caller holds s->mtx. The cached CPU entry for `path` if its file is the
-// one it was read from; a stale one is freed and erased (CPU entries are
-// used within one call, and a synth context keeps its own copy of the DiT
-// metadata, so nothing holds one between calls).
+// Whether the files behind `k` are still the ones it was stamped with. A
+// cache miss reads the file only then: a key stamped before an update must
+// not load the update's weights under the old file's name -- its pipeline's
+// metadata came from the old file. Checked again after the load, so a file
+// replaced WHILE it was read is not cached either.
+static bool files_unchanged(const ModelKey & k) {
+    // Unstamped only when the file could not be stat'ed: the load reports it.
+    if (k.file_id.empty() || store_key_identity(k) == k.file_id) {
+        return true;
+    }
+    fprintf(stderr, "[Store] %s changed since its pipeline loaded; load the pipeline again\n", k.path.c_str());
+    return false;
+}
+
+static std::string cpu_key(const std::string & path, const std::string & file_id) {
+    return path + "\n" + file_id;
+}
+
+// Caller holds s->mtx. The cached CPU entry for this file, or nullptr on a
+// miss. Nothing is freed here: a caller may still hold a pointer from
+// earlier in its call (store_fsm reads store_bpe's, for one).
 static CpuEntry * cpu_hit(std::unordered_map<std::string, CpuEntry> & table, const std::string & path,
                           const std::string & file_id) {
-    auto it = table.find(path);
-    if (it == table.end()) {
-        return nullptr;
+    auto it = table.find(cpu_key(path, file_id));
+    return it == table.end() ? nullptr : &it->second;
+}
+
+// The identity a CPU lookup reads under: the caller's, or the file's now.
+static std::string cpu_file_id(const std::string & path, const std::string & file_id) {
+    return file_id.empty() ? store_file_identity(path) : file_id;
+}
+
+// A CPU miss reads the file only if it is still the one asked for.
+static bool cpu_file_unchanged(const std::string & path, const std::string & file_id) {
+    if (file_id.empty() || store_file_identity(path) == file_id) {
+        return true;
     }
-    if (it->second.file_id == file_id) {
-        return &it->second;
-    }
-    it->second.deleter(it->second.ptr);
-    table.erase(it);
-    return nullptr;
+    fprintf(stderr, "[Store] %s changed since its pipeline loaded; load the pipeline again\n", path.c_str());
+    return false;
 }
 
 void store_release_stale(ModelStore * s) {
@@ -338,14 +370,14 @@ void store_release_stale(ModelStore * s) {
     std::lock_guard<std::mutex> lock(s->mtx);
     std::vector<ModelKey> stale;
     for (const auto & kv : s->gpu) {
-        if (store_file_identity(kv.first.path) != kv.first.file_id) {
+        if (store_key_identity(kv.first) != kv.first.file_id) {
             stale.push_back(kv.first);
         }
     }
     drop_gpu_entries(s, stale);
     for (auto * table : { &s->bpe_by_path, &s->silence_by_path, &s->fsm_by_path, &s->dit_meta_by_path }) {
         for (auto it = table->begin(); it != table->end();) {
-            if (store_file_identity(it->first) != it->second.file_id) {
+            if (store_file_identity(it->second.path) != it->second.file_id) {
                 it->second.deleter(it->second.ptr);
                 it = table->erase(it);
             } else {
@@ -477,9 +509,12 @@ template <typename T> struct LoadGuard {
 
 Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = keyed_now(s, key_in);
+    const ModelKey k = stamped(key_in);
     if (auto * hit = cache_hit<Qwen3LM>(s, k)) {
         return hit;
+    }
+    if (!files_unchanged(k)) {
+        return nullptr;
     }
     if (s->policy == EVICT_STRICT) {
         evict_all_except(s, k);
@@ -494,6 +529,9 @@ Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & key_in) {
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
+    if (!files_unchanged(k)) {
+        return nullptr;  // replaced while it was read; the guard frees it
+    }
     install_entry(s, k, m, bytes_of_lm(m), "LM", del_lm);
     guard.dismiss();
     fprintf(stderr, "[Store] Load LM: %.0f ms\n", t.ms());
@@ -502,9 +540,12 @@ Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & key_in) {
 
 Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = keyed_now(s, key_in);
+    const ModelKey k = stamped(key_in);
     if (auto * hit = cache_hit<Qwen3GGML>(s, k)) {
         return hit;
+    }
+    if (!files_unchanged(k)) {
+        return nullptr;
     }
     if (s->policy == EVICT_STRICT) {
         evict_all_except(s, k);
@@ -519,6 +560,9 @@ Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & key_in) {
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
+    if (!files_unchanged(k)) {
+        return nullptr;  // replaced while it was read; the guard frees it
+    }
     install_entry(s, k, m, bytes_of_text_enc(m), "TextEnc", del_text_enc);
     guard.dismiss();
     fprintf(stderr, "[Store] Load TextEnc: %.0f ms\n", t.ms());
@@ -527,9 +571,12 @@ Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & key_in) {
 
 CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = keyed_now(s, key_in);
+    const ModelKey k = stamped(key_in);
     if (auto * hit = cache_hit<CondGGML>(s, k)) {
         return hit;
+    }
+    if (!files_unchanged(k)) {
+        return nullptr;
     }
     if (s->policy == EVICT_STRICT) {
         evict_all_except(s, k);
@@ -544,6 +591,9 @@ CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & key_in) {
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
+    if (!files_unchanged(k)) {
+        return nullptr;  // replaced while it was read; the guard frees it
+    }
     install_entry(s, k, m, bytes_of_cond_enc(m), "CondEnc", del_cond_enc);
     guard.dismiss();
     fprintf(stderr, "[Store] Load CondEnc: %.0f ms\n", t.ms());
@@ -552,9 +602,12 @@ CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & key_in) {
 
 DiTGGML * store_require_dit(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = keyed_now(s, key_in);
+    const ModelKey k = stamped(key_in);
     if (auto * hit = cache_hit<DiTGGML>(s, k)) {
         return hit;
+    }
+    if (!files_unchanged(k)) {
+        return nullptr;
     }
     if (s->policy == EVICT_STRICT) {
         evict_all_except(s, k);
@@ -570,6 +623,9 @@ DiTGGML * store_require_dit(ModelStore * s, const ModelKey & key_in) {
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
+    if (!files_unchanged(k)) {
+        return nullptr;  // replaced while it was read; the guard frees it
+    }
     install_entry(s, k, m, bytes_of_dit(m), "DiT", del_dit);
     guard.dismiss();
     fprintf(stderr, "[Store] Load DiT: %.0f ms\n", t.ms());
@@ -578,9 +634,12 @@ DiTGGML * store_require_dit(ModelStore * s, const ModelKey & key_in) {
 
 VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = keyed_now(s, key_in);
+    const ModelKey k = stamped(key_in);
     if (auto * hit = cache_hit<VAEEncoder>(s, k)) {
         return hit;
+    }
+    if (!files_unchanged(k)) {
+        return nullptr;
     }
     if (s->policy == EVICT_STRICT) {
         evict_all_except(s, k);
@@ -593,6 +652,9 @@ VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & key_in) {
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
+    if (!files_unchanged(k)) {
+        return nullptr;  // replaced while it was read; the guard frees it
+    }
     install_entry(s, k, m, bytes_of_vae_enc(m), "VAE-Enc", del_vae_enc);
     guard.dismiss();
     fprintf(stderr, "[Store] Load VAE-Enc: %.0f ms\n", t.ms());
@@ -601,9 +663,12 @@ VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & key_in) {
 
 VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = keyed_now(s, key_in);
+    const ModelKey k = stamped(key_in);
     if (auto * hit = cache_hit<VAEGGML>(s, k)) {
         return hit;
+    }
+    if (!files_unchanged(k)) {
+        return nullptr;
     }
     if (s->policy == EVICT_STRICT) {
         evict_all_except(s, k);
@@ -616,6 +681,9 @@ VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & key_in) {
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
+    if (!files_unchanged(k)) {
+        return nullptr;  // replaced while it was read; the guard frees it
+    }
     install_entry(s, k, m, bytes_of_vae_dec(m), "VAE-Dec", del_vae_dec);
     guard.dismiss();
     fprintf(stderr, "[Store] Load VAE-Dec: %.0f ms\n", t.ms());
@@ -624,9 +692,12 @@ VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & key_in) {
 
 TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = keyed_now(s, key_in);
+    const ModelKey k = stamped(key_in);
     if (auto * hit = cache_hit<TokGGML>(s, k)) {
         return hit;
+    }
+    if (!files_unchanged(k)) {
+        return nullptr;
     }
     if (s->policy == EVICT_STRICT) {
         evict_all_except(s, k);
@@ -641,6 +712,9 @@ TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & key_in) {
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
+    if (!files_unchanged(k)) {
+        return nullptr;  // replaced while it was read; the guard frees it
+    }
     install_entry(s, k, m, bytes_of_fsq_tok(m), "FSQ-Tok", del_fsq_tok);
     guard.dismiss();
     fprintf(stderr, "[Store] Load FSQ-Tok: %.0f ms\n", t.ms());
@@ -649,9 +723,12 @@ TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & key_in) {
 
 DetokGGML * store_require_fsq_detok(ModelStore * s, const ModelKey & key_in) {
     std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = keyed_now(s, key_in);
+    const ModelKey k = stamped(key_in);
     if (auto * hit = cache_hit<DetokGGML>(s, k)) {
         return hit;
+    }
+    if (!files_unchanged(k)) {
+        return nullptr;
     }
     if (s->policy == EVICT_STRICT) {
         evict_all_except(s, k);
@@ -665,6 +742,9 @@ DetokGGML * store_require_fsq_detok(ModelStore * s, const ModelKey & key_in) {
         }
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
+    }
+    if (!files_unchanged(k)) {
+        return nullptr;  // replaced while it was read; the guard frees it
     }
     install_entry(s, k, m, bytes_of_fsq_detok(m), "FSQ-Detok", del_fsq_detok);
     guard.dismiss();
@@ -714,16 +794,23 @@ void store_release(ModelStore * s, void * handle) {
 
 // Each accessor has the same shape: lookup, load on miss, return cached
 // pointer. Deleter is a lightweight lambda since these types are simple.
-BPETokenizer * store_bpe(ModelStore * s, const char * lm_path) {
+BPETokenizer * store_bpe(ModelStore * s, const char * lm_path, const std::string & file_id) {
     std::lock_guard<std::mutex> lock(s->mtx);
     std::string                 key = lm_path ? lm_path : "";
-    const std::string           fid = store_file_identity(key);
+    const std::string           fid = cpu_file_id(key, file_id);
     if (CpuEntry * it = cpu_hit(s->bpe_by_path, key, fid)) {
         return static_cast<BPETokenizer *>(it->ptr);
+    }
+    if (!cpu_file_unchanged(key, fid)) {
+        return nullptr;
     }
     auto * bpe = new BPETokenizer();
     if (!load_bpe_from_gguf(bpe, lm_path)) {
         delete bpe;
+        return nullptr;
+    }
+    if (!cpu_file_unchanged(key, fid)) {
+        delete bpe;  // replaced while it was read
         return nullptr;
     }
     CpuEntry e;
@@ -731,17 +818,21 @@ BPETokenizer * store_bpe(ModelStore * s, const char * lm_path) {
     e.deleter = [](void * p) {
         delete static_cast<BPETokenizer *>(p);
     };
+    e.path    = key;
     e.file_id = fid;
-    s->bpe_by_path.emplace(key, e);
+    s->bpe_by_path.emplace(cpu_key(key, fid), e);
     return bpe;
 }
 
-const float * store_silence(ModelStore * s, const char * dit_path) {
+const float * store_silence(ModelStore * s, const char * dit_path, const std::string & file_id) {
     std::lock_guard<std::mutex> lock(s->mtx);
     std::string                 key = dit_path ? dit_path : "";
-    const std::string           fid = store_file_identity(key);
+    const std::string           fid = cpu_file_id(key, file_id);
     if (CpuEntry * it = cpu_hit(s->silence_by_path, key, fid)) {
         return static_cast<const std::vector<float> *>(it->ptr)->data();
+    }
+    if (!cpu_file_unchanged(key, fid)) {
+        return nullptr;
     }
     GGUFModel gf = {};
     if (!gf_load(&gf, dit_path)) {
@@ -758,57 +849,71 @@ const float * store_silence(ModelStore * s, const char * dit_path) {
     memcpy(vec->data(), sl, 15000 * 64 * sizeof(float));
     gf_close(&gf);
 
+    if (!cpu_file_unchanged(key, fid)) {
+        delete vec;  // replaced while it was read
+        return nullptr;
+    }
     CpuEntry e;
     e.ptr     = vec;
     e.deleter = [](void * p) {
         delete static_cast<std::vector<float> *>(p);
     };
+    e.path    = key;
     e.file_id = fid;
-    s->silence_by_path.emplace(key, e);
+    s->silence_by_path.emplace(cpu_key(key, fid), e);
     return vec->data();
 }
 
-MetadataFSM * store_fsm(ModelStore * s, const char * lm_path, int vocab_size) {
-    // BPE must exist first: FSM is built from the BPE + vocab_size.
-    BPETokenizer * bpe = store_bpe(s, lm_path);
+MetadataFSM * store_fsm(ModelStore * s, const char * lm_path, int vocab_size, const std::string & file_id) {
+    // BPE must exist first: FSM is built from the BPE + vocab_size, of the
+    // SAME file -- so the identity is fixed once, for both.
+    std::string       key = lm_path ? lm_path : "";
+    const std::string fid = cpu_file_id(key, file_id);
+    BPETokenizer *    bpe = store_bpe(s, lm_path, fid);
     if (!bpe) {
         return nullptr;
     }
     std::lock_guard<std::mutex> lock(s->mtx);
-    std::string                 key = lm_path ? lm_path : "";
-    const std::string           fid = store_file_identity(key);
     if (CpuEntry * it = cpu_hit(s->fsm_by_path, key, fid)) {
         return static_cast<MetadataFSM *>(it->ptr);
     }
     auto * fsm = new MetadataFSM();
     fsm->init(*bpe, vocab_size);
+    if (!cpu_file_unchanged(key, fid)) {
+        delete fsm;  // replaced while it was read
+        return nullptr;
+    }
     CpuEntry e;
     e.ptr     = fsm;
     e.deleter = [](void * p) {
         delete static_cast<MetadataFSM *>(p);
     };
+    e.path    = key;
     e.file_id = fid;
-    s->fsm_by_path.emplace(key, e);
+    s->fsm_by_path.emplace(cpu_key(key, fid), e);
     return fsm;
 }
 
-const DiTMeta * store_dit_meta(ModelStore * s, const char * dit_path) {
+std::shared_ptr<const DiTMeta> store_dit_meta_shared(ModelStore *        s,
+                                                     const char *        dit_path,
+                                                     const std::string & file_id) {
     std::lock_guard<std::mutex> lock(s->mtx);
     std::string                 key = dit_path ? dit_path : "";
-    const std::string           fid = store_file_identity(key);
+    const std::string           fid = cpu_file_id(key, file_id);
     if (CpuEntry * it = cpu_hit(s->dit_meta_by_path, key, fid)) {
-        return static_cast<const DiTMeta *>(it->ptr);
+        return *static_cast<std::shared_ptr<const DiTMeta> *>(it->ptr);
     }
-    auto * meta = new DiTMeta();
+    if (!cpu_file_unchanged(key, fid)) {
+        return nullptr;
+    }
+    auto meta = std::make_shared<DiTMeta>();
     if (!dit_ggml_load_config(&meta->cfg, dit_path)) {
         fprintf(stderr, "[Store] FATAL: DiT config cannot open %s\n", dit_path);
-        delete meta;
         return nullptr;
     }
     GGUFModel gf = {};
     if (!gf_load(&gf, dit_path)) {
         fprintf(stderr, "[Store] FATAL: DiT cannot reopen %s for metadata\n", dit_path);
-        delete meta;
         return nullptr;
     }
     meta->is_turbo = gf_get_bool(gf, "acestep.is_turbo");
@@ -820,7 +925,6 @@ const DiTMeta * store_dit_meta(ModelStore * s, const char * dit_path) {
     if (!sl) {
         fprintf(stderr, "[Store] FATAL: silence_latent not found in %s\n", dit_path);
         gf_close(&gf);
-        delete meta;
         return nullptr;
     }
     meta->silence_full.resize(15000 * 64);
@@ -843,20 +947,29 @@ const DiTMeta * store_dit_meta(ModelStore * s, const char * dit_path) {
         } else {
             fprintf(stderr, "[Store] FATAL: null_condition_emb unexpected type %d\n", nce_meta->type);
             gf_close(&gf);
-            delete meta;
             return nullptr;
         }
     }
     gf_close(&gf);
+    if (!cpu_file_unchanged(key, fid)) {
+        return nullptr;  // replaced while it was read
+    }
 
-    CpuEntry e;
-    e.ptr     = meta;
+    std::shared_ptr<const DiTMeta> shared = meta;
+    CpuEntry                       e;
+    e.ptr     = new std::shared_ptr<const DiTMeta>(shared);
     e.deleter = [](void * p) {
-        delete static_cast<DiTMeta *>(p);
+        delete static_cast<std::shared_ptr<const DiTMeta> *>(p);
     };
+    e.path    = key;
     e.file_id = fid;
-    s->dit_meta_by_path.emplace(key, e);
-    return meta;
+    try {
+        s->dit_meta_by_path.emplace(cpu_key(key, fid), e);
+    } catch (...) {
+        e.deleter(e.ptr);
+        throw;
+    }
+    return shared;
 }
 
 size_t store_vram_bytes(const ModelStore * s) {
@@ -882,4 +995,9 @@ int store_gpu_module_count(const ModelStore * s) {
     std::lock_guard<std::mutex> lock(s->mtx);
     // Retired modules are still resident until their last release.
     return (int) (s->gpu.size() + s->retired_gpu.size());
+}
+
+const DiTMeta * store_dit_meta(ModelStore * s, const char * dit_path, const std::string & file_id) {
+    // The store's entry keeps it alive until store_release_stale.
+    return store_dit_meta_shared(s, dit_path, file_id).get();
 }

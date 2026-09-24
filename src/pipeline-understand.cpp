@@ -73,9 +73,12 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
 
     ctx->vae_enc_key.kind = MODEL_VAE_ENC;
     ctx->vae_enc_key.path = params->vae_path;
+    // Each key stamped with its file now, as ace_synth_load does (#309).
+    ctx->vae_enc_key.file_id = store_file_identity(params->vae_path);
 
     ctx->fsq_tok_key.kind = MODEL_FSQ_TOK;
     ctx->fsq_tok_key.path = params->dit_path;
+    ctx->fsq_tok_key.file_id = store_file_identity(params->dit_path);
 
     if (ctx->have_lm) {
         // LM key MUST stay identical to the one ace_lm builds, so the store
@@ -86,6 +89,7 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
         ctx->lm_key.path      = params->model_path;
         ctx->lm_key.max_seq   = params->max_seq;
         ctx->lm_key.n_kv_sets = 2 * params->max_batch;
+        ctx->lm_key.file_id   = store_file_identity(params->model_path);
     }
 
     fprintf(stderr, "[Understand-Load] Ready: lm=%s, fa=%s, fsm=%s\n", ctx->have_lm ? "yes" : "no",
@@ -188,7 +192,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
 
     // FSQ tokenize: latents [T_25Hz, 64] -> codes [T_5Hz].
     // silence comes from the store's CPU cache of the DiT GGUF.
-    const float * silence = store_silence(ctx->store, ctx->params.dit_path);
+    const float * silence = store_silence(ctx->store, ctx->params.dit_path, ctx->fsq_tok_key.file_id);
     if (!silence) {
         fprintf(stderr, "[Understand-Tok] FATAL: silence_latent unavailable\n");
         return -1;
@@ -263,7 +267,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
     // the next understand call on the same process.
     model->clamp_fp16 = false;
 
-    BPETokenizer * bpe = store_bpe(ctx->store, ctx->params.model_path);
+    BPETokenizer * bpe = store_bpe(ctx->store, ctx->params.model_path, ctx->lm_key.file_id);
     if (!bpe) {
         fprintf(stderr, "[Understand] FATAL: store_bpe failed\n");
         return -1;
@@ -271,7 +275,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
 
     MetadataFSM * fsm_template = nullptr;
     if (ctx->params.use_fsm) {
-        fsm_template = store_fsm(ctx->store, ctx->params.model_path, model->cfg.vocab_size);
+        fsm_template = store_fsm(ctx->store, ctx->params.model_path, model->cfg.vocab_size, ctx->lm_key.file_id);
         if (!fsm_template) {
             fprintf(stderr, "[Understand] FATAL: store_fsm failed\n");
             return -1;
