@@ -145,6 +145,7 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params) {
     for (const ModelKey * k : synth_keys(ctx)) {
         store_hold_key(store, *k);
     }
+    ctx->keys_held = true;
     return ctx;
 }
 
@@ -727,15 +728,31 @@ void ace_audio_free(AceAudio * audio) {
     }
 }
 
-void ace_synth_free(AceSynth * ctx) {
-    if (!ctx || ctx->refs.fetch_sub(1, std::memory_order_acq_rel) != 1) {
+// The owner's holds on every key, dropped once.
+static void drop_owner_keys(AceSynth * ctx) {
+    if (!ctx->keys_held.exchange(false)) {
         return;
     }
     // Its files' modules are no longer needed by it: a stale one goes now.
     for (const ModelKey * k : synth_keys(ctx)) {
         store_drop_key(ctx->store, *k);
     }
+}
+
+static void unref(AceSynth * ctx) {
+    if (ctx->refs.fetch_sub(1, std::memory_order_acq_rel) != 1) {
+        return;
+    }
+    drop_owner_keys(ctx);
     delete ctx;
+}
+
+void ace_synth_free(AceSynth * ctx) {
+    if (!ctx) {
+        return;
+    }
+    drop_owner_keys(ctx);
+    unref(ctx);
 }
 
 bool ace_synth_is_current(const AceSynth * ctx) {
@@ -753,10 +770,15 @@ bool ace_synth_is_current(const AceSynth * ctx) {
 void ace_synth_retain(AceSynth * ctx) {
     if (ctx) {
         ctx->refs.fetch_add(1, std::memory_order_relaxed);
+        store_hold_key(ctx->store, ctx->vae_dec_key);
     }
 }
 
-bool ace_synth_vae_is_current(const AceSynth * ctx) {
-    return ctx && store_key_identity(ctx->vae_dec_key) == ctx->vae_dec_key.file_id;
+void ace_synth_release(AceSynth * ctx) {
+    if (!ctx) {
+        return;
+    }
+    store_drop_key(ctx->store, ctx->vae_dec_key);
+    unref(ctx);
 }
 

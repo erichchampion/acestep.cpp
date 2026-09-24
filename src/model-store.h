@@ -139,6 +139,11 @@ void         store_release_stale(ModelStore * s);
 void         store_hold_key(ModelStore * s, const ModelKey & k);
 void         store_drop_key(ModelStore * s, const ModelKey & k);
 
+// Whether a require or lookup on this thread refused a file because it had
+// changed since its key was stamped, since the last call; clears it. Lets an
+// embedder tell "the files changed" apart from any other failure of a call.
+bool         store_consume_stale_refusal();
+
 // Typed GPU module accessors. Each returns a pointer owned by the store;
 // never free it yourself. Returns NULL on load failure.
 //

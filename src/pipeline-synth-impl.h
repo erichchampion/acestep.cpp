@@ -28,10 +28,12 @@ struct AceSynth {
     ModelStore *   store;
     AceSynthParams params;
 
-    // References: the loader's, plus one per job decoding through this
-    // context (ace_synth_retain). ace_synth_free drops one; the last frees.
-    // A reload must not free the context under a parked take.
+    // References: the owner's, plus one per job decoding through this
+    // context (ace_synth_retain). The last one frees it: a reload must not
+    // free the context under a parked take.
     std::atomic<int> refs{ 1 };
+    // Whether the owner's store_hold_key on every key is still in force.
+    std::atomic<bool> keys_held{ false };
 
     // The paths `params` points at, owned here: a job can keep this context
     // past the caller's strings (ace_synth_retain).

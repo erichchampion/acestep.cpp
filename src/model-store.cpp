@@ -355,12 +355,22 @@ static ModelKey stamped(const ModelKey & k) {
 // not load the update's weights under the old file's name -- its pipeline's
 // metadata came from the old file. Checked again after the load, so a file
 // replaced WHILE it was read is not cached either.
+// Set when a require or lookup refuses a changed file (store_consume_stale_refusal).
+static thread_local bool t_stale_refusal = false;
+
+bool store_consume_stale_refusal() {
+    const bool was   = t_stale_refusal;
+    t_stale_refusal = false;
+    return was;
+}
+
 static bool files_unchanged(const ModelKey & k) {
     // Unstamped only when the file could not be stat'ed: the load reports it.
     if (k.file_id.empty() || store_key_identity(k) == k.file_id) {
         return true;
     }
     fprintf(stderr, "[Store] %s changed since its pipeline loaded; load the pipeline again\n", k.path.c_str());
+    t_stale_refusal = true;
     return false;
 }
 
@@ -388,6 +398,7 @@ static bool cpu_file_unchanged(const std::string & path, const std::string & fil
         return true;
     }
     fprintf(stderr, "[Store] %s changed since its pipeline loaded; load the pipeline again\n", path.c_str());
+    t_stale_refusal = true;
     return false;
 }
 
@@ -429,9 +440,21 @@ void store_release_stale(ModelStore * s) {
         }
     }
     drop_gpu_entries(s, stale);
+    // A CPU entry a live context reads (one of its keys names the same file)
+    // stays, as its GPU modules do.
+    auto held = [s](const CpuEntry & e) {
+        for (const auto & kv : s->held_keys) {
+            const ModelKey & k = kv.first;
+            if (k.path == e.path &&
+                (k.file_id == e.file_id || k.file_id.rfind(e.file_id + "|", 0) == 0)) {
+                return true;
+            }
+        }
+        return false;
+    };
     for (auto * table : { &s->bpe_by_path, &s->silence_by_path, &s->fsm_by_path, &s->dit_meta_by_path }) {
         for (auto it = table->begin(); it != table->end();) {
-            if (store_file_identity(it->second.path) != it->second.file_id) {
+            if (store_file_identity(it->second.path) != it->second.file_id && !held(it->second)) {
                 it->second.deleter(it->second.ptr);
                 it = table->erase(it);
             } else {

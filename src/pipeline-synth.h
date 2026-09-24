@@ -110,11 +110,14 @@ void ace_audio_free(AceAudio * audio);
 // lives, so it keeps working; but one freed meanwhile (STRICT eviction) is
 // not read again from a replaced file -- load the pipeline again.
 bool ace_synth_is_current(const AceSynth * ctx);
-// The same, for the VAE only: all a parked take's decode reads.
-bool ace_synth_vae_is_current(const AceSynth * ctx);
 
-// A job that decodes through `ctx` after the caller may have freed it
-// (a reload while takes are parked) takes a reference; ace_synth_free drops
-// one, and the last frees the context.
+// A job that decodes through `ctx` after its owner may have freed it (a
+// reload while takes are parked) retains it, and releases it when done; the
+// context goes with the last of them. A retained context keeps only its VAE
+// decoder's module (all a parked take's decode reads): the owner's free lets
+// the DiT, encoders and FSQ go, so a parked take does not keep a replaced
+// model's weights resident.
 void ace_synth_retain(AceSynth * ctx);
+void ace_synth_release(AceSynth * ctx);
+// The owner's free: its keys go at once, the context with its last job.
 void ace_synth_free(AceSynth * ctx);
