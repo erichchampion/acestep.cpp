@@ -99,6 +99,15 @@ struct DiTMeta {
 ModelStore * store_create(EvictPolicy policy);
 void         store_free(ModelStore * s);
 
+// Forget every cached module, so the next require or lookup reads its GGUF
+// from disk again -- what a weight REPLACED at the same path needs, since the
+// cache is keyed by path and would otherwise keep serving the old bytes.
+// An idle GPU module is freed now. One a caller still holds is retired:
+// dropped from lookups at once, freed by its last store_release. CPU entries
+// (BPE, silence, FSM, DiT metadata) are unhooked but kept until store_free,
+// because callers hold raw pointers into them with no refcount.
+void         store_purge(ModelStore * s);
+
 // Typed GPU module accessors. Each returns a pointer owned by the store;
 // never free it yourself. Returns NULL on load failure.
 //

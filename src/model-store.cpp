@@ -19,6 +19,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -101,6 +102,13 @@ struct ModelStore {
     std::unordered_map<std::string, CpuEntry> silence_by_path;
     std::unordered_map<std::string, CpuEntry> fsm_by_path;
     std::unordered_map<std::string, CpuEntry> dit_meta_by_path;
+
+    // What store_purge took out of service while it was still in use. A GPU
+    // module a caller holds is freed by the store_release that drops its last
+    // reference; a CPU entry (no refcount -- callers keep raw pointers into
+    // it) lives until store_free. Neither is ever found by a lookup again.
+    std::unordered_map<void *, GpuEntry> retired_gpu;
+    std::vector<CpuEntry>                retired_cpu;
 
     mutable std::mutex mtx;
 };
@@ -201,7 +209,45 @@ void store_free(ModelStore * s) {
     for (auto & kv : s->dit_meta_by_path) {
         kv.second.deleter(kv.second.ptr);
     }
+    // Retired entries: whatever store_purge took out of service and nothing
+    // has released since (GPU), and every CPU entry it unhooked.
+    for (auto & kv : s->retired_gpu) {
+        kv.second.deleter(kv.second.ptr);
+    }
+    for (auto & e : s->retired_cpu) {
+        e.deleter(e.ptr);
+    }
     delete s;
+}
+
+void store_purge(ModelStore * s) {
+    if (!s) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(s->mtx);
+    // GPU: an idle module is freed now; one in use is retired -- out of the
+    // lookup table at once, so the next require of its key loads the file
+    // afresh, and freed by the release that drops its last reference.
+    for (auto & kv : s->gpu) {
+        GpuEntry & e = kv.second;
+        s->handle_to_key.erase(e.ptr);
+        if (e.refcount == 0) {
+            fprintf(stderr, "[Store] Purge %s (%.1f MB)\n", e.label, (float) e.bytes / (1024.0f * 1024.0f));
+            e.deleter(e.ptr);
+        } else {
+            fprintf(stderr, "[Store] Retire %s (refcount=%d)\n", e.label, e.refcount);
+            s->retired_gpu.emplace(e.ptr, e);
+        }
+    }
+    s->gpu.clear();
+    // CPU: callers hold raw pointers with no refcount, so nothing here can be
+    // freed safely -- only unhooked, so the next lookup reads the file again.
+    for (auto * table : { &s->bpe_by_path, &s->silence_by_path, &s->fsm_by_path, &s->dit_meta_by_path }) {
+        for (auto & kv : *table) {
+            s->retired_cpu.push_back(kv.second);
+        }
+        table->clear();
+    }
 }
 
 // Each require_* follows the same shape: lock, check cache, evict if needed,
@@ -518,6 +564,19 @@ void store_release(ModelStore * s, void * handle) {
         return;
     }
     std::lock_guard<std::mutex> lock(s->mtx);
+    // A module store_purge retired while this caller held it: freed with the
+    // last reference, never returned to the lookup table.
+    auto retired = s->retired_gpu.find(handle);
+    if (retired != s->retired_gpu.end()) {
+        GpuEntry & e = retired->second;
+        assert(e.refcount > 0);
+        if (--e.refcount == 0) {
+            fprintf(stderr, "[Store] Unload retired %s (%.1f MB)\n", e.label, (float) e.bytes / (1024.0f * 1024.0f));
+            e.deleter(e.ptr);
+            s->retired_gpu.erase(retired);
+        }
+        return;
+    }
     auto                        hit = s->handle_to_key.find(handle);
     if (hit == s->handle_to_key.end()) {
         fprintf(stderr, "[Store] WARNING: release of unknown handle %p\n", handle);
