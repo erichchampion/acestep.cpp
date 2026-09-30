@@ -11,6 +11,7 @@
 // Final: RMSNorm
 
 #pragma once
+#include "gpu-compute.h"
 #include "ace-fatal.h"
 #include "backend.h"
 #include "ggml-backend.h"
@@ -439,7 +440,7 @@ static void qwen3_forward(Qwen3GGML * m, const int * token_ids, int S, float * o
     }
 
     // Compute
-    ggml_backend_sched_graph_compute(m->sched, gf);
+    ace_graph_compute(m->sched, gf, "TextEnc");
 
     // Read output [H, S]
     ggml_backend_tensor_get(out, output, 0, H * S * sizeof(float));
@@ -472,7 +473,7 @@ static void qwen3_embed_lookup(Qwen3GGML * m, const int * token_ids, int S, floa
         ace_fatal(1, "[TextEncoder] FATAL: failed to allocate graph (embed lookup, %d tokens)\n", S);
     }
     ggml_backend_tensor_set(t_ids, token_ids, 0, S * sizeof(int));
-    ggml_backend_sched_graph_compute(m->sched, gf);
+    ace_graph_compute(m->sched, gf, "TextEnc");
     ggml_backend_tensor_get(out, output, 0, (size_t) H * S * sizeof(float));
 
     ggml_backend_sched_reset(m->sched);

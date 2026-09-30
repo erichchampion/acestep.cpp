@@ -8,6 +8,7 @@
 // Upsample: 10x6x4x4x2 = 1920x
 
 #pragma once
+#include "gpu-compute.h"
 #include "ace-fatal.h"
 #include "backend.h"
 #include "ggml-backend.h"
@@ -433,7 +434,7 @@ static int vae_ggml_compute(VAEGGML *     m,
     }
     ggml_backend_tensor_set(m->graph_input, m->scratch_in.data(), 0, in_size * sizeof(float));
 
-    ggml_backend_sched_graph_compute(m->sched, m->graph);
+    ace_graph_compute(m->sched, m->graph, "VAE-Decode");
 
     return (int) m->graph_output->ne[0];
 }

@@ -4,6 +4,7 @@
 // Euler flow matching sampler with CFG and APG momentum.
 // Matches Python ACE-Step-1.5 acestep/models/base/apg_guidance.py
 
+#include "gpu-compute.h"
 #include "debug.h"
 #include "dit-graph.h"
 #include "dit.h"
@@ -485,7 +486,7 @@ static int dit_ggml_generate(DiTGGML *           model,
         ggml_backend_tensor_set(t_input, input_buf.data(), 0, in_ch * T * N_graph * sizeof(float));
 
         // Conditional forward pass
-        ggml_backend_sched_graph_compute(model->sched, gf);
+        ace_graph_compute(model->sched, gf, "DiT");
 
         // dump intermediate tensors on step 0 (sample 0 only for batch)
         if (step == 0 && dbg && dbg->enabled) {
@@ -577,7 +578,7 @@ static int dit_ggml_generate(DiTGGML *           model,
             ggml_backend_tensor_set(t_sa_mask_pad, sa_pad_data.data(), 0, S * S * N * sizeof(uint16_t));
             ggml_backend_tensor_set(t_ca_mask, ca_data.data(), 0, enc_S * S * N * sizeof(uint16_t));
 
-            ggml_backend_sched_graph_compute(model->sched, gf);
+            ace_graph_compute(model->sched, gf, "DiT");
             ggml_backend_tensor_get(t_output, vt_uncond.data(), 0, n_total * sizeof(float));
 
             if (dbg && dbg->enabled) {

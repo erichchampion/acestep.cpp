@@ -6,6 +6,7 @@
 // Downsample: 2x4x4x6x10 = 1920x (matches decoder upsample)
 
 #pragma once
+#include "gpu-compute.h"
 #include "ace-fatal.h"
 #include "progress.h"
 #include "vae.h"
@@ -243,7 +244,7 @@ static int vae_enc_compute(VAEEncoder *  m,
     }
     ggml_backend_tensor_set(m->graph_input, m->scratch_in.data(), 0, in_size * sizeof(float));
 
-    ggml_backend_sched_graph_compute(m->sched, m->graph);
+    ace_graph_compute(m->sched, m->graph, "VAE-Encode");
 
     return (int) m->graph_output->ne[0];  // T_latent
 }

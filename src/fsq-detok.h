@@ -9,6 +9,7 @@
 // Detokenizer reuses Qwen3 encoder infrastructure from qwen3.h
 
 #pragma once
+#include "gpu-compute.h"
 #include "qwen3-enc.h"
 
 // FSQ constants
@@ -199,7 +200,7 @@ static int detok_ggml_decode(DetokGGML * m, const int * codes, int T_5Hz, float 
         // Re-set positions every iteration (allocator may share buffer with intermediates)
         ggml_backend_tensor_set(t_pos, pos_data, 0, P * sizeof(int));
         ggml_backend_tensor_set(t_in, fsq_decoded.data() + g * FSQ_NDIMS, 0, FSQ_NDIMS * sizeof(float));
-        ggml_backend_sched_graph_compute(m->sched, gf);
+        ace_graph_compute(m->sched, gf, "FSQ-Detok");
 
         // output [64, 5]: 5 frames of 64 channels
         // context_out layout: [64, T_25Hz], frame t at offset t*64

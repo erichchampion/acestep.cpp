@@ -3,6 +3,7 @@
 // Loads from GGUF, supports prefill + decode, tied lm_head
 #pragma once
 
+#include "gpu-compute.h"
 #include "ace-fatal.h"
 #include "qwen3-enc.h"  // Qwen3Layer, Qwen3Config, layer build helpers
 
@@ -540,7 +541,7 @@ static void qw3lm_forward(Qwen3LM * m, const int * token_ids, int n_tokens, int 
     }
 
     // Compute
-    ggml_backend_sched_graph_compute(m->sched, gf);
+    ace_graph_compute(m->sched, gf, "LM");
 
     // Read logits [V]
     ggml_backend_tensor_get(lgt, logits, 0, c.vocab_size * sizeof(float));
@@ -769,7 +770,7 @@ static void qw3lm_forward_batch(Qwen3LM *   m,
     }
 
     // Compute
-    ggml_backend_sched_graph_compute(m->sched, gf);
+    ace_graph_compute(m->sched, gf, "LM");
 
     // Read logits [out_V, N]
     ggml_backend_tensor_get(lgt, logits, 0, (size_t) out_V * N * sizeof(float));

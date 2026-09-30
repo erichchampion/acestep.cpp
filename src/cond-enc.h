@@ -12,6 +12,7 @@
 //   Pack: cat(lyric, timbre[0:1], text_proj) -> [2048, S_total]
 
 #pragma once
+#include "gpu-compute.h"
 #include "ace-fatal.h"
 #include "qwen3-enc.h"
 
@@ -348,7 +349,7 @@ static void cond_ggml_forward(CondGGML *           m,
     }
 
     // Compute
-    ggml_backend_sched_graph_compute(m->sched, gf);
+    ace_graph_compute(m->sched, gf, "CondEnc");
 
     // Read outputs and pack on CPU
     // Pack order: lyric, timbre[0:1], text_proj

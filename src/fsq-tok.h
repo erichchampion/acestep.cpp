@@ -12,6 +12,7 @@
 // Output codes feed into detok_ggml_decode (fsq-detok.h) to get DiT context.
 
 #pragma once
+#include "gpu-compute.h"
 #include "fsq-detok.h"
 #include "qwen3-enc.h"
 
@@ -223,7 +224,7 @@ static int tok_ggml_encode(TokGGML *     m,
         // This matches! Just upload 5*64 contiguous floats.
         ggml_backend_tensor_set(t_in, input.data() + (size_t) g * P * 64, 0, (size_t) P * 64 * sizeof(float));
 
-        ggml_backend_sched_graph_compute(m->sched, gf);
+        ace_graph_compute(m->sched, gf, "FSQ-Tok");
 
         // Read 6 FSQ values, encode to integer index
         ggml_backend_tensor_get(t_out, fsq_buf, 0, FSQ_NDIMS * sizeof(float));

@@ -13,6 +13,7 @@
 #include "model-store.h"
 
 #include "ace-fatal.h"
+#include "gpu-compute.h"
 #include "gguf-weights.h"
 #include "timer.h"
 
@@ -80,7 +81,18 @@ struct GpuEntry {
     int    refcount;
     void (*deleter)(void *);
     const char * label;
+    // The module's scheduler, for the health probe on a cache hit (#403).
+    ggml_backend_sched_t (*sched_of)(void *);
 };
+
+// Free a GPU module, forgetting its scheduler's health record first (a new
+// scheduler at the same address is not the broken one).
+static void free_gpu(GpuEntry & e) {
+    if (e.sched_of) {
+        ace_sched_forget(e.sched_of(e.ptr));
+    }
+    e.deleter(e.ptr);
+}
 
 // Reverse lookup: handle pointer -> key, so store_release can find the
 // entry from just the pointer without the caller carrying the key around.
@@ -151,10 +163,14 @@ static void evict_all_except(ModelStore * s, const ModelKey & keep) {
         }
         fprintf(stderr, "[Store] Evict %s (%.1f MB)\n", e.label, (float) e.bytes / (1024.0f * 1024.0f));
         s->handle_to_key.erase(e.ptr);
-        e.deleter(e.ptr);
+        free_gpu(e);
         it = s->gpu.erase(it);
     }
 }
+
+// Take GPU entries out of service (defined below); `why` is logged.
+static void drop_gpu_entries(ModelStore * s, const std::vector<ModelKey> & keys,
+                             const char * why = "its file changed");
 
 namespace {
 
@@ -171,6 +187,7 @@ static T * install_entry(ModelStore *     s,
     e.refcount = 1;
     e.deleter  = deleter;
     e.label    = label;
+    e.sched_of = [](void * p) -> ggml_backend_sched_t { return static_cast<T *>(p)->sched; };
     s->gpu.emplace(k, e);
     try {
         s->handle_to_key.emplace(obj, k);
@@ -188,6 +205,13 @@ static T * install_entry(ModelStore *     s,
 template <typename T> static T * cache_hit(ModelStore * s, const ModelKey & k) {
     auto it = s->gpu.find(k);
     if (it == s->gpu.end()) {
+        return nullptr;
+    }
+    // A module whose GPU backend failed (a GPU reset, #403) refuses every
+    // later compute until it is recreated: take it out of service -- freed
+    // now if idle, when its holder lets go if not -- and load it afresh.
+    if (!ace_sched_healthy(it->second.sched_of(it->second.ptr))) {
+        drop_gpu_entries(s, { k }, "its GPU backend failed");
         return nullptr;
     }
     it->second.refcount++;
@@ -210,7 +234,7 @@ void store_free(ModelStore * s) {
     // GPU modules: release every entry regardless of refcount (shutdown).
     for (auto & kv : s->gpu) {
         GpuEntry & e = kv.second;
-        e.deleter(e.ptr);
+        free_gpu(e);
     }
     s->gpu.clear();
     s->handle_to_key.clear();
@@ -230,7 +254,7 @@ void store_free(ModelStore * s) {
     }
     // Modules retired that nothing has released since.
     for (auto & kv : s->retired_gpu) {
-        kv.second.deleter(kv.second.ptr);
+        free_gpu(kv.second);
     }
     delete s;
 }
@@ -288,7 +312,7 @@ std::string store_key_identity(const ModelKey & k) {
 // Caller holds s->mtx. Take GPU entries out of service: free the idle ones,
 // retire the held ones (out of lookups, freed by their last release). Planned
 // before anything is freed, so a throw leaves the store as it was.
-static void drop_gpu_entries(ModelStore * s, const std::vector<ModelKey> & keys) {
+static void drop_gpu_entries(ModelStore * s, const std::vector<ModelKey> & keys, const char * why) {
     if (keys.empty()) {
         return;
     }
@@ -327,16 +351,14 @@ static void drop_gpu_entries(ModelStore * s, const std::vector<ModelKey> & keys)
             continue;
         }
         if (it->second.refcount > 0) {
-            fprintf(stderr, "[Store] Retire %s (refcount=%d): its file changed\n", it->second.label,
-                    it->second.refcount);
+            fprintf(stderr, "[Store] Retire %s (refcount=%d): %s\n", it->second.label, it->second.refcount, why);
         }
         s->handle_to_key.erase(it->second.ptr);
         s->gpu.erase(it);
     }
     for (auto & e : idle) {
-        fprintf(stderr, "[Store] Release %s (%.1f MB): its file changed\n", e.label,
-                (float) e.bytes / (1024.0f * 1024.0f));
-        e.deleter(e.ptr);
+        fprintf(stderr, "[Store] Release %s (%.1f MB): %s\n", e.label, (float) e.bytes / (1024.0f * 1024.0f), why);
+        free_gpu(e);
     }
 }
 
@@ -842,7 +864,7 @@ void store_release(ModelStore * s, void * handle) {
         assert(e.refcount > 0);
         if (--e.refcount == 0) {
             fprintf(stderr, "[Store] Unload retired %s (%.1f MB)\n", e.label, (float) e.bytes / (1024.0f * 1024.0f));
-            e.deleter(e.ptr);
+            free_gpu(e);
             s->retired_gpu.erase(retired);
         }
         return;
@@ -863,7 +885,7 @@ void store_release(ModelStore * s, void * handle) {
     e.refcount--;
     if (e.refcount == 0 && s->policy == EVICT_STRICT) {
         fprintf(stderr, "[Store] Unload %s (%.1f MB)\n", e.label, (float) e.bytes / (1024.0f * 1024.0f));
-        e.deleter(e.ptr);
+        free_gpu(e);
         s->handle_to_key.erase(hit);
         s->gpu.erase(gpu_it);
     }
