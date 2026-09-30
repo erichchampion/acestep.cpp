@@ -85,12 +85,8 @@ struct GpuEntry {
     ggml_backend_sched_t (*sched_of)(void *);
 };
 
-// Free a GPU module, forgetting its scheduler's health record first (a new
-// scheduler at the same address is not the broken one).
+// Free a GPU module.
 static void free_gpu(GpuEntry & e) {
-    if (e.sched_of) {
-        ace_sched_forget(e.sched_of(e.ptr));
-    }
     e.deleter(e.ptr);
 }
 
@@ -208,10 +204,26 @@ template <typename T> static T * cache_hit(ModelStore * s, const ModelKey & k) {
         return nullptr;
     }
     // A module whose GPU backend failed (a GPU reset, #403) refuses every
-    // later compute until it is recreated: take it out of service -- freed
-    // now if idle, when its holder lets go if not -- and load it afresh.
-    if (!ace_sched_healthy(it->second.sched_of(it->second.ptr))) {
-        drop_gpu_entries(s, { k }, "its GPU backend failed");
+    // later compute until the backend is recreated -- and modules share it.
+    // Stop sharing it, and take every module on it out of service (freed now
+    // if idle, when its holder lets go if not): this load, and the next of
+    // each, get a fresh backend. (backend_init also refuses to share a broken
+    // one, for a load that is not a hit.)
+    if (ggml_backend_t broken = ace_sched_broken_backend(it->second.sched_of(it->second.ptr))) {
+        backend_invalidate(broken);
+        std::vector<ModelKey> on_it;
+        on_it.reserve(s->gpu.size());
+        for (const auto & kv : s->gpu) {
+            ggml_backend_sched_t sched = kv.second.sched_of(kv.second.ptr);
+            const int            n     = sched ? ggml_backend_sched_get_n_backends(sched) : 0;
+            for (int i = 0; i < n; i++) {
+                if (ggml_backend_sched_get_backend(sched, i) == broken) {
+                    on_it.push_back(kv.first);
+                    break;
+                }
+            }
+        }
+        drop_gpu_entries(s, on_it, "its GPU backend failed");
         return nullptr;
     }
     it->second.refcount++;
@@ -583,7 +595,7 @@ static size_t bytes_of_fsq_detok(const DetokGGML * m) {
 // real teardown lives in qw3lm_free()/vae_enc_free()/etc. The del_* frees safely
 // on a partial module: every *_free() null-checks each handle, and backend_init
 // either fully took a ref (backend_release returns it) or threw before taking one
-// (g_backend_refs is 0, so backend_release early-returns).
+// (it holds no backend, so backend_release early-returns).
 //
 // dismiss() runs after install_entry, which is all-or-nothing: it rolls back its
 // first emplace if the second throws, so on any install failure m is in no
@@ -625,6 +637,8 @@ Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & key_in) {
         if (!qw3lm_load(m, k.path.c_str(), k.max_seq, k.n_kv_sets)) {
             return nullptr;
         }
+    } catch (const ace_gpu_error &) {
+        throw;  // the GPU failed, not the file: the caller says so (#403)
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
@@ -656,6 +670,8 @@ Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & key_in) {
         if (!qwen3_load_text_encoder(m, k.path.c_str())) {
             return nullptr;
         }
+    } catch (const ace_gpu_error &) {
+        throw;  // the GPU failed, not the file: the caller says so (#403)
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
@@ -687,6 +703,8 @@ CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & key_in) {
         if (!cond_ggml_load(m, k.path.c_str())) {
             return nullptr;
         }
+    } catch (const ace_gpu_error &) {
+        throw;  // the GPU failed, not the file: the caller says so (#403)
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
@@ -719,6 +737,8 @@ DiTGGML * store_require_dit(ModelStore * s, const ModelKey & key_in) {
         if (!dit_ggml_load(m, k.path.c_str(), adapter, k.adapter_scale)) {
             return nullptr;
         }
+    } catch (const ace_gpu_error &) {
+        throw;  // the GPU failed, not the file: the caller says so (#403)
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
@@ -748,6 +768,8 @@ VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & key_in) {
     LoadGuard<VAEEncoder> guard(m, del_vae_enc);
     try {
         vae_enc_load(m, k.path.c_str());  // void: exit(1) by default, throws under the flag
+    } catch (const ace_gpu_error &) {
+        throw;  // the GPU failed, not the file: the caller says so (#403)
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
@@ -777,6 +799,8 @@ VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & key_in) {
     LoadGuard<VAEGGML> guard(m, del_vae_dec);
     try {
         vae_ggml_load(m, k.path.c_str());  // void: exit(1) by default, throws under the flag
+    } catch (const ace_gpu_error &) {
+        throw;  // the GPU failed, not the file: the caller says so (#403)
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
@@ -808,6 +832,8 @@ TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & key_in) {
         if (!tok_ggml_load(m, k.path.c_str())) {
             return nullptr;
         }
+    } catch (const ace_gpu_error &) {
+        throw;  // the GPU failed, not the file: the caller says so (#403)
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }
@@ -839,6 +865,8 @@ DetokGGML * store_require_fsq_detok(ModelStore * s, const ModelKey & key_in) {
         if (!detok_ggml_load(m, k.path.c_str())) {
             return nullptr;
         }
+    } catch (const ace_gpu_error &) {
+        throw;  // the GPU failed, not the file: the caller says so (#403)
     } catch (const ace_fatal_error &) {
         return nullptr;  // a failed load is the store's nullptr; reason is on stderr
     }

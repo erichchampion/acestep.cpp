@@ -31,6 +31,7 @@
 // PendingCopy lookup is O(1) via hashmap.
 
 #include "ace-fatal.h"
+#include "gpu-compute.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "ggml.h"
@@ -444,10 +445,8 @@ static bool adapter_merge_on_backend(WeightCtx *                                
     db.upload();
 
     // A GPU that did not run the merge leaves the weights unmerged: fail the
-    // load rather than keep them (#403; the store turns this into nullptr).
-    if (ggml_backend_graph_compute(backend, graph) != GGML_STATUS_SUCCESS) {
-        ace_fatal(1, "[Adapter-Merge] FATAL: the GPU did not complete the merge\n");
-    }
+    // load rather than keep them (#403).
+    ace_backend_compute(backend, graph, "Adapter-Merge");
 
     // allocate a staging slot sized for the native encoded weight, then download
     size_t n_floats    = (base_nb + sizeof(float) - 1) / sizeof(float);

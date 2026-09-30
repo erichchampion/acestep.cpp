@@ -8,12 +8,14 @@
 #include "ace-fatal.h"
 #include "backend-config.h"
 #include "ggml-backend.h"
+#include "gpu-compute.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
+#include <vector>
 
 #ifdef __APPLE__
 #    include <sys/sysctl.h>
@@ -33,8 +35,18 @@ struct BackendPair {
 // that loads its own VAE. If a second TU in the same binary ever called a loader
 // directly, its loads would get a separate cache and refcount and not share --
 // make this a shared singleton (ace_backend_config-style) if that day comes.
-static BackendPair g_backend_cache = {};
-static int         g_backend_refs  = 0;
+//
+// Each backend pair counts its own holders (#403): a GPU backend left in the
+// error state by a failed command buffer is taken out of sharing
+// (backend_invalidate), so the next load makes a fresh pair, while the
+// modules still on the old one free it as they are released.
+struct BackendSlot {
+    BackendPair bp;
+    int         refs;
+};
+
+static std::vector<BackendSlot> g_backend_slots;        // every live pair
+static int                      g_backend_current = -1;  // the one new loads share, or -1
 
 // The auto GGML CPU thread count: one thread per useful physical core. GEMM
 // shares SIMD units across hyperthreads, so one-per-physical is optimal.
@@ -104,15 +116,31 @@ static ggml_backend_t cpu_backend_new(int n_threads) {
     return cpu;
 }
 
+// Stop sharing `backend` with new loads (#403): it is in the error state, and
+// the next backend_init makes a fresh pair. Its holders keep it until they
+// release it.
+static void backend_invalidate(ggml_backend_t backend) {
+    if (g_backend_current >= 0 && g_backend_slots[g_backend_current].bp.backend == backend) {
+        fprintf(stderr, "[Load] %s backend failed: new loads get a fresh one\n", ggml_backend_name(backend));
+        g_backend_current = -1;
+    }
+}
+
 // Initialize backends: load all available (CUDA, Metal, Vulkan...),
 // pick the best one, keep CPU as fallback.
 // label: log prefix, e.g. "DiT", "VAE", "LM"
 // Subsequent calls reuse the same backend (single VMM pool).
 static BackendPair backend_init(const char * label) {
-    if (g_backend_refs > 0) {
-        g_backend_refs++;
-        fprintf(stderr, "[Load] %s backend: %s (shared)\n", label, ggml_backend_name(g_backend_cache.backend));
-        return g_backend_cache;
+    // A shared backend a failed command buffer left broken (#403) is not
+    // handed out again: this load, and every one after, gets a fresh pair.
+    if (g_backend_current >= 0 && !ace_backend_healthy(g_backend_slots[g_backend_current].bp.backend)) {
+        backend_invalidate(g_backend_slots[g_backend_current].bp.backend);
+    }
+    if (g_backend_current >= 0) {
+        BackendSlot & slot = g_backend_slots[g_backend_current];
+        slot.refs++;
+        fprintf(stderr, "[Load] %s backend: %s (shared)\n", label, ggml_backend_name(slot.bp.backend));
+        return slot.bp;
     }
 
     ggml_backend_load_all();
@@ -166,8 +194,16 @@ static BackendPair backend_init(const char * label) {
     bp.has_gpu = !best_is_cpu;
     fprintf(stderr, "[Load] %s backend: %s (CPU threads: %d)\n", label, ggml_backend_name(bp.backend), n_threads);
 
-    g_backend_cache = bp;
-    g_backend_refs  = 1;
+    try {
+        g_backend_slots.push_back({ bp, 1 });
+    } catch (...) {
+        if (bp.backend && bp.backend != bp.cpu_backend) {
+            ggml_backend_free(bp.backend);
+        }
+        ggml_backend_free(bp.cpu_backend);
+        throw;
+    }
+    g_backend_current = (int) g_backend_slots.size() - 1;
     return bp;
 }
 
@@ -182,20 +218,32 @@ static void backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) 
     if (!backend) {
         return;
     }
-    if (g_backend_refs <= 0) {
+    int i = 0;
+    while (i < (int) g_backend_slots.size() && g_backend_slots[i].bp.backend != backend) {
+        i++;
+    }
+    if (i == (int) g_backend_slots.size()) {
         return;
     }
-    g_backend_refs--;
-    if (g_backend_refs == 0) {
-        if (backend && backend != cpu_backend) {
-            ggml_backend_free(backend);
-        }
-        if (cpu_backend) {
-            ggml_backend_free(cpu_backend);
-        }
-        g_backend_cache = {};
+    if (--g_backend_slots[i].refs > 0) {
+        return;
+    }
+    if (backend != cpu_backend) {
+        ace_backend_forget(backend);
+        ggml_backend_free(backend);
+    }
+    if (cpu_backend) {
+        ggml_backend_free(cpu_backend);
+    }
+    g_backend_slots.erase(g_backend_slots.begin() + i);
+    if (g_backend_current == i) {
+        g_backend_current = -1;
+    } else if (g_backend_current > i) {
+        g_backend_current--;
     }
 }
+
+
 
 // Create a scheduler from a backend pair.
 // max_nodes: graph size hint (4096 for small models, 8192 for large)
