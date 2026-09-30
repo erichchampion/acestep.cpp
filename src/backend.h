@@ -125,8 +125,9 @@ static ggml_backend_t cpu_backend_new(int n_threads) {
 // buffer. The setter is reached through the Metal registry's proc address, so
 // a build without Metal (or a ggml without the export) is unaffected.
 // ACE_METAL_N_CB overrides the default, clamped to 1-8 (ggml's own ceiling,
-// so the logged count is the one in effect). Only iOS splits: the LM and the
-// understand pipeline do not run there, so their per-token graphs keep n_cb 1.
+// so the logged count is the one in effect). Only iOS splits, where the app
+// runs no LM, so the LM's per-token graphs keep n_cb 1 on macOS. ggml logs a
+// "n_cb > 2 is not recommended" warning when it is set; that is expected here.
 static int backend_metal_n_cb(void) {
     if (const char * v = std::getenv("ACE_METAL_N_CB")) {
         const int n = atoi(v);
@@ -150,6 +151,14 @@ static void backend_split_command_buffers(ggml_backend_t backend) {
     using set_n_cb_t = void (*)(ggml_backend_t, int);
     auto set_n_cb    = (set_n_cb_t) ggml_backend_reg_get_proc_address(reg, "ggml_backend_metal_set_n_cb");
     if (!set_n_cb) {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        // A Metal backend without the export is a ggml without our patch: on
+        // iOS 27 that brings the watchdog resets back (#403), so say so.
+        if (strstr(ggml_backend_name(backend), "MTL") || strstr(ggml_backend_name(backend), "Metal")) {
+            fprintf(stderr, "[Load] WARNING: this ggml does not export ggml_backend_metal_set_n_cb -- "
+                            "graphs stay in 2 command buffers, and iOS's GPU watchdog may reset long steps\n");
+        }
+#endif
         return;
     }
     const int n_cb = backend_metal_n_cb();
