@@ -11,13 +11,16 @@
 // on garbage, then a decode that crashes the app.
 //
 // So after each compute, each GPU backend of the scheduler is probed with an
-// empty graph, submitted asynchronously: a backend in the error state refuses
-// it before encoding anything, a healthy one commits an empty command buffer
-// and nothing waits for it. The CPU backend has no such state and is not
-// probed. A failure raises ace_gpu_error (an ace_fatal_error; the app build's
+// empty graph: a backend in the error state refuses it before encoding
+// anything (ggml-metal's graph_compute checks has_error first -- the probe
+// rests on that, and a ggml update that moved the check would make every
+// probe read healthy), a healthy one runs an empty command buffer. It is
+// waited for, so no probe is left in flight when a module and its backend are
+// freed. The CPU backend has no such state and is not probed. Measured on the
+// LM planner's per-token loop: no difference beyond run-to-run noise. A failure raises ace_gpu_error (an ace_fatal_error; the app build's
 // C shim reports it as its own status), naming the stage. A scheduler that
 // could not allocate the graph is out of memory, not a GPU fault:
-// std::bad_alloc.
+// std::bad_alloc in the app build (the CLIs' ace_fatal otherwise).
 //
 // The backend stays broken until it is recreated. Modules share one backend
 // (backend.h), so ModelStore, finding a cached module's backend broken on a
@@ -36,6 +39,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <mutex>
 #include <new>
 #include <unordered_set>
@@ -76,10 +80,12 @@ inline bool is_poisoned(ggml_backend_t b) {
 }
 
 // One empty graph for every probe: computing it reads nothing and writes
-// nothing, so sharing it across threads is safe. Built once, never freed.
+// nothing, so sharing it across threads is safe. Built once, never freed, in
+// zeroed memory (a backend that peeks at nodes[0] finds null, not garbage).
 inline ggml_cgraph * empty_graph() {
     static ggml_cgraph * g = [] {
-        ggml_init_params p = { ggml_graph_overhead_custom(1, false), nullptr, true };
+        const size_t     size = ggml_graph_overhead_custom(1, false);
+        ggml_init_params p    = { size, calloc(1, size), true };
         return ggml_new_graph_custom(ggml_init(p), 1, false);
     }();
     return g;
@@ -100,7 +106,7 @@ inline bool ace_backend_healthy(ggml_backend_t b) {
     if (ace_gpu::is_poisoned(b)) {
         return false;
     }
-    return ggml_backend_graph_compute_async(b, ace_gpu::empty_graph()) == GGML_STATUS_SUCCESS;
+    return ggml_backend_graph_compute(b, ace_gpu::empty_graph()) == GGML_STATUS_SUCCESS;
 }
 
 // The first GPU backend of `sched` that can no longer run work, or null.
@@ -157,6 +163,27 @@ inline void ace_gpu_poison(ggml_backend_t b) {
     ace_gpu::any_poisoned().store(true);
 }
 
+// Fail stage `what` for a compute that returned `st`, or whose backend it
+// left broken (`broken`).
+inline void ace_check_compute(ggml_status st, bool broken, const char * what) {
+    if (st == GGML_STATUS_ALLOC_FAILED) {
+#ifdef ACESTEP_FATAL_THROWS
+        fprintf(stderr, "[%s] FATAL: could not allocate the graph\n", what);
+        throw std::bad_alloc();
+#else
+        ace_fatal(1, "[%s] FATAL: could not allocate the graph\n", what);
+#endif
+    }
+    if (st != GGML_STATUS_SUCCESS) {
+        char why[64];
+        snprintf(why, sizeof(why), "ggml status %d", (int) st);
+        ace_gpu_fail(what, why);
+    }
+    if (broken) {
+        ace_gpu_fail(what, "the backend is in its error state");
+    }
+}
+
 // Run `gf` on `sched`, and fail the run if the GPU did not (see above).
 // `what` names the stage in the message ("DiT", "VAE-Decode", ...).
 inline void ace_graph_compute(ggml_backend_sched_t sched, ggml_cgraph * gf, const char * what) {
@@ -168,18 +195,7 @@ inline void ace_graph_compute(ggml_backend_sched_t sched, ggml_cgraph * gf, cons
         }
         st = GGML_STATUS_FAILED;
     }
-    if (st == GGML_STATUS_ALLOC_FAILED) {
-        fprintf(stderr, "[%s] FATAL: could not allocate the graph\n", what);
-        throw std::bad_alloc();
-    }
-    if (st != GGML_STATUS_SUCCESS) {
-        char why[64];
-        snprintf(why, sizeof(why), "ggml status %d", (int) st);
-        ace_gpu_fail(what, why);
-    }
-    if (ace_sched_broken_backend(sched)) {
-        ace_gpu_fail(what, "the backend is in its error state");
-    }
+    ace_check_compute(st, st == GGML_STATUS_SUCCESS && ace_sched_broken_backend(sched) != nullptr, what);
 }
 
 // The same for a graph run directly on one backend (the adapter merge).
@@ -189,16 +205,25 @@ inline void ace_backend_compute(ggml_backend_t backend, ggml_cgraph * gf, const 
         ace_gpu_poison(backend);
         st = GGML_STATUS_FAILED;
     }
-    if (st == GGML_STATUS_ALLOC_FAILED) {
-        fprintf(stderr, "[%s] FATAL: could not allocate the graph\n", what);
-        throw std::bad_alloc();
-    }
-    if (st != GGML_STATUS_SUCCESS) {
-        char why[64];
-        snprintf(why, sizeof(why), "ggml status %d", (int) st);
-        ace_gpu_fail(what, why);
-    }
-    if (!ace_backend_healthy(backend)) {
-        ace_gpu_fail(what, "the backend is in its error state");
-    }
+    ace_check_compute(st, st == GGML_STATUS_SUCCESS && !ace_backend_healthy(backend), what);
 }
+
+// Frees a per-call graph context -- and resets its scheduler -- when a failed
+// compute throws past the code that frees them; does nothing otherwise, so
+// the normal path's own free is untouched.
+struct ace_graph_unwind_guard {
+    ggml_backend_sched_t sched;
+    ggml_context *       ctx;
+    int                  pending = std::uncaught_exceptions();
+
+    ~ace_graph_unwind_guard() {
+        if (std::uncaught_exceptions() > pending) {
+            if (sched) {
+                ggml_backend_sched_reset(sched);
+            }
+            if (ctx) {
+                ggml_free(ctx);
+            }
+        }
+    }
+};

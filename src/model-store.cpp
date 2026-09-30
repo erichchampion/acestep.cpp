@@ -85,10 +85,6 @@ struct GpuEntry {
     ggml_backend_sched_t (*sched_of)(void *);
 };
 
-// Free a GPU module.
-static void free_gpu(GpuEntry & e) {
-    e.deleter(e.ptr);
-}
 
 // Reverse lookup: handle pointer -> key, so store_release can find the
 // entry from just the pointer without the caller carrying the key around.
@@ -159,7 +155,7 @@ static void evict_all_except(ModelStore * s, const ModelKey & keep) {
         }
         fprintf(stderr, "[Store] Evict %s (%.1f MB)\n", e.label, (float) e.bytes / (1024.0f * 1024.0f));
         s->handle_to_key.erase(e.ptr);
-        free_gpu(e);
+        e.deleter(e.ptr);
         it = s->gpu.erase(it);
     }
 }
@@ -198,32 +194,45 @@ static T * install_entry(ModelStore *     s,
     return obj;
 }
 
+// Take every cached module on a GPU backend that has failed (a GPU reset,
+// #403) out of service -- freed now if idle, when its holder lets go if not --
+// and stop sharing that backend (backend_invalidate), so what loads next gets
+// a fresh one. A broken backend refuses every later compute until recreated,
+// and modules share it: left cached, each would fail its next run, and hold
+// its memory besides. Each distinct backend is probed once.
+static void drop_on_broken_backends(ModelStore * s) {
+    std::vector<ggml_backend_t> healthy;
+    std::vector<ggml_backend_t> broken;
+    std::vector<ModelKey>       drop;
+    for (const auto & kv : s->gpu) {
+        ggml_backend_sched_t sched = kv.second.sched_of(kv.second.ptr);
+        const int            n     = sched ? ggml_backend_sched_get_n_backends(sched) : 0;
+        for (int i = 0; i < n; i++) {
+            ggml_backend_t b = ggml_backend_sched_get_backend(sched, i);
+            if (std::find(healthy.begin(), healthy.end(), b) != healthy.end()) {
+                continue;
+            }
+            if (std::find(broken.begin(), broken.end(), b) == broken.end()) {
+                if (ace_backend_healthy(b)) {
+                    healthy.push_back(b);
+                    continue;
+                }
+                broken.push_back(b);
+                backend_invalidate(b);
+            }
+            drop.push_back(kv.first);
+            break;
+        }
+    }
+    drop_gpu_entries(s, drop, "its GPU backend failed");
+}
+
 template <typename T> static T * cache_hit(ModelStore * s, const ModelKey & k) {
+    // Every lookup -- a miss about to load, as much as a hit -- first clears
+    // out modules on a failed backend, so none is handed out and none lingers.
+    drop_on_broken_backends(s);
     auto it = s->gpu.find(k);
     if (it == s->gpu.end()) {
-        return nullptr;
-    }
-    // A module whose GPU backend failed (a GPU reset, #403) refuses every
-    // later compute until the backend is recreated -- and modules share it.
-    // Stop sharing it, and take every module on it out of service (freed now
-    // if idle, when its holder lets go if not): this load, and the next of
-    // each, get a fresh backend. (backend_init also refuses to share a broken
-    // one, for a load that is not a hit.)
-    if (ggml_backend_t broken = ace_sched_broken_backend(it->second.sched_of(it->second.ptr))) {
-        backend_invalidate(broken);
-        std::vector<ModelKey> on_it;
-        on_it.reserve(s->gpu.size());
-        for (const auto & kv : s->gpu) {
-            ggml_backend_sched_t sched = kv.second.sched_of(kv.second.ptr);
-            const int            n     = sched ? ggml_backend_sched_get_n_backends(sched) : 0;
-            for (int i = 0; i < n; i++) {
-                if (ggml_backend_sched_get_backend(sched, i) == broken) {
-                    on_it.push_back(kv.first);
-                    break;
-                }
-            }
-        }
-        drop_gpu_entries(s, on_it, "its GPU backend failed");
         return nullptr;
     }
     it->second.refcount++;
@@ -246,7 +255,7 @@ void store_free(ModelStore * s) {
     // GPU modules: release every entry regardless of refcount (shutdown).
     for (auto & kv : s->gpu) {
         GpuEntry & e = kv.second;
-        free_gpu(e);
+        e.deleter(e.ptr);
     }
     s->gpu.clear();
     s->handle_to_key.clear();
@@ -266,7 +275,7 @@ void store_free(ModelStore * s) {
     }
     // Modules retired that nothing has released since.
     for (auto & kv : s->retired_gpu) {
-        free_gpu(kv.second);
+        kv.second.deleter(kv.second.ptr);
     }
     delete s;
 }
@@ -370,7 +379,7 @@ static void drop_gpu_entries(ModelStore * s, const std::vector<ModelKey> & keys,
     }
     for (auto & e : idle) {
         fprintf(stderr, "[Store] Release %s (%.1f MB): %s\n", e.label, (float) e.bytes / (1024.0f * 1024.0f), why);
-        free_gpu(e);
+        e.deleter(e.ptr);
     }
 }
 
@@ -892,7 +901,7 @@ void store_release(ModelStore * s, void * handle) {
         assert(e.refcount > 0);
         if (--e.refcount == 0) {
             fprintf(stderr, "[Store] Unload retired %s (%.1f MB)\n", e.label, (float) e.bytes / (1024.0f * 1024.0f));
-            free_gpu(e);
+            e.deleter(e.ptr);
             s->retired_gpu.erase(retired);
         }
         return;
@@ -913,7 +922,7 @@ void store_release(ModelStore * s, void * handle) {
     e.refcount--;
     if (e.refcount == 0 && s->policy == EVICT_STRICT) {
         fprintf(stderr, "[Store] Unload %s (%.1f MB)\n", e.label, (float) e.bytes / (1024.0f * 1024.0f));
-        free_gpu(e);
+        e.deleter(e.ptr);
         s->handle_to_key.erase(hit);
         s->gpu.erase(gpu_it);
     }

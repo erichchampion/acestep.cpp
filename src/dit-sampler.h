@@ -192,6 +192,7 @@ static int dit_ggml_generate(DiTGGML *           model,
         /*.no_alloc   =*/true,
     };
     struct ggml_context * ctx = ggml_init(gparams);
+    ace_graph_unwind_guard ctx_unwind{ model->sched, ctx };  // a failed compute throws past the free (#403)
 
     struct ggml_tensor * t_input  = NULL;
     struct ggml_tensor * t_output = NULL;

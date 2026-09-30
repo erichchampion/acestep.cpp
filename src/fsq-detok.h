@@ -143,6 +143,7 @@ static int detok_ggml_decode(DetokGGML * m, const int * codes, int T_5Hz, float 
     std::vector<uint8_t>    ctx_buf(ctx_size);
     struct ggml_init_params p   = { ctx_size, ctx_buf.data(), true };
     struct ggml_context *   ctx = ggml_init(p);
+    ace_graph_unwind_guard ctx_unwind{ m->sched, ctx };  // a failed compute throws past the free (#403)
 
     // Input: one FSQ-decoded vector [6]
     // ggml pitfall: [6] is ne[0]=6, matches project_out weight [2048, 6]

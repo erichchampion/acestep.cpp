@@ -158,6 +158,7 @@ static int tok_ggml_encode(TokGGML *     m,
     }
     struct ggml_init_params gparams = { ctx_size, ctx_buf, true };
     struct ggml_context *   ctx     = ggml_init(gparams);
+    ace_graph_unwind_guard ctx_unwind{ m->sched, ctx };  // a failed compute throws past the free (#403)
 
     // Input: 5 VAE latent frames [64, 5]
     struct ggml_tensor * tok_in = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 64, P);

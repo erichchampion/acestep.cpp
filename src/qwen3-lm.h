@@ -447,6 +447,7 @@ static void qw3lm_forward(Qwen3LM * m, const int * token_ids, int n_tokens, int 
     size_t                  ctx_size = (size_t) 16384 * ggml_tensor_overhead() + ggml_graph_overhead();
     struct ggml_init_params gp       = { ctx_size, NULL, true };
     struct ggml_context *   ctx      = ggml_init(gp);
+    ace_graph_unwind_guard ctx_unwind{ m->sched, ctx };  // a failed compute throws past the free (#403)
     struct ggml_cgraph *    gf       = ggml_new_graph_custom(ctx, 16384, false);
 
     // Inputs
@@ -587,6 +588,7 @@ static void qw3lm_forward_batch(Qwen3LM *   m,
     size_t ctx_size             = (size_t) 16384 * ggml_tensor_overhead() + ggml_graph_overhead_custom(16384, false);
     struct ggml_init_params gp  = { ctx_size, NULL, true };
     struct ggml_context *   ctx = ggml_init(gp);
+    ace_graph_unwind_guard ctx_unwind{ m->sched, ctx };  // a failed compute throws past the free (#403)
     struct ggml_cgraph *    gf  = ggml_new_graph_custom(ctx, 16384, false);
 
     // Embedding via ggml_get_rows (scheduler handles backend fallback)
