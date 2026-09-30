@@ -25,6 +25,9 @@ struct AceUnderstandParams {
     bool         use_fa;       // flash attention
     int          vae_chunk;    // latent frames per tile
     int          vae_overlap;  // overlap frames per side
+    bool         metadata_only;  // stop at </think>: the CoT metadata (bpm, key,
+                                 // time signature, language) without the lyrics
+                                 // that follow -- most of the decode's time
 };
 
 void ace_understand_default_params(AceUnderstandParams * p);

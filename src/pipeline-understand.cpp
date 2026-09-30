@@ -50,6 +50,7 @@ void ace_understand_default_params(AceUnderstandParams * p) {
     p->use_fa      = true;
     p->vae_chunk   = 1024;
     p->vae_overlap = 64;
+    p->metadata_only = false;
 }
 
 AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParams * params) {
@@ -319,7 +320,16 @@ int ace_understand_generate(AceUnderstand *      ctx,
     std::mt19937     rng((uint32_t) seed);
     std::vector<int> gen_tokens;
     bool             past_think = false;
-    int              max_tokens = 4096;
+    // The decode can use what is left of the context after the prompt, and no
+    // more: past max_seq every forward fails ("kv_len > max_seq") and the rest
+    // of the decode samples garbage (cadenza-audio #394).
+    const int room       = model->cfg.max_seq_len - (int) prompt.size() - 1;
+    int       max_tokens = std::min(4096, room);
+    if (max_tokens <= 0) {
+        fprintf(stderr, "[Understand] FATAL: the prompt (%zu tokens) fills the %d-token context\n", prompt.size(),
+                model->cfg.max_seq_len);
+        return -1;
+    }
 
     if (ace_cancelled(progress,
                       ACE_STAGE_LM)) {  // honour a cancel before the loop; the loop's step-0 poll sizes the bar
@@ -357,6 +367,10 @@ int ace_understand_generate(AceUnderstand *      ctx,
 
         if (tok == TOKEN_THINK_END) {
             past_think = true;
+            if (ctx->params.metadata_only) {
+                gen_tokens.push_back(tok);
+                break;  // the metadata is complete; the lyrics are not wanted
+            }
         }
 
         gen_tokens.push_back(tok);
