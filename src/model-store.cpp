@@ -81,7 +81,7 @@ struct GpuEntry {
     int    refcount;
     void (*deleter)(void *);
     const char * label;
-    // The module's scheduler, for the health probe on a cache hit (#403).
+    // The module's scheduler, for the broken-backend sweep on every lookup (#403).
     ggml_backend_sched_t (*sched_of)(void *);
 };
 

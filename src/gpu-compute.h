@@ -23,10 +23,11 @@
 // std::bad_alloc in the app build (the CLIs' ace_fatal otherwise).
 //
 // The backend stays broken until it is recreated. Modules share one backend
-// (backend.h), so ModelStore, finding a cached module's backend broken on a
-// hit, stops sharing it (backend_invalidate) and drops every module on it:
-// the next load makes a fresh backend, and modules still held free the old
-// one as they are released.
+// (backend.h), so ModelStore, on every lookup -- a miss as much as a hit --
+// finds cached modules on a broken backend, stops sharing it
+// (backend_invalidate) and drops them: the next load makes a fresh backend,
+// and modules still held free the old one as they are released. backend_init
+// also refuses to share a broken backend, for loads outside the store.
 //
 // ACE_TEST_GPU_FAIL=<stage> (tests only) makes every compute of that stage
 // fail while it is set, as a discarded command buffer does, and marks the

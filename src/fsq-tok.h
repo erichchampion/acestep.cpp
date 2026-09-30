@@ -151,12 +151,9 @@ static int tok_ggml_encode(TokGGML *     m,
 
     // Build graph (one group: input [64, 5] -> output [6])
     size_t    ctx_size = ggml_tensor_overhead() * 256 + ggml_graph_overhead_custom(4096, false);
-    uint8_t * ctx_buf  = (uint8_t *) malloc(ctx_size);
-    if (!ctx_buf) {
-        fprintf(stderr, "[FSQ-Tok] OOM allocating graph context (%zu bytes)\n", ctx_size);
-        return false;
-    }
-    struct ggml_init_params gparams = { ctx_size, ctx_buf, true };
+    // Owned: freed however this returns -- a failed compute throws (#403).
+    std::vector<uint8_t> ctx_buf(ctx_size);
+    struct ggml_init_params gparams = { ctx_size, ctx_buf.data(), true };
     struct ggml_context *   ctx     = ggml_init(gparams);
     ace_graph_unwind_guard ctx_unwind{ m->sched, ctx };  // a failed compute throws past the free (#403)
 
@@ -201,7 +198,6 @@ static int tok_ggml_encode(TokGGML *     m,
     if (!ggml_backend_sched_alloc_graph(m->sched, gf)) {
         fprintf(stderr, "[Tok] FATAL: graph alloc failed\n");
         ggml_free(ctx);
-        free(ctx_buf);
         return -1;
     }
 
@@ -236,7 +232,6 @@ static int tok_ggml_encode(TokGGML *     m,
 
     ggml_backend_sched_reset(m->sched);
     ggml_free(ctx);
-    free(ctx_buf);
     return T_5Hz;
 }
 

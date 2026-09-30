@@ -445,8 +445,14 @@ static bool adapter_merge_on_backend(WeightCtx *                                
     db.upload();
 
     // A GPU that did not run the merge leaves the weights unmerged: fail the
-    // load rather than keep them (#403).
-    ace_backend_compute(backend, graph, "Adapter-Merge");
+    // load rather than keep them (#403), freeing what the merge allocated.
+    try {
+        ace_backend_compute(backend, graph, "Adapter-Merge");
+    } catch (...) {
+        ggml_backend_buffer_free(buf);
+        ggml_free(ctx);
+        throw;
+    }
 
     // allocate a staging slot sized for the native encoded weight, then download
     size_t n_floats    = (base_nb + sizeof(float) - 1) / sizeof(float);
