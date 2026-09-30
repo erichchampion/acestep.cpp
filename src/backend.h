@@ -10,6 +10,9 @@
 #include "ggml-backend.h"
 #include "gpu-compute.h"
 
+#if defined(__APPLE__)
+#    include <TargetConditionals.h>
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -116,6 +119,42 @@ static ggml_backend_t cpu_backend_new(int n_threads) {
     return cpu;
 }
 
+// Split each graph across more Metal command buffers (cadenza-audio #403).
+// iOS's GPU watchdog resets the GPU when one command buffer runs too long
+// ("progress timeout"), and ggml-metal's default puts most of a graph in one
+// buffer. The setter is reached through the Metal registry's proc address, so
+// a build without Metal (or a ggml without the export) is unaffected.
+// ACE_METAL_N_CB overrides the default (1-8; ggml caps it at 8).
+static int backend_metal_n_cb(void) {
+    if (const char * v = std::getenv("ACE_METAL_N_CB")) {
+        const int n = atoi(v);
+        if (n >= 1) {
+            return n;
+        }
+    }
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    return 8;
+#else
+    return 1;
+#endif
+}
+
+static void backend_split_command_buffers(ggml_backend_t backend) {
+    ggml_backend_dev_t dev = backend ? ggml_backend_get_device(backend) : NULL;
+    ggml_backend_reg_t reg = dev ? ggml_backend_dev_backend_reg(dev) : NULL;
+    if (!reg) {
+        return;
+    }
+    using set_n_cb_t = void (*)(ggml_backend_t, int);
+    auto set_n_cb    = (set_n_cb_t) ggml_backend_reg_get_proc_address(reg, "ggml_backend_metal_set_n_cb");
+    if (!set_n_cb) {
+        return;
+    }
+    const int n_cb = backend_metal_n_cb();
+    set_n_cb(backend, n_cb);
+    fprintf(stderr, "[Load] Metal command buffers per graph: %d\n", n_cb + 1);
+}
+
 // Stop sharing `backend` with new loads (#403): it is in the error state, and
 // the next backend_init makes a fresh pair. Its holders keep it until they
 // release it.
@@ -192,6 +231,7 @@ static BackendPair backend_init(const char * label) {
         ace_fatal(1, "[Load] FATAL: failed to init CPU backend\n");
     }
     bp.has_gpu = !best_is_cpu;
+    backend_split_command_buffers(bp.backend);
     fprintf(stderr, "[Load] %s backend: %s (CPU threads: %d)\n", label, ggml_backend_name(bp.backend), n_threads);
 
     try {
