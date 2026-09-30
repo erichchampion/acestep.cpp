@@ -124,12 +124,14 @@ static ggml_backend_t cpu_backend_new(int n_threads) {
 // ("progress timeout"), and ggml-metal's default puts most of a graph in one
 // buffer. The setter is reached through the Metal registry's proc address, so
 // a build without Metal (or a ggml without the export) is unaffected.
-// ACE_METAL_N_CB overrides the default (1-8; ggml caps it at 8).
+// ACE_METAL_N_CB overrides the default, clamped to 1-8 (ggml's own ceiling,
+// so the logged count is the one in effect). Only iOS splits: the LM and the
+// understand pipeline do not run there, so their per-token graphs keep n_cb 1.
 static int backend_metal_n_cb(void) {
     if (const char * v = std::getenv("ACE_METAL_N_CB")) {
         const int n = atoi(v);
         if (n >= 1) {
-            return n;
+            return n < 8 ? n : 8;
         }
     }
 #if defined(__APPLE__) && TARGET_OS_IPHONE
