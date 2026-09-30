@@ -306,6 +306,18 @@ int ace_understand_generate(AceUnderstand *      ctx,
     std::vector<int> prompt = build_understand_prompt(*bpe, codes.data(), (int) codes.size());
     fprintf(stderr, "[Understand-Prompt] %zu tokens (%zu codes + framing)\n", prompt.size(), codes.size());
 
+    // The decode can use what is left of the context after the prompt, and no
+    // more: past max_seq every forward fails ("kv_len > max_seq") and the rest
+    // of the decode samples garbage (cadenza-audio #394). Checked before the
+    // prefill, which a prompt that fills the context would fail.
+    const int room       = model->cfg.max_seq_len - (int) prompt.size() - 1;
+    int       max_tokens = std::min(4096, room);
+    if (max_tokens <= 0) {
+        fprintf(stderr, "[Understand] FATAL: the prompt (%zu tokens) fills the %d-token context\n", prompt.size(),
+                model->cfg.max_seq_len);
+        return -1;
+    }
+
     // Step 4: prefill
     Timer              t_gen;
     std::vector<float> logits(V);
@@ -320,16 +332,6 @@ int ace_understand_generate(AceUnderstand *      ctx,
     std::mt19937     rng((uint32_t) seed);
     std::vector<int> gen_tokens;
     bool             past_think = false;
-    // The decode can use what is left of the context after the prompt, and no
-    // more: past max_seq every forward fails ("kv_len > max_seq") and the rest
-    // of the decode samples garbage (cadenza-audio #394).
-    const int room       = model->cfg.max_seq_len - (int) prompt.size() - 1;
-    int       max_tokens = std::min(4096, room);
-    if (max_tokens <= 0) {
-        fprintf(stderr, "[Understand] FATAL: the prompt (%zu tokens) fills the %d-token context\n", prompt.size(),
-                model->cfg.max_seq_len);
-        return -1;
-    }
 
     if (ace_cancelled(progress,
                       ACE_STAGE_LM)) {  // honour a cancel before the loop; the loop's step-0 poll sizes the bar
