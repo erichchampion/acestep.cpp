@@ -32,6 +32,26 @@ struct AceUnderstandParams {
 
 void ace_understand_default_params(AceUnderstandParams * p);
 
+// One call's choices, and what it did (cadenza-audio #416, #434). A NULL call
+// is the defaults below.
+struct AceUnderstandCall {
+    int  metadata_only;   // -1: the context's params.metadata_only; 0: decode the lyrics
+                          // too; 1: stop at </think>. Per call, so one loaded context
+                          // serves detection and full analysis without a reload.
+    int  decode_reserve;  // context tokens kept free for the decode. Codes past what
+                          // leaves this much room are clipped, keeping the middle of
+                          // the track, so a long input runs instead of failing.
+                          // <= 0: 256 for a metadata-only call, 1024 otherwise.
+    // Reported by the call:
+    int  codes_total;     // codes the audio made
+    int  codes_start;     // the first of them the prompt holds
+    int  codes_used;      // how many the prompt holds (codes_total unless clipped)
+    bool decode_bounded;  // the decode stopped at its token bound, not at its end
+                          // token: what it wrote (the lyrics) may be cut short
+};
+
+void ace_understand_default_call(AceUnderstandCall * c);
+
 // Build a lightweight understand context bound to a ModelStore. Validates
 // paths and builds ModelKeys. GPU modules are acquired per request, never
 // owned by the context. NULL on invalid input.
@@ -57,6 +77,8 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
 // progress: abort + progress callback. Reports ACE_STAGE_LM between tokens, and
 // ACE_STAGE_VAE_ENCODE while encoding input reference audio. Default {} = never
 // cancel, no progress. Returns 0 on success, -1 on error or cancellation.
+// call: this call's choices, filled with what it did; NULL = the defaults.
+// out->audio_codes carries every code the audio made, clipped or not.
 int ace_understand_generate(AceUnderstand *      ctx,
                             const float *        src_audio,
                             int                  src_len,
@@ -66,7 +88,8 @@ int ace_understand_generate(AceUnderstand *      ctx,
                             AceRequest *         out,
                             std::vector<float> * latent_out   = nullptr,
                             int *                T_latent_out = nullptr,
-                            AceProgress          progress     = {});
+                            AceProgress          progress     = {},
+                            AceUnderstandCall *  call         = nullptr);
 
 // Whether the files this context loaded are still the files at their paths
 // (#309); false once one was replaced or deleted: load the context again.

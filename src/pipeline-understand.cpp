@@ -104,6 +104,15 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
     return ctx;
 }
 
+void ace_understand_default_call(AceUnderstandCall * c) {
+    c->metadata_only  = -1;
+    c->decode_reserve = 0;
+    c->codes_total    = 0;
+    c->codes_start    = 0;
+    c->codes_used     = 0;
+    c->decode_bounded = false;
+}
+
 int ace_understand_generate(AceUnderstand *      ctx,
                             const float *        src_audio,
                             int                  src_len,
@@ -113,10 +122,21 @@ int ace_understand_generate(AceUnderstand *      ctx,
                             AceRequest *         out,
                             std::vector<float> * latent_out,
                             int *                T_latent_out,
-                            AceProgress          progress) {
+                            AceProgress          progress,
+                            AceUnderstandCall *  call) {
     if (!ctx || !req || !out) {
         return -1;
     }
+    AceUnderstandCall defaults;
+    ace_understand_default_call(&defaults);
+    if (!call) {
+        call = &defaults;
+    }
+    const bool metadata_only = call->metadata_only < 0 ? ctx->params.metadata_only : call->metadata_only != 0;
+    call->codes_total        = 0;
+    call->codes_start        = 0;
+    call->codes_used         = 0;
+    call->decode_bounded     = false;
 
     if (latent_out) {
         latent_out->clear();
@@ -223,6 +243,8 @@ int ace_understand_generate(AceUnderstand *      ctx,
         return -1;
     }
     codes.resize(T_5Hz);
+    call->codes_total = T_5Hz;
+    call->codes_used  = T_5Hz;
     fprintf(stderr, "[Understand-Tok] %d codes (%.2fs @ 5Hz), %.0fms\n", T_5Hz, (float) T_5Hz / 5.0f, t_tok.ms());
 
     // dump: save latents and codes for test-tok-cossim.py
@@ -303,8 +325,29 @@ int ace_understand_generate(AceUnderstand *      ctx,
     // System: understand instruction
     // User: raw audio code tokens (not BPE text)
     // The LM sees the codes and generates metadata + lyrics
-    std::vector<int> prompt = build_understand_prompt(*bpe, codes.data(), (int) codes.size());
-    fprintf(stderr, "[Understand-Prompt] %zu tokens (%zu codes + framing)\n", prompt.size(), codes.size());
+    // The codes the context holds with room left for the decode (#416): past
+    // that, the middle of the track, which most likely carries its groove and
+    // its voice. Every caller gets this, not only those that window first.
+    const int framing = (int) build_understand_prompt(*bpe, nullptr, 0).size();
+    const int reserve = call->decode_reserve > 0 ? call->decode_reserve : (metadata_only ? 256 : 1024);
+    const int fit     = model->cfg.max_seq_len - framing - 1 - reserve;
+    if (fit < 1) {
+        fprintf(stderr, "[Understand] FATAL: the %d-token context holds no codes beside %d of framing and %d for the decode\n",
+                model->cfg.max_seq_len, framing, reserve);
+        return -1;
+    }
+    int start = 0, used = (int) codes.size();
+    if (used > fit) {
+        start = (used - fit) / 2;
+        used  = fit;
+        fprintf(stderr, "[Understand-Clip] %d of %zu codes from %d (%.1fs of %.1fs), %d tokens kept for the decode\n",
+                used, codes.size(), start, (float) used / 5.0f, (float) codes.size() / 5.0f, reserve);
+    }
+    call->codes_start = start;
+    call->codes_used  = used;
+
+    std::vector<int> prompt = build_understand_prompt(*bpe, codes.data() + start, used);
+    fprintf(stderr, "[Understand-Prompt] %zu tokens (%d codes + framing)\n", prompt.size(), used);
 
     // The decode can use what is left of the context after the prompt, and no
     // more: past max_seq every forward fails ("kv_len > max_seq") and the rest
@@ -332,6 +375,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
     std::mt19937     rng((uint32_t) seed);
     std::vector<int> gen_tokens;
     bool             past_think = false;
+    bool             ended      = false;  // at the end token, or the metadata's end when that is all asked
 
     if (ace_cancelled(progress,
                       ACE_STAGE_LM)) {  // honour a cancel before the loop; the loop's step-0 poll sizes the bar
@@ -359,6 +403,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
         int tok = sample_top_k_p(logits.data(), V, temperature, top_p, top_k, rng);
 
         if (tok == TOKEN_IM_END) {
+            ended = true;
             break;
         }
 
@@ -369,8 +414,9 @@ int ace_understand_generate(AceUnderstand *      ctx,
 
         if (tok == TOKEN_THINK_END) {
             past_think = true;
-            if (ctx->params.metadata_only) {
+            if (metadata_only) {
                 gen_tokens.push_back(tok);
+                ended = true;
                 break;  // the metadata is complete; the lyrics are not wanted
             }
         }
@@ -383,6 +429,11 @@ int ace_understand_generate(AceUnderstand *      ctx,
 
     fprintf(stderr, "[Understand-Decode] %zu tokens, %.0fms (%.1f tok/s)\n", gen_tokens.size(), t_gen.ms(),
             (float) gen_tokens.size() / (t_gen.ms() / 1000.0f));
+    // Stopped by the bound, not the model: what it wrote may be cut short (#434).
+    call->decode_bounded = !ended;
+    if (call->decode_bounded) {
+        fprintf(stderr, "[Understand-Decode] stopped at its %d-token bound, before its end\n", max_tokens);
+    }
 
     // Step 6: decode tokens to text, parse CoT metadata + lyrics
     std::string text   = bpe_decode(*bpe, gen_tokens);
