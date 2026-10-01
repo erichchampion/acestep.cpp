@@ -111,6 +111,7 @@ void ace_understand_default_call(AceUnderstandCall * c) {
     c->codes_start    = 0;
     c->codes_used     = 0;
     c->decode_bounded = false;
+    c->metadata_complete = false;
 }
 
 int ace_understand_generate(AceUnderstand *      ctx,
@@ -137,6 +138,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
     call->codes_start        = 0;
     call->codes_used         = 0;
     call->decode_bounded     = false;
+    call->metadata_complete  = false;
 
     if (latent_out) {
         latent_out->clear();
@@ -431,6 +433,8 @@ int ace_understand_generate(AceUnderstand *      ctx,
             (float) gen_tokens.size() / (t_gen.ms() / 1000.0f));
     // Stopped by the bound, not the model: what it wrote may be cut short (#434).
     call->decode_bounded = !ended;
+    // The metadata block closed: its fields are whole (cadenza-audio #456).
+    call->metadata_complete = past_think;
     if (call->decode_bounded) {
         fprintf(stderr, "[Understand-Decode] stopped at its %d-token bound, before its end\n", max_tokens);
     }

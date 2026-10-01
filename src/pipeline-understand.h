@@ -48,6 +48,9 @@ struct AceUnderstandCall {
     int  codes_used;      // how many the prompt holds (codes_total unless clipped)
     bool decode_bounded;  // the decode stopped at its token bound, not at its end
                           // token: what it wrote (the lyrics) may be cut short
+    bool metadata_complete;  // the decode reached </think>: the metadata block is
+                             // whole. False when it stopped (bound or end token)
+                             // inside it, so a tempo or key may be missing or cut.
 };
 
 void ace_understand_default_call(AceUnderstandCall * c);
