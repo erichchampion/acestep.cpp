@@ -401,6 +401,11 @@ int ace_understand_generate(AceUnderstand *      ctx,
         if (use_fsm && fsm.enabled && !past_think) {
             fsm.apply_mask(logits.data());
         }
+        // Not done before the metadata is: no end token until </think>, so the
+        // block closes whole or the bound stops it (cadenza-audio #456).
+        if (!past_think) {
+            logits[TOKEN_IM_END] = -INFINITY;
+        }
 
         int tok = sample_top_k_p(logits.data(), V, temperature, top_p, top_k, rng);
 
@@ -435,6 +440,9 @@ int ace_understand_generate(AceUnderstand *      ctx,
     call->decode_bounded = !ended;
     // The metadata block closed: its fields are whole (cadenza-audio #456).
     call->metadata_complete = past_think;
+    if (!past_think) {
+        fprintf(stderr, "[Understand-Decode] stopped before </think>: the metadata is incomplete\n");
+    }
     if (call->decode_bounded) {
         fprintf(stderr, "[Understand-Decode] stopped at its %d-token bound, before its end\n", max_tokens);
     }
