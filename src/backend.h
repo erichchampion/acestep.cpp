@@ -124,19 +124,26 @@ static ggml_backend_t cpu_backend_new(int n_threads) {
 // ("progress timeout"), and ggml-metal's default puts most of a graph in one
 // buffer. The setter is reached through the Metal registry's proc address, so
 // a build without Metal (or a ggml without the export) is unaffected.
-// ACE_METAL_N_CB overrides the default, clamped to 1-8 (ggml's own ceiling,
-// so the logged count is the one in effect). Only iOS splits, where the app
-// runs no LM, so the LM's per-token graphs keep n_cb 1 on macOS. ggml logs a
+// ACE_METAL_N_CB overrides the default, clamped to 1-128 (the patched ggml's
+// ceiling, so the logged count is the one in effect). Only iOS splits, where the
+// app runs no LM, so the LM's per-token graphs keep n_cb 1 on macOS. ggml logs a
 // "n_cb > 2 is not recommended" warning when it is set; that is expected here.
+//
+// iOS splits 128 ways (cadenza-audio #474). 8 was enough for an M1 iPad but not
+// for phone GPUs: on an A14 the longest of 9 buffers ran ~5 s in a 2-take 180 s
+// DiT step and ~4 s in a 256-frame VAE tile, past the watchdog. At 129 the
+// longest was ~1.2 s -- one kernel -- and the generation took no longer.
+static constexpr int BACKEND_METAL_MAX_N_CB = 128;
+
 static int backend_metal_n_cb(void) {
     if (const char * v = std::getenv("ACE_METAL_N_CB")) {
         const int n = atoi(v);
         if (n >= 1) {
-            return n < 8 ? n : 8;
+            return n < BACKEND_METAL_MAX_N_CB ? n : BACKEND_METAL_MAX_N_CB;
         }
     }
 #if defined(__APPLE__) && TARGET_OS_IPHONE
-    return 8;
+    return BACKEND_METAL_MAX_N_CB;
 #else
     return 1;
 #endif
