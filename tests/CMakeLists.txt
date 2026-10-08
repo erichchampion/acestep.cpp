@@ -13,6 +13,15 @@ add_executable(test-backend-config test-backend-config.cpp)
 target_link_libraries(test-backend-config PRIVATE acestep-core)
 link_ggml_backends(test-backend-config)
 
+# test-gpu-fail: the ggml Metal error paths the engine leans on
+# (cadenza-audio #102, #402, #405): a failed Metal allocation returns NULL,
+# has_error is exported through get_proc_address, and exit with a live Metal
+# buffer is clean -- the device and buffer-type statics are leaked on purpose.
+# Needs a Metal device; skips without one.
+add_executable(test-gpu-fail test-gpu-fail.cpp)
+target_link_libraries(test-gpu-fail PRIVATE acestep-core)
+link_ggml_backends(test-gpu-fail)
+
 # test-audio-layout: the channel-layout contract at the pipeline boundary
 # (#28). Needs only the VAE GGUF: run with --vae <gguf>.
 add_executable(test-audio-layout test-audio-layout.cpp)
