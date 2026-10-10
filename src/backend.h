@@ -185,39 +185,41 @@ static void backend_split_command_buffers(ggml_backend_t backend) {
     fprintf(stderr, "[Load] Metal command buffers per graph: %d\n", n_cb + 1);
 }
 
-// ggml's backends, loaded once: every device lookup -- a backend_init, the
-// enumeration below -- reads the same registry.
-static inline void backend_load_all_once(void) {
-    static std::once_flag once;
-    std::call_once(once, [] { ggml_backend_load_all(); });
-}
+// ggml's backends, loaded once per process (model-store.cpp holds the one
+// definition, so every translation unit shares its once-flag): every device
+// lookup -- a backend_init, the enumeration below -- reads the same registry.
+void backend_load_all_once(void);
 
 // The devices an embedder may name in ace_backend_configure() /
 // ace_backend_set_device(), so a name can be offered and checked when it is
 // configured, not discovered wrong at the first model load (#135, #19): the
-// GPUs and the CPU. An accelerator (BLAS) runs beside a backend, never as
-// one, so it is not offered.
+// GPUs (integrated ones too) and the CPU. An accelerator (BLAS) runs beside
+// a backend, never as one, so it is not offered.
 static inline bool backend_device_selectable(ggml_backend_dev_t d) {
     const enum ggml_backend_dev_type t = ggml_backend_dev_type(d);
-    return t == GGML_BACKEND_DEVICE_TYPE_GPU || t == GGML_BACKEND_DEVICE_TYPE_CPU;
+    return t == GGML_BACKEND_DEVICE_TYPE_GPU || t == GGML_BACKEND_DEVICE_TYPE_IGPU ||
+           t == GGML_BACKEND_DEVICE_TYPE_CPU;
 }
-static inline std::vector<ggml_backend_dev_t> backend_selectable_devices(void) {
+// The selectable devices' names ("MTL0", "CPU", ...), in registry order: one
+// walk, for a picker and for a refusal's "Available:" alike.
+static inline std::vector<const char *> ace_backend_device_list(void) {
     backend_load_all_once();
-    std::vector<ggml_backend_dev_t> out;
+    std::vector<const char *> out;
     for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
-        if (backend_device_selectable(ggml_backend_dev_get(i))) {
-            out.push_back(ggml_backend_dev_get(i));
+        ggml_backend_dev_t d = ggml_backend_dev_get(i);
+        if (backend_device_selectable(d)) {
+            out.push_back(ggml_backend_dev_name(d));
         }
     }
     return out;
 }
 static inline size_t ace_backend_device_count(void) {
-    return backend_selectable_devices().size();
+    return ace_backend_device_list().size();
 }
-// The name of selectable device `i` ("MTL0", "CPU", ...), or null past the last.
+// The name of selectable device `i`, or null past the last.
 static inline const char * ace_backend_device_name(size_t i) {
-    const auto devs = backend_selectable_devices();
-    return i < devs.size() ? ggml_backend_dev_name(devs[i]) : nullptr;
+    const auto names = ace_backend_device_list();
+    return i < names.size() ? names[i] : nullptr;
 }
 // Whether `name` is a selectable device of this build -- backend_init's
 // lookup, made early (case does not matter, there or here).

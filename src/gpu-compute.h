@@ -112,22 +112,28 @@ inline void * backend_proc(ggml_backend_t b, const char * name) {
 
 // The backend's error-state reader (#405), or null. Asked on every compute,
 // so the answer is kept per registry: a registry's exports never change.
+// One immutable entry behind one atomic pointer, so a registry is never read
+// paired with another's reader (#613). An entry replaced is leaked: there
+// are as many as registries ever asked, a handful.
 using has_error_t = bool (*)(ggml_backend_t);
+struct has_error_entry {
+    ggml_backend_reg_t reg;
+    has_error_t        fn;
+};
 inline has_error_t has_error_of(ggml_backend_t b) {
     ggml_backend_dev_t d = ggml_backend_get_device(b);
     ggml_backend_reg_t r = d ? ggml_backend_dev_backend_reg(d) : nullptr;
     if (!r) {
         return nullptr;
     }
-    static std::atomic<ggml_backend_reg_t> cached_reg{ nullptr };
-    static std::atomic<has_error_t>        cached_fn{ nullptr };
-    if (cached_reg.load(std::memory_order_acquire) == r) {
-        return cached_fn.load(std::memory_order_relaxed);
+    static std::atomic<const has_error_entry *> cached{ nullptr };
+    const has_error_entry * e = cached.load(std::memory_order_acquire);
+    if (e && e->reg == r) {
+        return e->fn;
     }
-    auto fn = (has_error_t) backend_proc(b, "ggml_backend_metal_has_error");
-    cached_fn.store(fn, std::memory_order_relaxed);
-    cached_reg.store(r, std::memory_order_release);
-    return fn;
+    auto * fresh = new has_error_entry{ r, (has_error_t) backend_proc(b, "ggml_backend_metal_has_error") };
+    cached.store(fresh, std::memory_order_release);
+    return fresh->fn;
 }
 
 // The stage a test has made fail (tests only): `armed` spares the lock on
