@@ -101,14 +101,33 @@ inline bool is_cpu(ggml_backend_t b) {
     return d && ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_CPU;
 }
 
-// The backend's error-state reader, from its own registry: the patched
-// ggml-metal's ggml_backend_metal_has_error, or null for a backend without
-// one (#405). bool (*)(ggml_backend_t).
+// A function the backend's own registry exports by name -- the patched
+// ggml's ggml_backend_metal_has_error, ggml_backend_metal_set_n_cb -- or
+// null for a backend without it. The one lookup backend.h shares.
+inline void * backend_proc(ggml_backend_t b, const char * name) {
+    ggml_backend_dev_t d = b ? ggml_backend_get_device(b) : nullptr;
+    ggml_backend_reg_t r = d ? ggml_backend_dev_backend_reg(d) : nullptr;
+    return r ? ggml_backend_reg_get_proc_address(r, name) : nullptr;
+}
+
+// The backend's error-state reader (#405), or null. Asked on every compute,
+// so the answer is kept per registry: a registry's exports never change.
 using has_error_t = bool (*)(ggml_backend_t);
 inline has_error_t has_error_of(ggml_backend_t b) {
     ggml_backend_dev_t d = ggml_backend_get_device(b);
     ggml_backend_reg_t r = d ? ggml_backend_dev_backend_reg(d) : nullptr;
-    return r ? (has_error_t) ggml_backend_reg_get_proc_address(r, "ggml_backend_metal_has_error") : nullptr;
+    if (!r) {
+        return nullptr;
+    }
+    static std::atomic<ggml_backend_reg_t> cached_reg{ nullptr };
+    static std::atomic<has_error_t>        cached_fn{ nullptr };
+    if (cached_reg.load(std::memory_order_acquire) == r) {
+        return cached_fn.load(std::memory_order_relaxed);
+    }
+    auto fn = (has_error_t) backend_proc(b, "ggml_backend_metal_has_error");
+    cached_fn.store(fn, std::memory_order_relaxed);
+    cached_reg.store(r, std::memory_order_release);
+    return fn;
 }
 
 // The stage a test has made fail (tests only): `armed` spares the lock on

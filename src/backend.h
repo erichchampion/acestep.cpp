@@ -50,6 +50,14 @@ struct BackendSlot {
 };
 
 static std::vector<BackendSlot> g_backend_slots;        // every live pair
+// Guards the slots and the current index: a GPU failure's sweep may run on
+// one engine's thread while another engine loads (#613). Recursive, as
+// backend_init invalidates; taken after a store's own mutex, never before.
+// Leaked, as the Metal statics are (#402).
+static std::recursive_mutex & backend_slots_mtx() {
+    static auto * m = new std::recursive_mutex();
+    return *m;
+}
 static int                      g_backend_current = -1;  // the one new loads share, or -1
 
 // The auto GGML CPU thread count: one thread per useful physical core. GEMM
@@ -157,14 +165,15 @@ static void backend_split_command_buffers(ggml_backend_t backend) {
         return;
     }
     using set_n_cb_t = void (*)(ggml_backend_t, int);
-    auto set_n_cb    = (set_n_cb_t) ggml_backend_reg_get_proc_address(reg, "ggml_backend_metal_set_n_cb");
+    auto set_n_cb    = (set_n_cb_t) ace_gpu::backend_proc(backend, "ggml_backend_metal_set_n_cb");
     if (!set_n_cb) {
 #if defined(__APPLE__) && TARGET_OS_IPHONE
         // A Metal backend without the export is a ggml without our patch: on
         // iOS 27 that brings the watchdog resets back (#403), so say so.
-        // Metal is known by its registry, not by matching a display name
-        // that ggml may word differently (#408).
-        if (strcmp(ggml_backend_reg_name(reg), "MTL") == 0) {
+        // Metal is known by its registry's name, not a device's display name
+        // (#408): "MTL" today, "Metal" in the older ggml this warning is for.
+        const char * reg_name = ggml_backend_reg_name(reg);
+        if (strcmp(reg_name, "MTL") == 0 || strcmp(reg_name, "Metal") == 0) {
             fprintf(stderr, "[Load] WARNING: this ggml does not export ggml_backend_metal_set_n_cb -- "
                             "graphs stay in 2 command buffers, and iOS's GPU watchdog may reset long steps\n");
         }
@@ -178,37 +187,54 @@ static void backend_split_command_buffers(ggml_backend_t backend) {
 
 // ggml's backends, loaded once: every device lookup -- a backend_init, the
 // enumeration below -- reads the same registry.
-static void backend_load_all_once(void) {
+static inline void backend_load_all_once(void) {
     static std::once_flag once;
     std::call_once(once, [] { ggml_backend_load_all(); });
 }
 
 // The devices an embedder may name in ace_backend_configure() /
 // ace_backend_set_device(), so a name can be offered and checked when it is
-// configured, not discovered wrong at the first model load (#135, #19).
-static size_t ace_backend_device_count(void) {
-    backend_load_all_once();
-    return ggml_backend_dev_count();
+// configured, not discovered wrong at the first model load (#135, #19): the
+// GPUs and the CPU. An accelerator (BLAS) runs beside a backend, never as
+// one, so it is not offered.
+static inline bool backend_device_selectable(ggml_backend_dev_t d) {
+    const enum ggml_backend_dev_type t = ggml_backend_dev_type(d);
+    return t == GGML_BACKEND_DEVICE_TYPE_GPU || t == GGML_BACKEND_DEVICE_TYPE_CPU;
 }
-// The name of device `i` ("MTL0", "CPU", ...), or null past the last.
-static const char * ace_backend_device_name(size_t i) {
+static inline std::vector<ggml_backend_dev_t> backend_selectable_devices(void) {
     backend_load_all_once();
-    return i < ggml_backend_dev_count() ? ggml_backend_dev_name(ggml_backend_dev_get(i)) : nullptr;
+    std::vector<ggml_backend_dev_t> out;
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        if (backend_device_selectable(ggml_backend_dev_get(i))) {
+            out.push_back(ggml_backend_dev_get(i));
+        }
+    }
+    return out;
 }
-// Whether `name` is a device this build can initialize -- the lookup
-// backend_init makes, made early (case does not matter, there or here).
-static bool ace_backend_device_available(const char * name) {
+static inline size_t ace_backend_device_count(void) {
+    return backend_selectable_devices().size();
+}
+// The name of selectable device `i` ("MTL0", "CPU", ...), or null past the last.
+static inline const char * ace_backend_device_name(size_t i) {
+    const auto devs = backend_selectable_devices();
+    return i < devs.size() ? ggml_backend_dev_name(devs[i]) : nullptr;
+}
+// Whether `name` is a selectable device of this build -- backend_init's
+// lookup, made early (case does not matter, there or here).
+static inline bool ace_backend_device_available(const char * name) {
     if (!name || !*name) {
         return false;
     }
     backend_load_all_once();
-    return ggml_backend_dev_by_name(name) != nullptr;
+    ggml_backend_dev_t d = ggml_backend_dev_by_name(name);
+    return d && backend_device_selectable(d);
 }
 
 // Stop sharing `backend` with new loads (#403): it is in the error state, and
 // the next backend_init makes a fresh pair. Its holders keep it until they
 // release it.
 static void backend_invalidate(ggml_backend_t backend) {
+    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
     if (g_backend_current >= 0 && g_backend_slots[g_backend_current].bp.backend == backend) {
         fprintf(stderr, "[Load] %s backend failed: new loads get a fresh one\n", ggml_backend_name(backend));
         g_backend_current = -1;
@@ -220,6 +246,7 @@ static void backend_invalidate(ggml_backend_t backend) {
 // label: log prefix, e.g. "DiT", "VAE", "LM"
 // Subsequent calls reuse the same backend (single VMM pool).
 static BackendPair backend_init(const char * label) {
+    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
     // A shared backend a failed command buffer left broken (#403) is not
     // handed out again: this load, and every one after, gets a fresh pair.
     if (g_backend_current >= 0 && !ace_backend_healthy(g_backend_slots[g_backend_current].bp.backend)) {
@@ -308,6 +335,7 @@ static void backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) 
     if (!backend) {
         return;
     }
+    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
     int i = 0;
     while (i < (int) g_backend_slots.size() && g_backend_slots[i].bp.backend != backend) {
         i++;
