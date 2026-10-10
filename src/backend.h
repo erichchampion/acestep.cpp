@@ -185,10 +185,15 @@ static void backend_split_command_buffers(ggml_backend_t backend) {
     fprintf(stderr, "[Load] Metal command buffers per graph: %d\n", n_cb + 1);
 }
 
-// ggml's backends, loaded once per process (model-store.cpp holds the one
-// definition, so every translation unit shares its once-flag): every device
-// lookup -- a backend_init, the enumeration below -- reads the same registry.
-void backend_load_all_once(void);
+// ggml's backends, loaded once per process: every device lookup -- a
+// backend_init, the enumeration below -- reads the same registry. `inline`,
+// not `static inline`: one function across translation units, so its
+// once-flag is shared, and every target that includes this header has it
+// (a tool that links no model-store.cpp too).
+inline void backend_load_all_once(void) {
+    static std::once_flag once;
+    std::call_once(once, [] { ggml_backend_load_all(); });
+}
 
 // The devices an embedder may name in ace_backend_configure() /
 // ace_backend_set_device(), so a name can be offered and checked when it is

@@ -241,11 +241,6 @@ template <typename T> static T * cache_hit(ModelStore * s, const ModelKey & k) {
 
 }  // namespace
 
-void backend_load_all_once(void) {
-    static std::once_flag once;
-    std::call_once(once, [] { ggml_backend_load_all(); });
-}
-
 // Every live store, so a GPU failure can sweep them all at once (#405).
 // Leaked on purpose, as ggml's Metal statics are (#402): an engine thread may
 // still reach for them while the process ends. Lock order: this, then a
