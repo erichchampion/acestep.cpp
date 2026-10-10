@@ -10,17 +10,18 @@
 // the run carries on over outputs the GPU never wrote -- a DiT "finishing"
 // on garbage, then a decode that crashes the app.
 //
-// So after each compute, each GPU backend of the scheduler is probed with an
-// empty graph: a backend in the error state refuses it before encoding
-// anything (ggml-metal's graph_compute checks has_error first -- the probe
-// rests on that, and a ggml update that moved the check would make every
-// probe read healthy), a healthy one runs an empty command buffer. It is
-// waited for, so no probe is left in flight when a module and its backend are
-// freed. The CPU backend has no such state and is not probed. Measured on the
-// LM planner's per-token loop: no difference beyond run-to-run noise. A failure raises ace_gpu_error (an ace_fatal_error; the app build's
-// C shim reports it as its own status), naming the stage. A scheduler that
-// could not allocate the graph is out of memory, not a GPU fault:
-// std::bad_alloc in the app build (the CLIs' ace_fatal otherwise).
+// So after each compute, each GPU backend of the scheduler is asked for that
+// state directly: the patched ggml exports ggml-metal's error flag
+// (ggml_backend_metal_has_error, cadenza-audio #405), set by the synchronize
+// the compute already ran -- no extra command buffer, and nothing that a
+// ggml update moving graph_compute's own check could silently turn off. A
+// GPU backend without that export is probed instead with an empty graph,
+// which a backend in the error state refuses before encoding anything. The
+// CPU backend has no such state and is not asked. A failure raises
+// ace_gpu_error (an ace_fatal_error; the app build's C shim reports it as its
+// own status), naming the stage. A scheduler that could not allocate the
+// graph is out of memory, not a GPU fault: std::bad_alloc in the app build
+// (the CLIs' ace_fatal otherwise).
 //
 // The backend stays broken until it is recreated. Modules share one backend
 // (backend.h), so ModelStore, on every lookup -- a miss as much as a hit --
@@ -29,9 +30,11 @@
 // and modules still held free the old one as they are released. backend_init
 // also refuses to share a broken backend, for loads outside the store.
 //
-// ACE_TEST_GPU_FAIL=<stage> (tests only) makes every compute of that stage
-// fail while it is set, as a discarded command buffer does, and marks the
-// backend broken, so the store's probe sees what Metal's would.
+// ace_test_fail_gpu_stage(<stage>) (tests only) makes every compute of that
+// stage fail until it is cleared, as a discarded command buffer does, and
+// marks the backend broken, so the store sees what Metal's flag would say.
+// Set by a call, not read from the environment on every compute (#405): a
+// shipping build pays one relaxed load.
 #include "ace-fatal.h"
 #include "ggml-backend.h"
 #include "ggml.h"
@@ -43,6 +46,7 @@
 #include <exception>
 #include <mutex>
 #include <new>
+#include <string>
 #include <unordered_set>
 
 // The GPU failed a compute: an ace_fatal_error of its own type, so an
@@ -55,8 +59,8 @@ struct ace_gpu_error : ace_fatal_error {
 
 namespace ace_gpu {
 
-// Backends ACE_TEST_GPU_FAIL has broken. Empty outside tests; `any` spares
-// the lock on every probe.
+// Backends a test's injected failure has broken. Empty outside tests; `any`
+// spares the lock on every check.
 inline std::mutex & poisoned_mtx() {
     static std::mutex m;
     return m;
@@ -97,6 +101,27 @@ inline bool is_cpu(ggml_backend_t b) {
     return d && ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_CPU;
 }
 
+// The backend's error-state reader, from its own registry: the patched
+// ggml-metal's ggml_backend_metal_has_error, or null for a backend without
+// one (#405). bool (*)(ggml_backend_t).
+using has_error_t = bool (*)(ggml_backend_t);
+inline has_error_t has_error_of(ggml_backend_t b) {
+    ggml_backend_dev_t d = ggml_backend_get_device(b);
+    ggml_backend_reg_t r = d ? ggml_backend_dev_backend_reg(d) : nullptr;
+    return r ? (has_error_t) ggml_backend_reg_get_proc_address(r, "ggml_backend_metal_has_error") : nullptr;
+}
+
+// The stage a test has made fail (tests only): `armed` spares the lock on
+// every compute when none is.
+inline std::atomic<bool> & injection_armed() {
+    static std::atomic<bool> a{ false };
+    return a;
+}
+inline std::string & injected_stage() {
+    static std::string s;
+    return s;
+}
+
 }  // namespace ace_gpu
 
 // Whether GPU backend `b` can still run work (a CPU backend always can).
@@ -106,6 +131,9 @@ inline bool ace_backend_healthy(ggml_backend_t b) {
     }
     if (ace_gpu::is_poisoned(b)) {
         return false;
+    }
+    if (ace_gpu::has_error_t has_error = ace_gpu::has_error_of(b)) {
+        return !has_error(b);
     }
     return ggml_backend_graph_compute(b, ace_gpu::empty_graph()) == GGML_STATUS_SUCCESS;
 }
@@ -148,10 +176,21 @@ inline void ace_backend_forget(ggml_backend_t b) {
 #endif
 }
 
-// Whether ACE_TEST_GPU_FAIL names this stage (tests only).
+// Make every compute of `stage` fail, as a discarded command buffer does, or
+// -- with null or "" -- stop (tests only).
+inline void ace_test_fail_gpu_stage(const char * stage) {
+    std::lock_guard<std::mutex> lock(ace_gpu::poisoned_mtx());
+    ace_gpu::injected_stage() = stage ? stage : "";
+    ace_gpu::injection_armed().store(!ace_gpu::injected_stage().empty());
+}
+
+// Whether a test has made this stage fail (tests only).
 inline bool ace_gpu_injected(const char * what) {
-    const char * want = std::getenv("ACE_TEST_GPU_FAIL");
-    return want && *want && std::strcmp(want, what) == 0;
+    if (!ace_gpu::injection_armed().load(std::memory_order_relaxed)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(ace_gpu::poisoned_mtx());
+    return ace_gpu::injected_stage() == what;
 }
 
 // Mark `b` broken, as a discarded buffer leaves Metal's (tests only).

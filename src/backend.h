@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -161,7 +162,9 @@ static void backend_split_command_buffers(ggml_backend_t backend) {
 #if defined(__APPLE__) && TARGET_OS_IPHONE
         // A Metal backend without the export is a ggml without our patch: on
         // iOS 27 that brings the watchdog resets back (#403), so say so.
-        if (strstr(ggml_backend_name(backend), "MTL") || strstr(ggml_backend_name(backend), "Metal")) {
+        // Metal is known by its registry, not by matching a display name
+        // that ggml may word differently (#408).
+        if (strcmp(ggml_backend_reg_name(reg), "MTL") == 0) {
             fprintf(stderr, "[Load] WARNING: this ggml does not export ggml_backend_metal_set_n_cb -- "
                             "graphs stay in 2 command buffers, and iOS's GPU watchdog may reset long steps\n");
         }
@@ -171,6 +174,35 @@ static void backend_split_command_buffers(ggml_backend_t backend) {
     const int n_cb = backend_metal_n_cb();
     set_n_cb(backend, n_cb);
     fprintf(stderr, "[Load] Metal command buffers per graph: %d\n", n_cb + 1);
+}
+
+// ggml's backends, loaded once: every device lookup -- a backend_init, the
+// enumeration below -- reads the same registry.
+static void backend_load_all_once(void) {
+    static std::once_flag once;
+    std::call_once(once, [] { ggml_backend_load_all(); });
+}
+
+// The devices an embedder may name in ace_backend_configure() /
+// ace_backend_set_device(), so a name can be offered and checked when it is
+// configured, not discovered wrong at the first model load (#135, #19).
+static size_t ace_backend_device_count(void) {
+    backend_load_all_once();
+    return ggml_backend_dev_count();
+}
+// The name of device `i` ("MTL0", "CPU", ...), or null past the last.
+static const char * ace_backend_device_name(size_t i) {
+    backend_load_all_once();
+    return i < ggml_backend_dev_count() ? ggml_backend_dev_name(ggml_backend_dev_get(i)) : nullptr;
+}
+// Whether `name` is a device this build can initialize -- the lookup
+// backend_init makes, made early (case does not matter, there or here).
+static bool ace_backend_device_available(const char * name) {
+    if (!name || !*name) {
+        return false;
+    }
+    backend_load_all_once();
+    return ggml_backend_dev_by_name(name) != nullptr;
 }
 
 // Stop sharing `backend` with new loads (#403): it is in the error state, and
@@ -200,7 +232,7 @@ static BackendPair backend_init(const char * label) {
         return slot.bp;
     }
 
-    ggml_backend_load_all();
+    backend_load_all_once();
     BackendPair bp = {};
 
     // Device selection: an explicit ace_backend_configure() wins, then the

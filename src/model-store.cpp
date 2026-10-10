@@ -241,9 +241,26 @@ template <typename T> static T * cache_hit(ModelStore * s, const ModelKey & k) {
 
 }  // namespace
 
+// Every live store, so a GPU failure can sweep them all at once (#405).
+// Leaked on purpose, as ggml's Metal statics are (#402): an engine thread may
+// still reach for them while the process ends. Lock order: this, then a
+// store's own mutex.
+static std::mutex & live_stores_mtx() {
+    static auto * m = new std::mutex();
+    return *m;
+}
+static std::vector<ModelStore *> & live_stores() {
+    static auto * v = new std::vector<ModelStore *>();
+    return *v;
+}
+
 ModelStore * store_create(EvictPolicy policy) {
     auto * s  = new ModelStore();
     s->policy = policy;
+    {
+        std::lock_guard<std::mutex> lock(live_stores_mtx());
+        live_stores().push_back(s);
+    }
     fprintf(stderr, "[Store] Created (policy=%s)\n", policy == EVICT_STRICT ? "STRICT" : "NEVER");
     return s;
 }
@@ -251,6 +268,11 @@ ModelStore * store_create(EvictPolicy policy) {
 void store_free(ModelStore * s) {
     if (!s) {
         return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(live_stores_mtx());
+        auto & v = live_stores();
+        v.erase(std::remove(v.begin(), v.end(), s), v.end());
     }
     // GPU modules: release every entry regardless of refcount (shutdown).
     for (auto & kv : s->gpu) {
@@ -468,6 +490,21 @@ void store_drop_key(ModelStore * s, const ModelKey & k) {
     auto g = s->gpu.find(k);
     if (g != s->gpu.end() && g->second.refcount == 0 && store_key_identity(k) != k.file_id) {
         drop_gpu_entries(s, { k });
+    }
+}
+
+void store_drop_broken(ModelStore * s) {
+    if (!s) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(s->mtx);
+    drop_on_broken_backends(s);
+}
+
+void store_drop_broken_everywhere(void) {
+    std::lock_guard<std::mutex> lock(live_stores_mtx());
+    for (ModelStore * s : live_stores()) {
+        store_drop_broken(s);
     }
 }
 

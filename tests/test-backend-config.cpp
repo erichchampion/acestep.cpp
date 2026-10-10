@@ -100,6 +100,26 @@ int main() {
     CHECK(backend_cpu_n_threads() == t2);
     ace_backend_configure(nullptr, 0);  // reset both
 
+    // A device name can be listed and checked before it is configured (#135):
+    // CPU is always among them, a name is found whatever its case (as
+    // backend_init finds it), and a misspelling or an empty name is not --
+    // known now, not as a fatal at the first load.
+    const size_t n_dev = ace_backend_device_count();
+    CHECK(n_dev >= 1);
+    bool listed_cpu = false;
+    for (size_t i = 0; i < n_dev; i++) {
+        const char * name = ace_backend_device_name(i);
+        CHECK(name != nullptr);
+        CHECK(name && ace_backend_device_available(name));
+        listed_cpu = listed_cpu || (name && strcmp(name, "CPU") == 0);
+    }
+    CHECK(listed_cpu);
+    CHECK(ace_backend_device_name(n_dev) == nullptr);
+    CHECK(ace_backend_device_available("cpu"));
+    CHECK(!ace_backend_device_available("Metall"));
+    CHECK(!ace_backend_device_available(""));
+    CHECK(!ace_backend_device_available(nullptr));
+
     // End-to-end: a configured device actually drives backend_init's selection.
     // "CPU" is always available, so this needs no GPU.
     ace_backend_configure("CPU", 1);

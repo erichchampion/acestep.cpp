@@ -131,6 +131,15 @@ void         store_free(ModelStore * s);
 // survives).
 void         store_release_stale(ModelStore * s);
 
+// A GPU compute failed (#405): take every cached module on a backend now in
+// its error state out of service, in this store (`store_drop_broken`) or in
+// every live one -- freed now if idle, when its holder lets go if not -- and
+// stop sharing that backend. Every lookup does this anyway; called at the
+// failure, it frees the memory at once instead of at the next load. Same
+// rules as store_release_stale: never from inside a store call.
+void store_drop_broken(ModelStore * s);
+void store_drop_broken_everywhere(void);
+
 // A live pipeline context uses `k` (stamped): store_release_stale keeps its
 // module, so the context -- and the jobs decoding through it -- keep working
 // on the files they were made with after those are replaced. Balanced by
