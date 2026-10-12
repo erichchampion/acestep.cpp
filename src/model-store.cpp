@@ -668,10 +668,27 @@ template <typename T> struct LoadGuard {
     LoadGuard & operator=(const LoadGuard &) = delete;
 };
 
-Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & key_in) {
+// The one load protocol every GPU module follows (cadenza-audio #131): under
+// the store lock, a cached module if there is one; else, the files still
+// what the key was stamped with, evict as the policy says, load into a
+// guarded module, keep it only if the files did not change while it was
+// read, and install it. Only the type, the load call, its free, its size
+// and its label differ between modules -- and a change to the protocol is
+// made here once, not in eight copies that could drift.
+//
+// `load(m, k)` returns false for a load that failed; a fatal it raises is
+// the same failure (ace_fatal_error: nullptr, the reason on stderr), but a
+// GPU failure is not the file's and is rethrown for the caller (#403).
+template <typename T, typename Load>
+static T * require_module(ModelStore *     s,
+                          const ModelKey & key_in,
+                          const char *     label,
+                          void (*del)(void *),
+                          size_t (*bytes_of)(const T *),
+                          Load             load) {
     std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = stamped(key_in);
-    if (auto * hit = cache_hit<Qwen3LM>(s, k)) {
+    const ModelKey              k = stamped(key_in);
+    if (auto * hit = cache_hit<T>(s, k)) {
         return hit;
     }
     if (!files_unchanged(k)) {
@@ -680,11 +697,11 @@ Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & key_in) {
     if (s->policy == EVICT_STRICT) {
         evict_all_except(s, k);
     }
-    Timer     t;
-    Qwen3LM *          m = new Qwen3LM();
-    LoadGuard<Qwen3LM> guard(m, del_lm);
+    Timer        t;
+    T *          m = new T();
+    LoadGuard<T> guard(m, del);
     try {
-        if (!qw3lm_load(m, k.path.c_str(), k.max_seq, k.n_kv_sets)) {
+        if (!load(m, k)) {
             return nullptr;
         }
     } catch (const ace_gpu_error &) {
@@ -695,238 +712,63 @@ Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & key_in) {
     if (!files_unchanged(k)) {
         return nullptr;  // replaced while it was read; the guard frees it
     }
-    install_entry(s, k, m, bytes_of_lm(m), "LM", del_lm);
+    install_entry(s, k, m, bytes_of(m), label, del);
     guard.dismiss();
-    fprintf(stderr, "[Store] Load LM: %.0f ms\n", t.ms());
+    fprintf(stderr, "[Store] Load %s: %.0f ms\n", label, t.ms());
     return m;
+}
+
+Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & key_in) {
+    return require_module<Qwen3LM>(s, key_in, "LM", del_lm, bytes_of_lm, [](Qwen3LM * m, const ModelKey & k) {
+        return qw3lm_load(m, k.path.c_str(), k.max_seq, k.n_kv_sets);
+    });
 }
 
 Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & key_in) {
-    std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = stamped(key_in);
-    if (auto * hit = cache_hit<Qwen3GGML>(s, k)) {
-        return hit;
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;
-    }
-    if (s->policy == EVICT_STRICT) {
-        evict_all_except(s, k);
-    }
-    Timer       t;
-    Qwen3GGML *          m = new Qwen3GGML();
-    LoadGuard<Qwen3GGML> guard(m, del_text_enc);
-    try {
-        if (!qwen3_load_text_encoder(m, k.path.c_str())) {
-            return nullptr;
-        }
-    } catch (const ace_gpu_error &) {
-        throw;  // the GPU failed, not the file: the caller says so (#403)
-    } catch (const ace_fatal_error &) {
-        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;  // replaced while it was read; the guard frees it
-    }
-    install_entry(s, k, m, bytes_of_text_enc(m), "TextEnc", del_text_enc);
-    guard.dismiss();
-    fprintf(stderr, "[Store] Load TextEnc: %.0f ms\n", t.ms());
-    return m;
+    return require_module<Qwen3GGML>(s, key_in, "TextEnc", del_text_enc, bytes_of_text_enc,
+                                     [](Qwen3GGML * m, const ModelKey & k) {
+                                         return qwen3_load_text_encoder(m, k.path.c_str());
+                                     });
 }
 
 CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & key_in) {
-    std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = stamped(key_in);
-    if (auto * hit = cache_hit<CondGGML>(s, k)) {
-        return hit;
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;
-    }
-    if (s->policy == EVICT_STRICT) {
-        evict_all_except(s, k);
-    }
-    Timer      t;
-    CondGGML *          m = new CondGGML();
-    LoadGuard<CondGGML> guard(m, del_cond_enc);
-    try {
-        if (!cond_ggml_load(m, k.path.c_str())) {
-            return nullptr;
-        }
-    } catch (const ace_gpu_error &) {
-        throw;  // the GPU failed, not the file: the caller says so (#403)
-    } catch (const ace_fatal_error &) {
-        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;  // replaced while it was read; the guard frees it
-    }
-    install_entry(s, k, m, bytes_of_cond_enc(m), "CondEnc", del_cond_enc);
-    guard.dismiss();
-    fprintf(stderr, "[Store] Load CondEnc: %.0f ms\n", t.ms());
-    return m;
+    return require_module<CondGGML>(s, key_in, "CondEnc", del_cond_enc, bytes_of_cond_enc,
+                                    [](CondGGML * m, const ModelKey & k) { return cond_ggml_load(m, k.path.c_str()); });
 }
 
 DiTGGML * store_require_dit(ModelStore * s, const ModelKey & key_in) {
-    std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = stamped(key_in);
-    if (auto * hit = cache_hit<DiTGGML>(s, k)) {
-        return hit;
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;
-    }
-    if (s->policy == EVICT_STRICT) {
-        evict_all_except(s, k);
-    }
-    Timer        t;
-    DiTGGML *          m       = new DiTGGML();
-    LoadGuard<DiTGGML> guard(m, del_dit);
-    const char *       adapter = k.adapter_path.empty() ? nullptr : k.adapter_path.c_str();
-    try {
-        if (!dit_ggml_load(m, k.path.c_str(), adapter, k.adapter_scale)) {
-            return nullptr;
-        }
-    } catch (const ace_gpu_error &) {
-        throw;  // the GPU failed, not the file: the caller says so (#403)
-    } catch (const ace_fatal_error &) {
-        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;  // replaced while it was read; the guard frees it
-    }
-    install_entry(s, k, m, bytes_of_dit(m), "DiT", del_dit);
-    guard.dismiss();
-    fprintf(stderr, "[Store] Load DiT: %.0f ms\n", t.ms());
-    return m;
+    return require_module<DiTGGML>(s, key_in, "DiT", del_dit, bytes_of_dit, [](DiTGGML * m, const ModelKey & k) {
+        const char * adapter = k.adapter_path.empty() ? nullptr : k.adapter_path.c_str();
+        return dit_ggml_load(m, k.path.c_str(), adapter, k.adapter_scale);
+    });
 }
 
 VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & key_in) {
-    std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = stamped(key_in);
-    if (auto * hit = cache_hit<VAEEncoder>(s, k)) {
-        return hit;
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;
-    }
-    if (s->policy == EVICT_STRICT) {
-        evict_all_except(s, k);
-    }
-    Timer        t;
-    VAEEncoder *          m = new VAEEncoder();
-    LoadGuard<VAEEncoder> guard(m, del_vae_enc);
-    try {
-        vae_enc_load(m, k.path.c_str());  // void: exit(1) by default, throws under the flag
-    } catch (const ace_gpu_error &) {
-        throw;  // the GPU failed, not the file: the caller says so (#403)
-    } catch (const ace_fatal_error &) {
-        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;  // replaced while it was read; the guard frees it
-    }
-    install_entry(s, k, m, bytes_of_vae_enc(m), "VAE-Enc", del_vae_enc);
-    guard.dismiss();
-    fprintf(stderr, "[Store] Load VAE-Enc: %.0f ms\n", t.ms());
-    return m;
+    return require_module<VAEEncoder>(s, key_in, "VAE-Enc", del_vae_enc, bytes_of_vae_enc,
+                                      [](VAEEncoder * m, const ModelKey & k) {
+                                          vae_enc_load(m, k.path.c_str());  // void: a failure is a fatal
+                                          return true;
+                                      });
 }
 
 VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & key_in) {
-    std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = stamped(key_in);
-    if (auto * hit = cache_hit<VAEGGML>(s, k)) {
-        return hit;
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;
-    }
-    if (s->policy == EVICT_STRICT) {
-        evict_all_except(s, k);
-    }
-    Timer     t;
-    VAEGGML *          m = new VAEGGML();
-    LoadGuard<VAEGGML> guard(m, del_vae_dec);
-    try {
-        vae_ggml_load(m, k.path.c_str());  // void: exit(1) by default, throws under the flag
-    } catch (const ace_gpu_error &) {
-        throw;  // the GPU failed, not the file: the caller says so (#403)
-    } catch (const ace_fatal_error &) {
-        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;  // replaced while it was read; the guard frees it
-    }
-    install_entry(s, k, m, bytes_of_vae_dec(m), "VAE-Dec", del_vae_dec);
-    guard.dismiss();
-    fprintf(stderr, "[Store] Load VAE-Dec: %.0f ms\n", t.ms());
-    return m;
+    return require_module<VAEGGML>(s, key_in, "VAE-Dec", del_vae_dec, bytes_of_vae_dec,
+                                   [](VAEGGML * m, const ModelKey & k) {
+                                       vae_ggml_load(m, k.path.c_str());  // void: a failure is a fatal
+                                       return true;
+                                   });
 }
 
 TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & key_in) {
-    std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = stamped(key_in);
-    if (auto * hit = cache_hit<TokGGML>(s, k)) {
-        return hit;
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;
-    }
-    if (s->policy == EVICT_STRICT) {
-        evict_all_except(s, k);
-    }
-    Timer     t;
-    TokGGML *          m = new TokGGML();
-    LoadGuard<TokGGML> guard(m, del_fsq_tok);
-    try {
-        if (!tok_ggml_load(m, k.path.c_str())) {
-            return nullptr;
-        }
-    } catch (const ace_gpu_error &) {
-        throw;  // the GPU failed, not the file: the caller says so (#403)
-    } catch (const ace_fatal_error &) {
-        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;  // replaced while it was read; the guard frees it
-    }
-    install_entry(s, k, m, bytes_of_fsq_tok(m), "FSQ-Tok", del_fsq_tok);
-    guard.dismiss();
-    fprintf(stderr, "[Store] Load FSQ-Tok: %.0f ms\n", t.ms());
-    return m;
+    return require_module<TokGGML>(s, key_in, "FSQ-Tok", del_fsq_tok, bytes_of_fsq_tok,
+                                   [](TokGGML * m, const ModelKey & k) { return tok_ggml_load(m, k.path.c_str()); });
 }
 
 DetokGGML * store_require_fsq_detok(ModelStore * s, const ModelKey & key_in) {
-    std::lock_guard<std::mutex> lock(s->mtx);
-    const ModelKey k = stamped(key_in);
-    if (auto * hit = cache_hit<DetokGGML>(s, k)) {
-        return hit;
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;
-    }
-    if (s->policy == EVICT_STRICT) {
-        evict_all_except(s, k);
-    }
-    Timer       t;
-    DetokGGML *          m = new DetokGGML();
-    LoadGuard<DetokGGML> guard(m, del_fsq_detok);
-    try {
-        if (!detok_ggml_load(m, k.path.c_str())) {
-            return nullptr;
-        }
-    } catch (const ace_gpu_error &) {
-        throw;  // the GPU failed, not the file: the caller says so (#403)
-    } catch (const ace_fatal_error &) {
-        return nullptr;  // a failed load is the store's nullptr; reason is on stderr
-    }
-    if (!files_unchanged(k)) {
-        return nullptr;  // replaced while it was read; the guard frees it
-    }
-    install_entry(s, k, m, bytes_of_fsq_detok(m), "FSQ-Detok", del_fsq_detok);
-    guard.dismiss();
-    fprintf(stderr, "[Store] Load FSQ-Detok: %.0f ms\n", t.ms());
-    return m;
+    return require_module<DetokGGML>(s, key_in, "FSQ-Detok", del_fsq_detok, bytes_of_fsq_detok,
+                                     [](DetokGGML * m, const ModelKey & k) {
+                                         return detok_ggml_load(m, k.path.c_str());
+                                     });
 }
 
 void store_release(ModelStore * s, void * handle) {
