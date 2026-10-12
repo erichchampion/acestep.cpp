@@ -346,7 +346,11 @@ std::string store_file_identity(const std::string & path) {
 
 std::string store_key_identity(const ModelKey & k) {
     std::string id = store_file_identity(k.path);
-    if (!k.adapter_path.empty()) {
+    // The adapter is a DiT key's only (ModelKeyEq): another kind's stray
+    // adapter fields are outside its identity, as they are outside its key
+    // -- or an LM key carrying them would miss its own cached module
+    // (test-model-store scenario 4, first run in CI by cadenza-audio #134).
+    if (k.kind == MODEL_DIT && !k.adapter_path.empty()) {
         id += "|" + store_file_identity(k.adapter_path);
     }
     return id;
