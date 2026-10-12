@@ -775,7 +775,7 @@ Optional:
 
 Memory control:
   --vae-chunk <N>         Latent frames per tile (default: 1024)
-  --vae-overlap <N>       Overlap frames per side (default: 64)
+  --vae-overlap <N>       Overlap frames per side (default: 16)
 
 Debug:
   --no-fa                 Disable flash attention
@@ -868,7 +868,7 @@ Adapter:
 Memory control:
   --keep-loaded           Keep models in VRAM between requests
   --vae-chunk <N>         Latent frames per tile (default: 1024)
-  --vae-overlap <N>       Overlap frames per side (default: 64)
+  --vae-overlap <N>       Overlap frames per side (default: 16)
 
 Server:
   --host <addr>           Listen address (default: 127.0.0.1)

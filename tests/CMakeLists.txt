@@ -28,6 +28,12 @@ add_executable(test-audio-layout test-audio-layout.cpp)
 target_link_libraries(test-audio-layout PRIVATE acestep-core)
 link_ggml_backends(test-audio-layout)
 
+# test-vae-tiling: the VAE's tiles join bit-exactly at the default overlap,
+# encoder and decoder alike (cadenza-audio #91, #684). Needs only the VAE GGUF.
+add_executable(test-vae-tiling test-vae-tiling.cpp)
+target_link_libraries(test-vae-tiling PRIVATE acestep-core)
+link_ggml_backends(test-vae-tiling)
+
 # test-philox: Philox RNG reference dumper.
 add_executable(test-philox test-philox.cpp)
 target_include_directories(test-philox PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -60,6 +66,7 @@ set_tests_properties(test-gpu-fail PROPERTIES SKIP_RETURN_CODE 77)
 set(ACESTEP_TEST_MODELS "" CACHE PATH "Directory of GGUFs for the tests that read them (empty: not run)")
 if(ACESTEP_TEST_MODELS)
     add_test(NAME test-audio-layout COMMAND test-audio-layout --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)
+    add_test(NAME test-vae-tiling COMMAND test-vae-tiling --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)
     add_test(NAME test-lm-prompt COMMAND test-lm-prompt --models ${ACESTEP_TEST_MODELS})
     add_test(NAME test-model-store COMMAND test-model-store --models ${ACESTEP_TEST_MODELS})
 endif()

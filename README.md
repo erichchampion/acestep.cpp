@@ -93,7 +93,7 @@ Adapter:
 Memory control:
   --keep-loaded           Keep models in VRAM between requests
   --vae-chunk <N>         Latent frames per tile (default: 1024)
-  --vae-overlap <N>       Overlap frames per side (default: 64)
+  --vae-overlap <N>       Overlap frames per side (default: 16)
 
 Output:
   --mp3-bitrate <kbps>    MP3 bitrate (default: 128)
