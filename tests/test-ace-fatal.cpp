@@ -11,15 +11,7 @@
 #include <cstdio>
 #include <string>
 
-static int failures = 0;
-
-#define CHECK(cond)                                                                   \
-    do {                                                                              \
-        if (!(cond)) {                                                                \
-            fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);           \
-            failures++;                                                               \
-        }                                                                             \
-    } while (0)
+#include "test-util.h"
 
 // Flips a flag in its destructor, so we can prove unwinding ran it.
 struct Sentinel {
@@ -86,10 +78,5 @@ int main() {
         CHECK(caught);
     }
 
-    if (failures == 0) {
-        printf("test-ace-fatal: all checks passed\n");
-        return 0;
-    }
-    fprintf(stderr, "test-ace-fatal: %d check(s) failed\n", failures);
-    return 1;
+    return test_summary("test-ace-fatal");
 }

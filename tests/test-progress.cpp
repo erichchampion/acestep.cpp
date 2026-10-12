@@ -9,15 +9,7 @@
 #include <cstdio>
 #include <vector>
 
-static int failures = 0;
-
-#define CHECK(cond)                                                         \
-    do {                                                                    \
-        if (!(cond)) {                                                      \
-            fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-            failures++;                                                     \
-        }                                                                   \
-    } while (0)
+#include "test-util.h"
 
 struct Report {
     AceStage stage;
@@ -133,10 +125,5 @@ int main() {
         CHECK(!ace_cancelled(none, ACE_STAGE_MP3));  // null fn: never cancels
     }
 
-    if (failures == 0) {
-        printf("test-progress: all checks passed\n");
-        return 0;
-    }
-    fprintf(stderr, "test-progress: %d check(s) failed\n", failures);
-    return 1;
+    return test_summary("test-progress");
 }

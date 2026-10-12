@@ -18,7 +18,8 @@
 //
 //   ./test-gpu-fail
 //
-// Needs a Metal device; on a machine without one it says so and passes.
+// Needs a Metal device; on a machine without one it says so and exits
+// TEST_SKIPPED (77), which ctest reports as skipped -- not as a pass.
 
 #include "ggml-backend.h"
 #include "ggml.h"
@@ -27,15 +28,7 @@
 #include <cstring>
 #include <cstdlib>
 
-static int failures = 0;
-
-#define CHECK(cond)                                                                      \
-    do {                                                                                 \
-        if (!(cond)) {                                                                   \
-            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                        \
-            failures++;                                                                  \
-        }                                                                                \
-    } while (0)
+#include "test-util.h"
 
 typedef bool (*has_error_fn_t)(ggml_backend_t);
 
@@ -44,23 +37,21 @@ int main(void) {
     ggml_backend_dev_t dev = reg ? ggml_backend_reg_dev_get(reg, 0) : NULL;
     if (reg == NULL || dev == NULL || strncmp(ggml_backend_dev_name(dev), "MTL", 3) != 0) {
         printf("test-gpu-fail: SKIP: no Metal GPU device\n");
-        return 0;
+        return TEST_SKIPPED;
     }
 
     // The export (#405): present, and false while the backend is healthy.
     auto has_error = (has_error_fn_t)ggml_backend_reg_get_proc_address(reg, "ggml_backend_metal_has_error");
     CHECK(has_error != NULL);
     if (has_error == NULL) {
-        printf("%d failure(s)\n", failures);
-        return failures > 0;
+        return test_summary("test-gpu-fail");
     }
 
     ggml_backend_t backend = ggml_backend_dev_init(dev, /*params=*/NULL);
     CHECK(backend != NULL);
     if (backend == NULL) {
         // has_error(NULL) would assert: report and stop instead.
-        printf("%d failure(s)\n", failures);
-        return 1;
+        return test_summary("test-gpu-fail");
     }
     CHECK(has_error(backend) == false);
 
@@ -77,6 +68,5 @@ int main(void) {
     CHECK(small != NULL);
     CHECK(has_error(backend) == false);
 
-    printf("%s (%d failure(s))\n", failures > 0 ? "FAIL" : "test-gpu-fail: OK", failures);
-    return failures > 0;
+    return test_summary("test-gpu-fail");
 }

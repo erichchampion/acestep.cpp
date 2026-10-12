@@ -1,11 +1,11 @@
 # test-ace-fatal: the fatal-throws path (ace_fatal / ace_fatal_error, #17).
 # Header-only, no engine link: it defines ACESTEP_FATAL_THROWS for itself.
 add_executable(test-ace-fatal test-ace-fatal.cpp)
-target_include_directories(test-ace-fatal PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(test-ace-fatal PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # test-progress: the AceProgress report/cancel contract (#18). Header-only.
 add_executable(test-progress test-progress.cpp)
-target_include_directories(test-progress PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(test-progress PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 # test-backend-config: explicit thread count + device selection (#19). Includes
 # backend.h, so it links the ggml backends.
@@ -30,7 +30,7 @@ link_ggml_backends(test-audio-layout)
 
 # test-philox: Philox RNG reference dumper.
 add_executable(test-philox test-philox.cpp)
-target_include_directories(test-philox PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(test-philox PRIVATE ${PROJECT_SOURCE_DIR}/src)
 if(NOT MSVC)
     target_link_libraries(test-philox PRIVATE m)
 endif()
@@ -45,3 +45,21 @@ link_ggml_backends(test-model-store)
 add_executable(test-lm-prompt test-lm-prompt.cpp)
 target_link_libraries(test-lm-prompt PRIVATE acestep-core)
 link_ggml_backends(test-lm-prompt)
+
+# ctest (cadenza-audio #134): the checks above are run, not only built. The
+# self-contained ones always; the ones that read GGUFs only when
+# ACESTEP_TEST_MODELS names a directory holding them (-DACESTEP_TEST_MODELS=
+# <dir>). A test that cannot run here exits 77 (tests/test-util.h), which
+# ctest reports as skipped -- a runner that must run it treats that as a
+# failure (cadenza-audio scripts/test-engine.sh does).
+add_test(NAME test-ace-fatal COMMAND test-ace-fatal)
+add_test(NAME test-progress COMMAND test-progress)
+add_test(NAME test-backend-config COMMAND test-backend-config)
+add_test(NAME test-gpu-fail COMMAND test-gpu-fail)
+set_tests_properties(test-gpu-fail PROPERTIES SKIP_RETURN_CODE 77)
+set(ACESTEP_TEST_MODELS "" CACHE PATH "Directory of GGUFs for the tests that read them (empty: not run)")
+if(ACESTEP_TEST_MODELS)
+    add_test(NAME test-audio-layout COMMAND test-audio-layout --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)
+    add_test(NAME test-lm-prompt COMMAND test-lm-prompt --models ${ACESTEP_TEST_MODELS})
+    add_test(NAME test-model-store COMMAND test-model-store --models ${ACESTEP_TEST_MODELS})
+endif()

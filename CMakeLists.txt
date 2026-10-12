@@ -257,5 +257,6 @@ if(ACESTEP_BUILD_TOOLS)
     endif()
     target_link_libraries(mp3-codec PRIVATE Threads::Threads)
 
+    enable_testing()
     add_subdirectory(tests)
 endif()

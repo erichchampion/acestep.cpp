@@ -14,15 +14,7 @@
 #    include <sys/sysctl.h>  // sysctlbyname
 #endif
 
-static int failures = 0;
-
-#define CHECK(cond)                                                         \
-    do {                                                                    \
-        if (!(cond)) {                                                      \
-            fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-            failures++;                                                     \
-        }                                                                   \
-    } while (0)
+#include "test-util.h"
 
 int main() {
     const int hw = (int) std::thread::hardware_concurrency();
@@ -130,10 +122,6 @@ int main() {
     backend_release(bp.backend, bp.cpu_backend);
     ace_backend_configure(nullptr, 0);
 
-    if (failures == 0) {
-        printf("test-backend-config: all checks passed (auto threads = %d, logical = %d)\n", auto_threads, hw);
-        return 0;
-    }
-    fprintf(stderr, "test-backend-config: %d check(s) failed\n", failures);
-    return 1;
+    printf("test-backend-config: auto threads = %d, logical = %d\n", auto_threads, hw);
+    return test_summary("test-backend-config");
 }

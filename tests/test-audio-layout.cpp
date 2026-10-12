@@ -33,15 +33,7 @@
 #include <string>
 #include <vector>
 
-static int failures = 0;
-
-#define CHECK(cond)                                                                      \
-    do {                                                                                 \
-        if (!(cond)) {                                                                   \
-            fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);              \
-            failures++;                                                                  \
-        }                                                                                \
-    } while (0)
+#include "test-util.h"
 
 // Pearson correlation of two same-length sample ranges. The layout metric:
 // a channel that survives the round trip correlates with its own source;
@@ -165,10 +157,5 @@ int main(int argc, char ** argv) {
     vae_enc_free(enc);
     vae_ggml_free(dec);
 
-    if (failures) {
-        fprintf(stderr, "test-audio-layout: %d check(s) FAILED\n", failures);
-        return 1;
-    }
-    fprintf(stderr, "test-audio-layout: all checks passed\n");
-    return 0;
+    return test_summary("test-audio-layout");
 }
