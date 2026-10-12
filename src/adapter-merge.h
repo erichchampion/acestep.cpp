@@ -220,6 +220,21 @@ static int adapter_read_lokr_dim(const STFile & st) {
 // Requant F32 data back to original type. Writes into dst buffer.
 // Returns the number of bytes written. Used only as host fallback when the
 // backend lacks an F32 -> native cast kernel (K-quants on CUDA today).
+// Whether a base weight is a matrix, which is all a merge can size (cadenza-
+// audio #139): the merge graph, the staging slot and the bytes it writes back
+// cover ne0 x ne1, so a base with more dimensions would have only its first
+// slice merged and the rest left as whatever the buffer held. No DiT weight
+// an adapter targets today is more than 2-D; a malformed adapter, or a
+// future architecture, is warned about and skipped rather than half-merged.
+static bool adapter_base_is_2d(const struct ggml_tensor * t, const char * name) {
+    if (t->ne[2] == 1 && t->ne[3] == 1) {
+        return true;
+    }
+    fprintf(stderr, "[Adapter] WARNING: %s is [%lld,%lld,%lld,%lld], not a matrix: an adapter merges 2-D weights only, skipping\n",
+            name, (long long) t->ne[0], (long long) t->ne[1], (long long) t->ne[2], (long long) t->ne[3]);
+    return false;
+}
+
 static size_t adapter_requant(const float * src, void * dst, int64_t nel, int64_t n_per_row, enum ggml_type type) {
     if (type == GGML_TYPE_F32) {
         size_t nb = (size_t) nel * sizeof(float);
@@ -469,7 +484,13 @@ static bool adapter_merge_on_backend(WeightCtx *                                
         std::vector<float> merged_f32((size_t) nel);
         ggml_backend_tensor_get(tout, merged_f32.data(), 0, (size_t) nel * sizeof(float));
         size_t merged_bytes = adapter_requant(merged_f32.data(), merged_buf, nel, ne0, ttype);
-        if (merged_bytes == 0) {
+        // The whole weight back, or none of it (#139): a short requant would
+        // leave the tail of the destination as whatever its buffer held.
+        if (merged_bytes != base_nb) {
+            if (merged_bytes != 0) {
+                fprintf(stderr, "[Adapter] WARNING: %s requantized to %zu bytes, not the weight's %zu, skipping\n",
+                        gguf_name, merged_bytes, base_nb);
+            }
             ggml_backend_buffer_free(buf);
             ggml_free(ctx);
             return false;
@@ -572,6 +593,10 @@ static bool adapter_merge_lora(WeightCtx *         wctx,
         enum ggml_type       ttype = tmeta->type;
         int64_t              ne0   = tmeta->ne[0];
         int64_t              ne1   = tmeta->ne[1];
+        if (!adapter_base_is_2d(tmeta, gguf_name.c_str())) {
+            skipped++;
+            continue;
+        }
 
         size_t       toff     = gguf_get_tensor_offset(gf.gguf, tidx);
         const void * base_ptr = gf.mapping + gf.data_offset + toff;
@@ -784,6 +809,10 @@ static bool adapter_merge_lokr(WeightCtx *       wctx,
         enum ggml_type       ttype = tmeta->type;
         int64_t              ne0   = tmeta->ne[0];
         int64_t              ne1   = tmeta->ne[1];
+        if (!adapter_base_is_2d(tmeta, gguf_name.c_str())) {
+            skipped++;
+            continue;
+        }
 
         size_t       toff     = gguf_get_tensor_offset(gf.gguf, tidx);
         const void * base_ptr = gf.mapping + gf.data_offset + toff;
