@@ -271,7 +271,8 @@ static BackendPair backend_init(const char * label) {
 
     // Device selection: an explicit ace_backend_configure() wins, then the
     // GGML_BACKEND env var (the CLI fallback), then auto-best below.
-    // Device names: CUDA0, Vulkan0, CPU, BLAS (see ggml_backend_dev_name).
+    // Device names: CUDA0, Vulkan0, MTL0, CPU (see ggml_backend_dev_name); the
+    // selectable ones only (backend_device_selectable).
     // An *empty* value from either source (config device "" or GGML_BACKEND="")
     // reads as unset and falls through to auto-best -- the `force_backend[0]`
     // guard -- by design; only a non-empty, unknown name is a hard error.
@@ -279,12 +280,19 @@ static BackendPair backend_init(const char * label) {
     const bool          from_config   = !cfg_device.empty();
     const char *        force_backend = from_config ? cfg_device.c_str() : std::getenv("GGML_BACKEND");
     if (force_backend && force_backend[0]) {
-        bp.backend = ggml_backend_init_by_name(force_backend, nullptr);
+        // The one selectable-device rule (cadenza-audio #616): a GPU, an
+        // integrated GPU or the CPU -- what the shim's check and the picker
+        // offer. An accelerator (BLAS) runs beside a backend, never as one,
+        // so naming it is refused here as there, and the "Available:" list
+        // names the same devices.
+        if (ace_backend_device_available(force_backend)) {
+            bp.backend = ggml_backend_init_by_name(force_backend, nullptr);
+        }
         if (!bp.backend) {
             std::string avail;
-            for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+            for (const char * name : ace_backend_device_list()) {
                 avail += ' ';
-                avail += ggml_backend_dev_name(ggml_backend_dev_get(i));
+                avail += name;
             }
             ace_fatal(1, "[Load] FATAL: backend '%s' (from %s) not found. Available:%s\n", force_backend,
                       from_config ? "ace_backend_configure" : "GGML_BACKEND", avail.c_str());
