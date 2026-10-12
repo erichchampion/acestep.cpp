@@ -10,6 +10,7 @@
 //
 //   ./test-vae-tiling --vae <vae gguf>
 
+#include "pipeline-synth.h"
 #include "vae-enc.h"
 #include "vae.h"
 
@@ -21,8 +22,7 @@
 
 #include "test-util.h"
 
-static const int kChunk    = 128;  // latent frames: many joins in 30 s
-static const int kDefault  = 16;   // ace_synth_default_params' vae_overlap
+static const int kChunk = 128;  // latent frames: many joins in 30 s
 
 int main(int argc, char ** argv) {
     const char * vae_path = nullptr;
@@ -35,6 +35,13 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "Usage: %s --vae <gguf>\n", argv[0]);
         return 2;
     }
+
+    // The overlap the engine ships, read from its defaults -- not a copy of
+    // it here, so a default lowered below either network's field fails.
+    AceSynthParams defaults;
+    ace_synth_default_params(&defaults);
+    const int kDefault = defaults.vae_overlap;
+    fprintf(stderr, "[Test] the engine's default overlap: %d\n", kDefault);
 
     // 30 s of stereo with structure at every scale: a few tones, a slow sweep
     // and seeded noise (an LCG, so every run encodes the same samples).
