@@ -217,9 +217,6 @@ static int adapter_read_lokr_dim(const STFile & st) {
     return dim;
 }
 
-// Requant F32 data back to original type. Writes into dst buffer.
-// Returns the number of bytes written. Used only as host fallback when the
-// backend lacks an F32 -> native cast kernel (K-quants on CUDA today).
 // Whether a base weight is a matrix, which is all a merge can size (cadenza-
 // audio #139): the merge graph, the staging slot and the bytes it writes back
 // cover ne0 x ne1, so a base with more dimensions would have only its first
@@ -235,6 +232,9 @@ static bool adapter_base_is_2d(const struct ggml_tensor * t, const char * name) 
     return false;
 }
 
+// Requant F32 data back to original type. Writes into dst buffer.
+// Returns the number of bytes written. Used only as host fallback when the
+// backend lacks an F32 -> native cast kernel (K-quants on CUDA today).
 static size_t adapter_requant(const float * src, void * dst, int64_t nel, int64_t n_per_row, enum ggml_type type) {
     if (type == GGML_TYPE_F32) {
         size_t nb = (size_t) nel * sizeof(float);
