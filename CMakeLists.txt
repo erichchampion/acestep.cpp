@@ -24,6 +24,16 @@ option(ACESTEP_BUILD_TOOLS
        "Build the CLIs, server and tests (off when embedding acestep-core)"
        ${PROJECT_IS_TOP_LEVEL})
 
+# The Apple floor (cadenza-audio #141, #99): std::from_chars is availability-
+# gated to macOS/iOS 26, and the upstream fallback is guarded on the libc++
+# version, not on availability -- so a lower deployment target fails deep in
+# the compile on an unrelated-looking diagnostic. Said here, at configure time,
+# for every consumer: the build scripts, an Xcode project, an embedder.
+if(APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS 26.0)
+    message(FATAL_ERROR "acestep.cpp needs a deployment target of 26.0 or later on Apple "
+                        "(std::from_chars); CMAKE_OSX_DEPLOYMENT_TARGET is ${CMAKE_OSX_DEPLOYMENT_TARGET}")
+endif()
+
 # version.h: embed git commit hash into all binaries.
 # runs on every build, only rewrites if the hash changed.
 set(VERSION_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/version.h")
@@ -46,9 +56,13 @@ endif()
 
 # Put executables and backend .so in the same directory (build root).
 # Without this, ggml defaults to bin/ for .so but executables stay in root,
-# and ggml_backend_load_all() can't find the backends at runtime.
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+# and ggml_backend_load_all() can't find the backends at runtime. Only at the
+# top of the tree: embedded, these would also govern ggml's subdirectory and
+# redirect its artifacts into the parent's build root (cadenza-audio #128).
+if(PROJECT_IS_TOP_LEVEL)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
 
 # DiT tensor names can exceed default GGML_MAX_NAME of 64
 add_compile_definitions(GGML_MAX_NAME=128)
@@ -72,21 +86,36 @@ endif()
 # ggml as subdirectory, inherits GGML_CUDA, GGML_METAL, etc. from cmake flags
 add_subdirectory(ggml)
 
+# ggml is compiled at GGML_MAX_NAME=128 by the directory-scope define above,
+# which is not an interface property: an embedder linking ggml directly (for
+# the backend API) and including ggml.h would see struct ggml_tensor at the
+# default 64 -- a layout the library it links disagrees with. On ggml's own
+# interface, every consumer of ggml agrees (cadenza-audio #128, #127).
+foreach(ggml_target ggml ggml-base)
+    if(TARGET ${ggml_target})
+        target_compile_definitions(${ggml_target} INTERFACE GGML_MAX_NAME=128)
+    endif()
+endforeach()
+
 # cpp-httplib (HTTP server library, used by ace-server)
 # Only ace-server links it, so it is gated with the rest of the tools.
 if(ACESTEP_BUILD_TOOLS)
     add_subdirectory(vendor/cpp-httplib)
 endif()
 
-# Shared compile options and ggml linkage
+# Shared compile options and ggml linkage. This project's own roots, not
+# CMAKE_SOURCE_DIR / CMAKE_BINARY_DIR: embedded via add_subdirectory those are
+# the PARENT's, and a parent header named like one of ours would be picked up
+# silently (cadenza-audio #128). version.h is generated in this project's
+# binary dir.
 macro(link_ggml_backends target)
     target_include_directories(${target} PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}
-        ${CMAKE_BINARY_DIR}
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_BINARY_DIR}
     )
     target_include_directories(${target} SYSTEM PRIVATE
-        ${CMAKE_SOURCE_DIR}/ggml/include
+        ${PROJECT_SOURCE_DIR}/ggml/include
     )
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /wd4100 /wd4505)
@@ -132,6 +161,17 @@ add_library(acestep-core STATIC
 )
 target_link_libraries(acestep-core PUBLIC yyjson)
 link_ggml_backends(acestep-core)
+# Its public header surface is src/ -- what every embedder includes today
+# (model-store.h, pipeline-synth.h, request.h, backend-config.h) -- and ggml's
+# headers, which those include. An embedder linking acestep-core finds them
+# without restating the paths, as it inherits GGML_MAX_NAME below
+# (cadenza-audio #128). Build-tree only: nothing is installed.
+target_include_directories(acestep-core INTERFACE
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>
+)
+target_include_directories(acestep-core SYSTEM INTERFACE
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/ggml/include>
+)
 
 # GGML_MAX_NAME is set to 128 at directory scope above so ggml itself sees it,
 # but add_compile_definitions does not cross into a parent project that pulls
