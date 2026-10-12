@@ -33,7 +33,12 @@ void ace_synth_default_params(AceSynthParams * p) {
     p->clamp_fp16        = false;
     p->use_batch_cfg     = true;
     p->vae_chunk         = 1024;
-    p->vae_overlap       = 64;
+    // 16, not 64 (cadenza-audio #91): the decoder's tiles join bit-exactly
+    // -- identical to an untiled decode -- at any overlap of 9 latent frames
+    // or more (measured at chunk 256 and 1024 on an 88 s song); 8 differs at
+    // -67 dB, 4 seams audibly. 16 keeps a margin over 9, and each tile
+    // decodes 96 frames less waste than at 64.
+    p->vae_overlap       = 16;
     p->dump_dir          = NULL;
 }
 
