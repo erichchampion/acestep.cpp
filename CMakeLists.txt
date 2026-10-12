@@ -56,13 +56,12 @@ endif()
 
 # Put executables and backend .so in the same directory (build root).
 # Without this, ggml defaults to bin/ for .so but executables stay in root,
-# and ggml_backend_load_all() can't find the backends at runtime. Only at the
-# top of the tree: embedded, these would also govern ggml's subdirectory and
-# redirect its artifacts into the parent's build root (cadenza-audio #128).
-if(PROJECT_IS_TOP_LEVEL)
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-endif()
+# and ggml_backend_load_all() can't find the backends at runtime. Embedded
+# too, deliberately (cadenza-audio #128, #672): ggml, embedded, falls back to
+# the parent's ${CMAKE_BINARY_DIR}/bin for its artifacts anyway, and the
+# tools must sit beside the backend modules it loads -- so the root it is.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # DiT tensor names can exceed default GGML_MAX_NAME of 64
 add_compile_definitions(GGML_MAX_NAME=128)
