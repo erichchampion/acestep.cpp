@@ -1,4 +1,4 @@
-=== re-anchor 2026-09-07T17:56:13Z chip=Apple-M1-Max engine=c0d22ce ===
+=== re-anchor 2026-10-12T22:39:32Z chip=Apple-M1-Max engine=8230f8f ===
 --- debug-dit-cossim (turbo Q4_K_M, shared noise) ---
 [Request] Parsed ggml-turbo/request0.json
 [Request] seed=42 lm_batch=1 synth_batch=1
@@ -17,14 +17,13 @@
 [Ace-Synth] Batch: 1 request(s)
 [Registry] Qwen3-Embedding-0.6B-Q8_0.gguf -> Text-Enc
 [Registry] acestep-5Hz-lm-0.6B-Q8_0.gguf -> LM
-[Registry] acestep-5Hz-lm-1.7B-Q8_0.gguf -> LM
 [Registry] acestep-v15-sft-Q8_0.gguf -> DiT
 [Registry] acestep-v15-turbo-Q4_K_M.gguf -> DiT
 [Registry] acestep-v15-turbo-Q8_0.gguf -> DiT
 [Registry] vae-BF16.gguf -> VAE
 [Store] Created (policy=STRICT)
-[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
-[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
 [Synth-Load] Ready: turbo=yes, fa=no, batch_cfg=yes
 [Resolve-Params] max audio codes across batch: 434 (86.8s @ 5Hz)
 [Resolve-T] T=2170, S=1085
@@ -32,7 +31,7 @@
 [BPE] Loaded from GGUF: 151643 vocab, 151387 merges
 ggml_metal_device_init: tensor API disabled for pre-M5 and pre-A19 devices
 ggml_metal_library_init: using embedded metal library
-ggml_metal_library_init: loaded in 0.012 sec
+ggml_metal_library_init: loaded in 10.141 sec
 ggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)
 ggml_metal_device_init: GPU name:   MTL0 (Apple M1 Max)
 ggml_metal_device_init: GPU family: MTLGPUFamilyApple7  (1007)
@@ -52,33 +51,34 @@ ggml_metal_init: picking default device: Apple M1 Max
 ggml_metal_init: use fusion         = true
 ggml_metal_init: use concurrency    = true
 ggml_metal_init: use graph optimize = true
+[Load] Metal command buffers per graph: 2
 [Load] TextEncoder backend: MTL0 (CPU threads: 8)
-[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/Qwen3-Embedding-0.6B-Q8_0.gguf: 310 tensors, data at offset 5337664
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/models/Qwen3-Embedding-0.6B-Q8_0.gguf: 310 tensors, data at offset 5337664
 [Load] TextEncoder: 28L, H=1024, Nh=16/8
 [Qwen3] Attn: Q+K+V fused
 [Qwen3] MLP: gate+up fused
 [WeightCtx] Loaded 310 tensors, 742.7 MB into backend (unmapped 739.4 of 742.7 MB of staged file pages)
-[Store] Load TextEnc: 1064 ms
+[Store] Load TextEnc: 10329 ms
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_get_rows_bf16', name = 'kernel_get_rows_bf16'
-ggml_metal_library_compile_pipeline: loaded kernel_get_rows_bf16                          0x10345ff20 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_get_rows_bf16                          0x104eb7600 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_rms_norm_mul_f32_4', name = 'kernel_rms_norm_mul_f32_4'
-ggml_metal_library_compile_pipeline: loaded kernel_rms_norm_mul_f32_4                     0x103460720 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_rms_norm_mul_f32_4                     0x104eb8000 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_q8_0_f32', name = 'kernel_mul_mm_q8_0_f32_bci=0_bco=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q8_0_f32_bci=0_bco=1            0x103460f20 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q8_0_f32_bci=0_bco=1            0x104eb8e80 | th_max =  896 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f32_f32', name = 'kernel_cpy_f32_f32'
-ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f32                            0x103461720 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f32                            0x104eb9680 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_rope_neox_f32', name = 'kernel_rope_neox_f32_imrope=0'
-ggml_metal_library_compile_pipeline: loaded kernel_rope_neox_f32_imrope=0                 0x103462ee0 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_rope_neox_f32_imrope=0                 0x104ebac80 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=0_bco=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1             0x1034631e0 | th_max =  832 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=0_bco=1             0x104ebb380 | th_max =  832 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_soft_max_f16', name = 'kernel_soft_max_f16'
-ggml_metal_library_compile_pipeline: loaded kernel_soft_max_f16                           0x1034634e0 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_soft_max_f16                           0x104ebb680 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f32_f32', name = 'kernel_mul_mm_f32_f32_bci=1_bco=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=1_bco=1             0x1034637e0 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f32_f32_bci=1_bco=1             0x104ebb980 | th_max =  896 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0'
-ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0      0x728850000 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0     0x772f210000 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_swiglu_f32', name = 'kernel_swiglu_f32'
-ggml_metal_library_compile_pipeline: loaded kernel_swiglu_f32                             0x728850300 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_swiglu_f32                            0x772f210300 | th_max = 1024 | th_width =   32
 [Debug] text_hidden: [70, 1024] first4: 4.978124 -5.514876 0.318823 -22.383480
 [Debug] lyric_embed: [167, 1024] first4: 0.029175 0.032227 -0.022339 -0.028809
 [Store] Unload TextEnc (742.7 MB)
@@ -89,8 +89,9 @@ ggml_metal_init: picking default device: Apple M1 Max
 ggml_metal_init: use fusion         = true
 ggml_metal_init: use concurrency    = true
 ggml_metal_init: use graph optimize = true
+[Load] Metal command buffers per graph: 2
 [Load] CondEncoder backend: MTL0 (CPU threads: 8)
-[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
 [Load] LyricEncoder: 8L
 [Qwen3] Attn: Q+K fused, V separate
 [Qwen3] MLP: gate+up fused
@@ -99,29 +100,29 @@ ggml_metal_init: use graph optimize = true
 [Qwen3] MLP: gate+up fused
 [WeightCtx] Loaded 140 tensors, 352.5 MB into backend (unmapped 350.9 of 352.5 MB of staged file pages)
 [Load] CondEncoder: lyric(8L), timbre(4L), text_proj, null_cond
-[Store] Load CondEnc: 486 ms
+[Store] Load CondEnc: 74 ms
 [CondEnc] Lyric sliding mask: 167x167, window=128
 [CondEnc] Timbre sliding mask: 1x1, window=128
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_q6_K_f32', name = 'kernel_mul_mm_q6_K_f32_bci=0_bco=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q6_K_f32_bci=0_bco=1            0x728850600 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q6_K_f32_bci=0_bco=1           0x772f210600 | th_max =  896 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_q4_K_f32', name = 'kernel_mul_mm_q4_K_f32_bci=0_bco=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q4_K_f32_bci=0_bco=1            0x728850900 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q4_K_f32_bci=0_bco=1           0x772f210900 | th_max =  896 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_soft_max_f32', name = 'kernel_soft_max_f32'
-ggml_metal_library_compile_pipeline: loaded kernel_soft_max_f32                           0x728850c00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_soft_max_f32                          0x772f210c00 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_bf16_f32_4', name = 'kernel_mul_mv_bf16_f32_4_nsg=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_bf16_f32_4_nsg=1                0x728850f00 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_bf16_f32_4_nsg=1               0x772f210f00 | th_max =  896 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=1_cb=0'
-ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=1_cb=0      0x728851200 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=1_cb=0     0x772f211200 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_q6_K_f32', name = 'kernel_mul_mv_q6_K_f32_nsg=2'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_q6_K_f32_nsg=2                  0x728851500 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_q6_K_f32_nsg=2                 0x772f211500 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_q4_K_f32', name = 'kernel_mul_mv_q4_K_f32_nsg=2'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_q4_K_f32_nsg=2                  0x728851800 | th_max =  768 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_q4_K_f32_nsg=2                 0x772f211800 | th_max =  768 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32_4', name = 'kernel_mul_mv_f32_f32_4_nsg=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_4_nsg=1                 0x728851b00 | th_max =  768 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_4_nsg=1                0x772f211b00 | th_max =  768 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32_short', name = 'kernel_mul_mv_f32_f32_short_nsg=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_short_nsg=1             0x728851e00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_short_nsg=1            0x772f211e00 | th_max = 1024 | th_width =   32
 [Encode] Packed: lyric=167 + timbre=1 + text=70 = 238 tokens
-[Encode-Text Batch0] 70+167 tokens -> enc_S=238, 48.2 ms
+[Encode-Text Batch0] 70+167 tokens -> enc_S=238, 68.1 ms
 [Debug] enc_hidden: [238, 2048] first4: 1.760119 -0.046689 -0.128880 0.057824
 [Store] Unload CondEnc (352.5 MB)
 ggml_metal_free: deallocating
@@ -131,23 +132,24 @@ ggml_metal_init: picking default device: Apple M1 Max
 ggml_metal_init: use fusion         = true
 ggml_metal_init: use concurrency    = true
 ggml_metal_init: use graph optimize = true
+[Load] Metal command buffers per graph: 2
 [Load] Detokenizer backend: MTL0 (CPU threads: 8)
-[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
 [WeightCtx] Loaded 30 tensors, 64.7 MB into backend (unmapped 64.3 of 64.7 MB of staged file pages)
 [Load] Detokenizer: FSQ(6->2048) + 2L encoder(S=5, 2048->64)
-[Store] Load FSQ-Detok: 95 ms
+[Store] Load FSQ-Detok: 21 ms
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_bf16_f32_short', name = 'kernel_mul_mv_bf16_f32_short_nsg=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_bf16_f32_short_nsg=1            0x728852100 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_bf16_f32_short_nsg=1           0x772f212100 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_repeat_f32', name = 'kernel_repeat_f32'
-ggml_metal_library_compile_pipeline: loaded kernel_repeat_f32                             0x728852400 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_repeat_f32                            0x772f212400 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_ext_q6_K_f32_r1_5', name = 'kernel_mul_mv_ext_q6_K_f32_r1_5_nsg=2_nxpsg=8'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_q6_K_f32_r1_5_nsg=2_nxpsg=8      0x728852700 | th_max =  640 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_q6_K_f32_r1_5_nsg=2_nxpsg=8     0x772f212700 | th_max =  640 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_ext_q4_K_f32_r1_5', name = 'kernel_mul_mv_ext_q4_K_f32_r1_5_nsg=2_nxpsg=8'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_q4_K_f32_r1_5_nsg=2_nxpsg=8      0x728852a00 | th_max =  640 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_q4_K_f32_r1_5_nsg=2_nxpsg=8     0x772f212a00 | th_max =  640 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_ext_f32_f32_r1_5', name = 'kernel_mul_mv_ext_f32_f32_r1_5_nsg=2_nxpsg=8'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_f32_f32_r1_5_nsg=2_nxpsg=8      0x728852d00 | th_max =  640 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_f32_f32_r1_5_nsg=2_nxpsg=8     0x772f212d00 | th_max =  640 | th_width =   32
 [Context] Decoded: 434 codes -> 2170 frames (86.8s @ 25Hz)
-[Build-Context Batch0] Detokenizer: 883.8 ms, 434 codes
+[Build-Context Batch0] Detokenizer: 1352.7 ms, 434 codes
 [Debug] detok_output: [2170, 64] first4: -0.105276 1.439657 0.307319 -0.637006
 [Store] Unload FSQ-Detok (64.7 MB)
 ggml_metal_free: deallocating
@@ -161,32 +163,33 @@ ggml_metal_init: picking default device: Apple M1 Max
 ggml_metal_init: use fusion         = true
 ggml_metal_init: use concurrency    = true
 ggml_metal_init: use graph optimize = true
+[Load] Metal command buffers per graph: 2
 [Load] DiT backend: MTL0 (CPU threads: 8)
-[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/models/acestep-v15-turbo-Q4_K_M.gguf: 678 tensors, data at offset 56864
 [DiT] Self-attn: Q+K fused, V separate
 [DiT] Cross-attn: all separate
 [DiT] MLP: gate+up fused
 [Load] null_condition_emb found (CFG available)
 [WeightCtx] Loaded 478 tensors, 895.6 MB into backend (unmapped 885.5 of 890.5 MB of staged file pages)
 [Load] DiT: 24 layers, H=2048, Nh=16/8, D=128
-[Store] Load DiT: 1224 ms
+[Store] Load DiT: 158 ms
 [DiT] Batch N=1, T=2170, S=1085, enc_S=238
 [DiT] Graph: 2063 nodes
 [DiT] Solver: ODE Euler (1 NFE/step, order 1)
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32', name = 'kernel_unary_f32_f32_op=10_cnt=1'
-ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=10_cnt=1              0x728853000 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_op=10_cnt=1             0x772f213000 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_timestep_embedding_f32', name = 'kernel_timestep_embedding_f32'
-ggml_metal_library_compile_pipeline: loaded kernel_timestep_embedding_f32                 0x728853300 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_timestep_embedding_f32                0x772f213300 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=1_nf=1_rb=1_cb=0'
-ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=1_nf=1_rb=1_cb=0      0x728853600 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=1_nf=1_rb=1_cb=0     0x772f213600 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_unary_f32_f32_4', name = 'kernel_unary_f32_f32_4_op=106_cnt=1'
-ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=106_cnt=1           0x728853900 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_unary_f32_f32_4_op=106_cnt=1          0x772f213900 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=1_cb=1'
-ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=1_cb=1      0x728853c00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=1_cb=1     0x772f213c00 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=0_cb=0'
-ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=0_cb=0      0x728878000 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=0_cb=0     0x772f6c4000 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=1'
-ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=1      0x728878300 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=1     0x772f6c4300 | th_max = 1024 | th_width =   32
 [Debug] tproj: [12288] first4: 0.260934 -0.160421 -0.090493 0.048629
 [Debug] temb: [2048] first4: 0.000206 -0.133914 -0.034444 0.065020
 [Debug] temb_t: [2048] first4: 0.000970 0.025693 -0.052101 0.063330
@@ -234,72 +237,96 @@ ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_n
 [Debug] dit_step7_vt: [2170, 64] first4: -0.429991 0.817075 -1.598431 3.262279
 [Debug] dit_x0: [2170, 64] first4: 0.269397 1.170255 0.539872 -1.902769
 [DiT] Step 8/8 t=0.300
-[DiT-Generate] Total: 6172.0 ms (6172.0 ms/sample)
+[DiT-Generate] Total: 5698.3 ms (5698.3 ms/sample)
 [Debug] dit_output: [2170, 64] first4: 0.269397 1.170255 0.539872 -1.902769
 [Store] Unload DiT (895.6 MB)
 ggml_metal_free: deallocating
-[GGUF] /Users/erich/git/github/erichchampion/cadenza-audio/external/acestep.cpp/models/vae-BF16.gguf: 365 tensors, data at offset 30048
+[GGUF] /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/models/vae-BF16.gguf: 365 tensors, data at offset 30048
 ggml_metal_init: allocating
 ggml_metal_init: found device: Apple M1 Max
 ggml_metal_init: picking default device: Apple M1 Max
 ggml_metal_init: use fusion         = true
 ggml_metal_init: use concurrency    = true
 ggml_metal_init: use graph optimize = true
+[Load] Metal command buffers per graph: 2
 [Load] VAE backend: MTL0 (CPU threads: 8)
 [VAE] Backend: MTL0, Weight buffer: 161.1 MB
 [VAE] Loaded: 5 blocks, upsample=1920x, F32 activations
-[Store] Load VAE-Dec: 484 ms
-[VAE] Tiled decode: 3 tiles (chunk=1024, overlap=64, stride=896)
-[VAE] Graph: 479 nodes, T_latent=960
+[Store] Load VAE-Dec: 473 ms
+[VAE] Tiled decode: 3 tiles (chunk=1024, overlap=16, stride=992)
+[VAE] Graph: 479 nodes, T_latent=1008
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_im2col_f16', name = 'kernel_im2col_f16'
-ggml_metal_library_compile_pipeline: loaded kernel_im2col_f16                             0x728878600 | th_max = 1024 | th_width =   32
-ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f16', name = 'kernel_mul_mm_f16_f16_bci=0_bco=0'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f16_bci=0_bco=0             0x728878900 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_im2col_f16                            0x772f6c4600 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f16', name = 'kernel_mul_mm_f16_f16_bci=0_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f16_bci=0_bco=1            0x772f6c4900 | th_max =  896 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32', name = 'kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=0_cb=1'
-ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=0_cb=1      0x728878c00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_op=0_nf=1_rb=0_cb=1     0x772f6c4c00 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_snake_f32', name = 'kernel_snake_f32'
-ggml_metal_library_compile_pipeline: loaded kernel_snake_f32                              0x728878f00 | th_max = 1024 | th_width =   32
-ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=0_bco=0'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=0_bco=0             0x728879200 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_snake_f32                             0x772f6c4f00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=0_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=0_bco=1            0x772f6c5200 | th_max =  896 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_col2im_1d_f32', name = 'kernel_col2im_1d_f32'
-ggml_metal_library_compile_pipeline: loaded kernel_col2im_1d_f32                          0x728879500 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_col2im_1d_f32                         0x772f6c5500 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=0_bco=0'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=0_bco=0            0x772f6c5800 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f16', name = 'kernel_mul_mm_f16_f16_bci=0_bco=0'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f16_bci=0_bco=0            0x772f6c5b00 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f16_f16_4', name = 'kernel_mul_mv_f16_f16_4_nsg=4'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f16_f16_4_nsg=4                 0x728879800 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f16_f16_4_nsg=4                0x772f6c5e00 | th_max = 1024 | th_width =   32
 [VAE] Upsample factor: 1920.00 (expected ~1920)
 [VAE] Graph: 479 nodes, T_latent=1024
-[VAE] Graph: 479 nodes, T_latent=442
-ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f16', name = 'kernel_mul_mm_f16_f16_bci=0_bco=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f16_bci=0_bco=1             0x728879b00 | th_max =  896 | th_width =   32
-ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=0_bco=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=0_bco=1             0x728879e00 | th_max =  896 | th_width =   32
+[VAE] Graph: 479 nodes, T_latent=202
 [VAE] Tiled decode done: 3 tiles -> T_audio=4166400 (86.80s @ 48kHz)
-[VAE-Decode Batch0] Decode: 16869.4 ms
+[VAE-Decode Batch0] Decode: 14435.9 ms
 [Debug] vae_audio: [2, 4166400] first4: 0.000496 0.001206 0.000962 0.001492
 [Store] Unload VAE-Dec (161.1 MB)
 ggml_metal_free: deallocating
 [MP3] Encoding 86.8s @ 128 kbps, 48000 Hz stereo
-[MP3] 1388928 bytes (12.0:1), 1315 ms (66.00x realtime), 10 threads
+[MP3] 1388928 bytes (12.0:1), 1233 ms (70.37x realtime), 10 threads
 [MP3] Wrote ggml-turbo/request00.mp3
 [Ace-Synth] All done
-2026-09-07 10:56:43.399 | WARNING  | acestep.training.lora_injection:<module>:74 - PEFT library not installed. LoRA training will not be available.
-2026-09-07 10:56:43.400 | WARNING  | acestep.training.lora_utils:<module>:17 - PEFT library not installed. LoRA training will not be available.
-2026-09-07 10:56:43.400 | WARNING  | acestep.training.lokr_utils:<module>:24 - LyCORIS library not installed. LoKr training/inference unavailable. Install with: pip install lycoris-lora
-2026-09-07 10:56:43.401 | WARNING  | acestep.training.data_module:<module>:25 - Lightning not installed. Training module will not be available.
-2026-09-07 10:56:43.402 | WARNING  | acestep.training.trainer:<module>:29 - Lightning Fabric not installed. Training will use basic training loop.
-2026-09-07 10:56:43.402 | WARNING  | acestep.training.trainer:<module>:40 - bitsandbytes not installed. Using standard AdamW.
-2026-09-07 10:56:43.423 | WARNING  | acestep.core.generation.handler.init_service_setup:_resolve_initialize_device:28 - [initialize_service] CUDA requested but unavailable. Falling back to MPS.
-2026-09-07 10:56:44.362 | INFO     | acestep.core.generation.handler.init_service_loader:_load_main_model_from_checkpoint:163 - [initialize_service] Attempting to load model with attention implementation: sdpa
-2026-09-07 10:56:51.749 | INFO     | acestep.core.generation.handler.mlx_dit_init:_init_mlx_dit:22 - [MLX-DiT] MLX not available on this platform; skipping.
-2026-09-07 10:56:51.749 | INFO     | acestep.core.generation.handler.mlx_vae_init:_init_mlx_vae:37 - [MLX-VAE] MLX not available on this platform; skipping.
-2026-09-07 10:56:51.750 | INFO     | acestep.core.generation.handler.generate_music:generate_music:199 - [generate_music] Starting generation...
-2026-09-07 10:56:51.750 | INFO     | acestep.core.generation.handler.generate_music:generate_music:202 - [generate_music] Preparing inputs...
-2026-09-07 10:56:51.761 | INFO     | acestep.core.generation.handler.conditioning_target:_prepare_target_latents_and_wavs:41 - [generate_music] Decoding audio codes for item 0...
-2026-09-07 10:56:52.147 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_precomputed_lm_hints:31 - [generate_music] Decoding audio codes for LM hints for item 0...
-2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:119 - 
+2026-10-12 15:40:08.496 | WARNING  | acestep.training.lora_injection:<module>:74 - PEFT library not installed. LoRA training will not be available.
+2026-10-12 15:40:08.496 | WARNING  | acestep.training.lora_utils:<module>:17 - PEFT library not installed. LoRA training will not be available.
+2026-10-12 15:40:08.496 | WARNING  | acestep.training.lokr_utils:<module>:24 - LyCORIS library not installed. LoKr training/inference unavailable. Install with: pip install lycoris-lora
+2026-10-12 15:40:08.497 | WARNING  | acestep.training.data_module:<module>:25 - Lightning not installed. Training module will not be available.
+2026-10-12 15:40:08.497 | WARNING  | acestep.training.trainer:<module>:29 - Lightning Fabric not installed. Training will use basic training loop.
+2026-10-12 15:40:08.498 | WARNING  | acestep.training.trainer:<module>:40 - bitsandbytes not installed. Using standard AdamW.
+2026-10-12 15:40:08.542 | WARNING  | acestep.core.generation.handler.init_service_setup:_resolve_initialize_device:28 - [initialize_service] CUDA requested but unavailable. Falling back to MPS.
+2026-10-12 15:40:08.542 | INFO     | acestep.core.generation.handler.init_service_downloads:_ensure_models_present:28 - [initialize_service] Main model not found, starting auto-download...
+2026-10-12 15:40:08.596 | INFO     | acestep.model_downloader:_smart_download:245 - [Model Download] Auto-detected: HuggingFace Hub
+2026-10-12 15:40:08.596 | INFO     | acestep.model_downloader:_smart_download:248 - [Model Download] Using HuggingFace Hub...
+2026-10-12 15:40:08.734 | INFO     | acestep.model_downloader:_download_from_huggingface_internal:176 - [Model Download] Downloading from HuggingFace: ACE-Step/Ace-Step1.5 -> ../checkpoints
+[Request] Loaded request0.json
+[Turbo] steps=8, shift=3.0 | acestep-v15-turbo-Q4_K_M.gguf
+[GGML] Running acestep-v15-turbo-Q4_K_M.gguf...
+[GGML] Done, 47 dump files
+[Python] Initializing acestep-v15-turbo...
+
+============================================================
+Main model not found. Starting automatic download...
+============================================================
+
+Downloading main model from ACE-Step/Ace-Step1.5...
+Destination: ../checkpoints
+This may take a while depending on your internet connection...
+Fetching 28 files:   0%|          | 0/28 [00:00<?, ?it/s]Fetching 28 files:  29%|██▊       | 8/28 [00:00<00:01, 12.01it/s]Fetching 28 files:  57%|█████▋    | 16/28 [00:01<00:01, 11.80it/s]Fetching 28 files:  75%|███████▌  | 21/28 [00:20<00:06,  1.05it/s]Fetching 28 files:  79%|███████▊  | 22/28 [00:22<00:06,  1.01s/it]Fetching 28 files:  82%|████████▏ | 23/28 [00:27<00:05,  1.19s/it]Fetching 28 files:  86%|████████▌ | 24/28 [00:31<00:05,  1.33s/it]Fetching 28 files:  89%|████████▉ | 25/28 [00:53<00:06,  2.12s/it]Fetching 28 files:  93%|█████████▎| 26/28 [01:36<00:07,  3.72s/it]Fetching 28 files:  96%|█████████▋| 27/28 [02:52<00:06,  6.40s/it]Fetching 28 files: 100%|██████████| 28/28 [02:57<00:00,  6.34s/it]Fetching 28 files: 100%|██████████| 28/28 [02:57<00:00,  6.34s/it]
+2026-10-12 15:43:06.428 | DEBUG    | acestep.model_downloader:_sync_model_code_files:127 - [Model Sync] Synced modeling_acestep_v15_turbo.py -> ../checkpoints/acestep-v15-turbo/modeling_acestep_v15_turbo.py
+2026-10-12 15:43:06.430 | DEBUG    | acestep.model_downloader:_sync_model_code_files:127 - [Model Sync] Synced configuration_acestep_v15.py -> ../checkpoints/acestep-v15-turbo/configuration_acestep_v15.py
+2026-10-12 15:43:06.430 | INFO     | acestep.model_downloader:download_main_model:459 - [Model Download] Synced code files for acestep-v15-turbo: ['modeling_acestep_v15_turbo.py', 'configuration_acestep_v15.py']
+2026-10-12 15:43:06.430 | INFO     | acestep.core.generation.handler.init_service_downloads:_ensure_models_present:32 - [initialize_service] Successfully downloaded from HuggingFace: ACE-Step/Ace-Step1.5
+2026-10-12 15:43:07.464 | INFO     | acestep.core.generation.handler.init_service_loader:_load_main_model_from_checkpoint:163 - [initialize_service] Attempting to load model with attention implementation: sdpa
+2026-10-12 15:43:14.438 | INFO     | acestep.core.generation.handler.mlx_dit_init:_init_mlx_dit:22 - [MLX-DiT] MLX not available on this platform; skipping.
+2026-10-12 15:43:14.438 | INFO     | acestep.core.generation.handler.mlx_vae_init:_init_mlx_vae:37 - [MLX-VAE] MLX not available on this platform; skipping.
+2026-10-12 15:43:14.438 | INFO     | acestep.core.generation.handler.generate_music:generate_music:199 - [generate_music] Starting generation...
+2026-10-12 15:43:14.438 | INFO     | acestep.core.generation.handler.generate_music:generate_music:202 - [generate_music] Preparing inputs...
+2026-10-12 15:43:14.445 | INFO     | acestep.core.generation.handler.progress:_start_diffusion_progress_estimator:179 - [progress] No timing history — using fallback estimate (2.5s/step for batch_size=1).  This will self-calibrate after the first generation.
+2026-10-12 15:43:14.500 | INFO     | acestep.core.generation.handler.conditioning_target:_prepare_target_latents_and_wavs:41 - [generate_music] Decoding audio codes for item 0...
+2026-10-12 15:43:19.284 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_precomputed_lm_hints:31 - [generate_music] Decoding audio codes for LM hints for item 0...
+2026-10-12 15:43:19.295 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:119 - 
 ======================================================================
-2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:120 - 🔍 [DEBUG] DiT TEXT ENCODER INPUT (Inference)
-2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:121 - ======================================================================
-2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:122 - text_prompt:
+2026-10-12 15:43:19.295 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:120 - 🔍 [DEBUG] DiT TEXT ENCODER INPUT (Inference)
+2026-10-12 15:43:19.295 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:121 - ======================================================================
+2026-10-12 15:43:19.295 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:122 - text_prompt:
 # Instruction
 Generate audio semantic tokens based on the given conditions:
 
@@ -313,8 +340,8 @@ An upbeat and anthemic pop-rock track driven by bright, slightly overdriven
 - duration: 88 seconds
 <|endoftext|>
 
-2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:123 - ======================================================================
-2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:124 - lyrics_text:
+2026-10-12 15:43:19.295 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:123 - ======================================================================
+2026-10-12 15:43:19.295 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:124 - lyrics_text:
 # Languages
 fr
 
@@ -341,29 +368,24 @@ Dans le monde des tutos virtuels
 Gândoline, Pumbé à midi
 Une famille à connecter, c'est vrai
 D'un enfant qui voit toi fusionner<|endoftext|>
-2026-09-07 10:56:52.158 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:125 - ======================================================================
+2026-10-12 15:43:19.295 | INFO     | acestep.core.generation.handler.conditioning_text:_prepare_text_conditioning_inputs:125 - ======================================================================
 
-2026-09-07 10:56:52.252 | INFO     | acestep.core.generation.handler.conditioning_embed:preprocess_batch:110 - [preprocess_batch] Inferring prompt embeddings...
-2026-09-07 10:56:52.505 | INFO     | acestep.core.generation.handler.conditioning_embed:preprocess_batch:113 - [preprocess_batch] Inferring lyric embeddings...
-2026-09-07 10:56:52.509 | INFO     | acestep.core.generation.handler.service_generate_execute:_execute_service_generate_diffusion:131 - [service_generate] Generating audio... (DiT backend: PyTorch (mps))
-2026-09-07 10:56:53.018 | INFO     | acestep.core.generation.handler.service_generate_execute:_execute_service_generate_diffusion:211 - [service_generate] DiT diffusion via PyTorch (mps)...
-2026-09-07 10:57:00.760 | INFO     | acestep.core.generation.handler.generate_music_decode:_prepare_generate_music_decode_state:42 - [generate_music] Model generation completed. Decoding latents...
-2026-09-07 10:57:00.760 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_prepare_generate_music_decode_state:64 - [generate_music] pred_latents: torch.Size([1, 2170, 64]), dtype=torch.float32
-2026-09-07 10:57:00.760 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_prepare_generate_music_decode_state:65 - [generate_music] time_costs: {'encoder_time_cost': 0.10581803321838379, 'diffusion_time_cost': 7.635914087295532, 'diffusion_per_step_time_cost': 0.9544892609119415, 'total_time_cost': 7.741732120513916, 'offload_time_cost': 0.0}
-2026-09-07 10:57:00.785 | INFO     | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:119 - [generate_music] Decoding latents with VAE...
-2026-09-07 10:57:00.790 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:143 - [generate_music] Before VAE decode: allocated=0.00GB, max=0.00GB
-2026-09-07 10:57:00.790 | INFO     | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:156 - [generate_music] MPS device: skipping VRAM check (unified memory), keeping VAE on MPS
-2026-09-07 10:57:00.790 | INFO     | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:180 - [generate_music] Using tiled VAE decode to reduce VRAM usage...
-2026-09-07 10:57:00.791 | INFO     | acestep.core.generation.handler.vae_decode:tiled_decode:56 - [tiled_decode] chunk_size=512, offload_wav_to_cpu=False, latents_shape=torch.Size([1, 64, 2170])
-2026-09-07 10:57:00.791 | INFO     | acestep.core.generation.handler.vae_decode:tiled_decode:68 - [tiled_decode] VAE decode via PyTorch MPS; reducing chunk_size from 512 to 32 and overlap from 64 to 8 to avoid MPS conv output limit.
-2026-09-07 10:57:13.068 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:201 - [generate_music] After VAE decode: allocated=0.00GB, max=0.00GB
-2026-09-07 10:57:13.171 | INFO     | acestep.core.generation.handler.generate_music_payload:_build_generate_music_success_payload:35 - [generate_music] VAE decode completed. Preparing audio tensors...
-2026-09-07 10:57:13.173 | INFO     | acestep.core.generation.handler.generate_music_payload:_build_generate_music_success_payload:47 - [generate_music] Done! Generated 1 audio tensors.
-[Request] Loaded request0.json
-[Turbo] steps=8, shift=3.0 | acestep-v15-turbo-Q4_K_M.gguf
-[GGML] Running acestep-v15-turbo-Q4_K_M.gguf...
-[GGML] Done, 47 dump files
-[Python] Initializing acestep-v15-turbo...
+2026-10-12 15:43:19.680 | INFO     | acestep.core.generation.handler.conditioning_embed:preprocess_batch:110 - [preprocess_batch] Inferring prompt embeddings...
+2026-10-12 15:43:21.280 | INFO     | acestep.core.generation.handler.conditioning_embed:preprocess_batch:113 - [preprocess_batch] Inferring lyric embeddings...
+2026-10-12 15:43:21.283 | INFO     | acestep.core.generation.handler.service_generate_execute:_execute_service_generate_diffusion:131 - [service_generate] Generating audio... (DiT backend: PyTorch (mps))
+2026-10-12 15:43:25.034 | INFO     | acestep.core.generation.handler.service_generate_execute:_execute_service_generate_diffusion:211 - [service_generate] DiT diffusion via PyTorch (mps)...
+2026-10-12 15:43:32.801 | INFO     | acestep.core.generation.handler.generate_music_decode:_prepare_generate_music_decode_state:42 - [generate_music] Model generation completed. Decoding latents...
+2026-10-12 15:43:32.802 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_prepare_generate_music_decode_state:64 - [generate_music] pred_latents: torch.Size([1, 2170, 64]), dtype=torch.float32
+2026-10-12 15:43:32.802 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_prepare_generate_music_decode_state:65 - [generate_music] time_costs: {'encoder_time_cost': 0.24463200569152832, 'diffusion_time_cost': 7.522186994552612, 'diffusion_per_step_time_cost': 0.9402733743190765, 'total_time_cost': 7.766819000244141, 'offload_time_cost': 0.0}
+2026-10-12 15:43:33.145 | INFO     | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:119 - [generate_music] Decoding latents with VAE...
+2026-10-12 15:43:33.155 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:143 - [generate_music] Before VAE decode: allocated=0.00GB, max=0.00GB
+2026-10-12 15:43:33.155 | INFO     | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:156 - [generate_music] MPS device: skipping VRAM check (unified memory), keeping VAE on MPS
+2026-10-12 15:43:33.155 | INFO     | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:180 - [generate_music] Using tiled VAE decode to reduce VRAM usage...
+2026-10-12 15:43:33.155 | INFO     | acestep.core.generation.handler.vae_decode:tiled_decode:56 - [tiled_decode] chunk_size=512, offload_wav_to_cpu=False, latents_shape=torch.Size([1, 64, 2170])
+2026-10-12 15:43:33.155 | INFO     | acestep.core.generation.handler.vae_decode:tiled_decode:68 - [tiled_decode] VAE decode via PyTorch MPS; reducing chunk_size from 512 to 32 and overlap from 64 to 8 to avoid MPS conv output limit.
+2026-10-12 15:43:44.470 | DEBUG    | acestep.core.generation.handler.generate_music_decode:_decode_generate_music_pred_latents:201 - [generate_music] After VAE decode: allocated=0.00GB, max=0.00GB
+2026-10-12 15:43:44.771 | INFO     | acestep.core.generation.handler.generate_music_payload:_build_generate_music_success_payload:35 - [generate_music] VAE decode completed. Preparing audio tensors...
+2026-10-12 15:43:44.772 | INFO     | acestep.core.generation.handler.generate_music_payload:_build_generate_music_success_payload:47 - [generate_music] Done! Generated 1 audio tensors.
 [Python] Generating (acestep-v15-turbo, 8 steps)...
 Using precomputed LM hints
 Using precomputed LM hints
@@ -438,7 +460,6 @@ Using precomputed LM hints
 [Request] audio_codes: (none)
 [Registry] Qwen3-Embedding-0.6B-Q8_0.gguf -> Text-Enc
 [Registry] acestep-5Hz-lm-0.6B-Q8_0.gguf -> LM
-[Registry] acestep-5Hz-lm-1.7B-Q8_0.gguf -> LM
 [Registry] acestep-v15-sft-Q8_0.gguf -> DiT
 [Registry] acestep-v15-turbo-Q4_K_M.gguf -> DiT
 [Registry] acestep-v15-turbo-Q8_0.gguf -> DiT
@@ -447,7 +468,7 @@ Using precomputed LM hints
 [Ace-LM] Ready: path=../models/acestep-5Hz-lm-0.6B-Q8_0.gguf, max_seq=8192, max_batch=1, fa=yes, fsm=yes
 ggml_metal_device_init: tensor API disabled for pre-M5 and pre-A19 devices
 ggml_metal_library_init: using embedded metal library
-ggml_metal_library_init: loaded in 0.011 sec
+ggml_metal_library_init: loaded in 0.024 sec
 ggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)
 ggml_metal_device_init: GPU name:   MTL0 (Apple M1 Max)
 ggml_metal_device_init: GPU family: MTLGPUFamilyApple7  (1007)
@@ -467,6 +488,7 @@ ggml_metal_init: picking default device: Apple M1 Max
 ggml_metal_init: use fusion         = true
 ggml_metal_init: use concurrency    = true
 ggml_metal_init: use graph optimize = true
+[Load] Metal command buffers per graph: 2
 [Load] LM backend: MTL0 (CPU threads: 8)
 [GGUF] ../models/acestep-5Hz-lm-0.6B-Q8_0.gguf: 310 tensors, data at offset 5339520
 [LM-Config] 28L, H=1024, V=217204, Nh=16, Nkv=8, D=128, tied=1
@@ -474,35 +496,35 @@ ggml_metal_init: use graph optimize = true
 [Qwen3] MLP: gate+up fused
 [WeightCtx] Loaded 310 tensors, 671.9 MB into backend (unmapped 668.5 of 671.9 MB of staged file pages)
 [LM-KV] Allocated 2 sets x 28 layers (4D batched), 1792.0 MB
-[Store] Load LM: 1017 ms
+[Store] Load LM: 1025 ms
 [LM] Partial head: 65559 rows (151645..217204), 68.0 MB
 [BPE] Loaded from GGUF: 151643 vocab, 151387 merges
 [FSM] Prefix trees: bpm=301, dur=601, key=106, lang=53, tsig=5 nodes
 [LM-Debug] Tokens -> ./tokens.csv (260)
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_get_rows_q8_0', name = 'kernel_get_rows_q8_0'
-ggml_metal_library_compile_pipeline: loaded kernel_get_rows_q8_0                          0x103281870 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_get_rows_q8_0                          0x104f19120 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_rms_norm_mul_f32_4', name = 'kernel_rms_norm_mul_f32_4'
-ggml_metal_library_compile_pipeline: loaded kernel_rms_norm_mul_f32_4                     0x103282070 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_rms_norm_mul_f32_4                     0x104f19b20 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_q8_0_f32', name = 'kernel_mul_mm_q8_0_f32_bci=0_bco=1'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q8_0_f32_bci=0_bco=1            0x103282870 | th_max =  896 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q8_0_f32_bci=0_bco=1            0x104f1a720 | th_max =  896 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f32_f32', name = 'kernel_cpy_f32_f32'
-ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f32                            0x103283070 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f32                            0x104f450e0 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_rope_neox_f32', name = 'kernel_rope_neox_f32_imrope=0'
-ggml_metal_library_compile_pipeline: loaded kernel_rope_neox_f32_imrope=0                 0x103283870 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_rope_neox_f32_imrope=0                 0x104f458e0 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f32_f16', name = 'kernel_cpy_f32_f16'
-ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f16                            0x103283b70 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f16                            0x104f45de0 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_pad', name = 'kernel_flash_attn_ext_pad_mask=1_ncpsg=64'
-ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_pad_mask=1_ncpsg=64      0x103283e70 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_pad_mask=1_ncpsg=64      0x104f462e0 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_blk', name = 'kernel_flash_attn_ext_blk_nqptg=8_ncpsg=64'
-ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_blk_nqptg=8_ncpsg=64      0x103284170 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_blk_nqptg=8_ncpsg=64      0x104f46ea0 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_f16_dk128_dv128', name = 'kernel_flash_attn_ext_f16_dk128_dv128_mask=1_sinks=0_bias=0_scap=0_kvpad=1_bcm=1_ns10=128_ns20=128_nsg=4'
-ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_f16_dk128_dv128_mask=1_sinks=0_bias=0_scap=0_kvpad=1_bcm=1_ns10=128_ns20=128_nsg=4      0x74120c000 | th_max =  640 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_f16_dk128_dv128_mask=1_sinks=0_bias=0_scap=0_kvpad=1_bcm=1_ns10=128_ns20=128_nsg=4     0x77aeee0000 | th_max =  640 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0'
-ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0      0x74120c300 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0_cb=0     0x77aeee0300 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_swiglu_f32', name = 'kernel_swiglu_f32'
-ggml_metal_library_compile_pipeline: loaded kernel_swiglu_f32                             0x74120c600 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_swiglu_f32                            0x77aeee0600 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_q8_0_f32', name = 'kernel_mul_mv_q8_0_f32_nsg=4'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_q8_0_f32_nsg=4                  0x74120c900 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_q8_0_f32_nsg=4                 0x77aeee0900 | th_max = 1024 | th_width =   32
 [LM-Debug] Logits -> ./logits.bin (217204 floats, argmax=189788)
 [LM-Phase2] N=1, CoT[0]:
 bpm: 83
@@ -511,29 +533,29 @@ duration: 88
 keyscale: G major
 language: fr
 timesignature: 4
-[LM-Phase2] max_tokens: 540, CFG: 2.00, seeds: 3812928112..3812928112
-[LM-Phase2] Prefill 84ms (shared, 1 cond + 1 uncond)
+[LM-Phase2] max_tokens: 540, CFG: 2.00, seeds: 2660780737..2660780737
+[LM-Phase2] Prefill 78ms (shared, 1 cond + 1 uncond)
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_ext_q8_0_f32_r1_2', name = 'kernel_mul_mv_ext_q8_0_f32_r1_2_nsg=2_nxpsg=16'
-ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_q8_0_f32_r1_2_nsg=2_nxpsg=16      0x74120cc00 | th_max =  832 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_q8_0_f32_r1_2_nsg=2_nxpsg=16     0x77aeee0c00 | th_max =  832 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_pad', name = 'kernel_flash_attn_ext_pad_mask=1_ncpsg=32'
-ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_pad_mask=1_ncpsg=32      0x74120cf00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_pad_mask=1_ncpsg=32     0x77aeee0f00 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_vec_f16_dk128_dv128', name = 'kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=1_sink=0_bias=0_scap=0_kvpad=1_ns10=128_ns20=128_nsg=1_nwg=32'
-ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=1_sink=0_bias=0_scap=0_kvpad=1_ns10=128_ns20=128_nsg=1_nwg=32      0x74120d200 | th_max =  448 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=1_sink=0_bias=0_scap=0_kvpad=1_ns10=128_ns20=128_nsg=1_nwg=32     0x77aeee1200 | th_max =  448 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_vec_reduce', name = 'kernel_flash_attn_ext_vec_reduce_dv=128_nwg=32'
-ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_reduce_dv=128_nwg=32      0x74120d500 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_reduce_dv=128_nwg=32     0x77aeee1500 | th_max = 1024 | th_width =   32
 ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_vec_f16_dk128_dv128', name = 'kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=1_sink=0_bias=0_scap=0_kvpad=0_ns10=128_ns20=128_nsg=1_nwg=32'
-ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=1_sink=0_bias=0_scap=0_kvpad=0_ns10=128_ns20=128_nsg=1_nwg=32      0x74120d800 | th_max =  448 | th_width =   32
-[LM-Phase2] Step 50, 1 active, 51 total codes, 86.1 tok/s
-[LM-Phase2] Step 100, 1 active, 101 total codes, 82.7 tok/s
-[LM-Phase2] Step 150, 1 active, 151 total codes, 79.8 tok/s
-[LM-Phase2] Step 200, 1 active, 201 total codes, 78.6 tok/s
-[LM-Phase2] Step 250, 1 active, 251 total codes, 76.4 tok/s
-[LM-Phase2] Step 300, 1 active, 301 total codes, 74.1 tok/s
-[LM-Phase2] Step 350, 1 active, 351 total codes, 74.7 tok/s
-[LM-Phase2] Step 400, 1 active, 401 total codes, 75.3 tok/s
-[LM-Phase2] Decode 5786ms
-[LM-Phase2 Batch0] seed=3812928112, 436 codes
-[Ace-LM] Total 5957ms | seed=158961132
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=1_sink=0_bias=0_scap=0_kvpad=0_ns10=128_ns20=128_nsg=1_nwg=32     0x77aeee1800 | th_max =  448 | th_width =   32
+[LM-Phase2] Step 50, 1 active, 51 total codes, 75.6 tok/s
+[LM-Phase2] Step 100, 1 active, 101 total codes, 73.2 tok/s
+[LM-Phase2] Step 150, 1 active, 151 total codes, 72.9 tok/s
+[LM-Phase2] Step 200, 1 active, 201 total codes, 71.7 tok/s
+[LM-Phase2] Step 250, 1 active, 251 total codes, 71.4 tok/s
+[LM-Phase2] Step 300, 1 active, 301 total codes, 70.1 tok/s
+[LM-Phase2] Step 350, 1 active, 351 total codes, 71.5 tok/s
+[LM-Phase2] Step 400, 1 active, 401 total codes, 73.0 tok/s
+[LM-Phase2] Decode 5959ms
+[LM-Phase2 Batch0] seed=2660780737, 436 codes
+[Ace-LM] Total 6183ms | seed=158961132
 [Store] Unload LM (671.9 MB)
 ggml_metal_free: deallocating
 [Request] Wrote lm-request0.json
@@ -547,20 +569,37 @@ ggml_metal_free: deallocating
 [Test] Cosine similarity Python<>GGML: 1.000004
 [Test] Top-10 overlap: 9/10
 --- debug-detok-cossim (sft Q8_0, FSQ detokenizer) ---
-2026-09-07 10:57:54.327 | WARNING  | acestep.training.lora_injection:<module>:74 - PEFT library not installed. LoRA training will not be available.
-2026-09-07 10:57:54.327 | WARNING  | acestep.training.lora_utils:<module>:17 - PEFT library not installed. LoRA training will not be available.
-2026-09-07 10:57:54.328 | WARNING  | acestep.training.lokr_utils:<module>:24 - LyCORIS library not installed. LoKr training/inference unavailable. Install with: pip install lycoris-lora
-2026-09-07 10:57:54.328 | WARNING  | acestep.training.data_module:<module>:25 - Lightning not installed. Training module will not be available.
-2026-09-07 10:57:54.329 | WARNING  | acestep.training.trainer:<module>:29 - Lightning Fabric not installed. Training will use basic training loop.
-2026-09-07 10:57:54.329 | WARNING  | acestep.training.trainer:<module>:40 - bitsandbytes not installed. Using standard AdamW.
-2026-09-07 10:57:55.489 | INFO     | acestep.core.generation.handler.init_service_loader:_load_main_model_from_checkpoint:163 - [initialize_service] Attempting to load model with attention implementation: sdpa
-2026-09-07 10:58:03.353 | INFO     | acestep.core.generation.handler.mlx_dit_init:_init_mlx_dit:22 - [MLX-DiT] MLX not available on this platform; skipping.
-2026-09-07 10:58:03.353 | INFO     | acestep.core.generation.handler.mlx_vae_init:_init_mlx_vae:37 - [MLX-VAE] MLX not available on this platform; skipping.
+2026-10-12 15:44:28.044 | WARNING  | acestep.training.lora_injection:<module>:74 - PEFT library not installed. LoRA training will not be available.
+2026-10-12 15:44:28.045 | WARNING  | acestep.training.lora_utils:<module>:17 - PEFT library not installed. LoRA training will not be available.
+2026-10-12 15:44:28.045 | WARNING  | acestep.training.lokr_utils:<module>:24 - LyCORIS library not installed. LoKr training/inference unavailable. Install with: pip install lycoris-lora
+2026-10-12 15:44:28.046 | WARNING  | acestep.training.data_module:<module>:25 - Lightning not installed. Training module will not be available.
+2026-10-12 15:44:28.047 | WARNING  | acestep.training.trainer:<module>:29 - Lightning Fabric not installed. Training will use basic training loop.
+2026-10-12 15:44:28.047 | WARNING  | acestep.training.trainer:<module>:40 - bitsandbytes not installed. Using standard AdamW.
+2026-10-12 15:44:28.131 | INFO     | acestep.core.generation.handler.init_service_downloads:_ensure_models_present:40 - [initialize_service] DiT model 'acestep-v15-sft' not found, starting auto-download...
+2026-10-12 15:44:28.162 | INFO     | acestep.model_downloader:_smart_download:245 - [Model Download] Auto-detected: HuggingFace Hub
+2026-10-12 15:44:28.162 | INFO     | acestep.model_downloader:_smart_download:248 - [Model Download] Using HuggingFace Hub...
+2026-10-12 15:44:28.321 | INFO     | acestep.model_downloader:_download_from_huggingface_internal:176 - [Model Download] Downloading from HuggingFace: ACE-Step/acestep-v15-sft -> /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/checkpoints/acestep-v15-sft
 [Input] 434 codes, first 5: [43316, 18426, 13366, 59455, 17783]
 [GGML] Running ace-synth...
 [GGML] Done
 [GGML] detok_output: [2170, 64]
 [Python] Loading model...
+
+============================================================
+DiT model 'acestep-v15-sft' not found. Starting automatic download...
+============================================================
+
+Downloading acestep-v15-sft from ACE-Step/acestep-v15-sft...
+Destination: /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/checkpoints/acestep-v15-sft
+Fetching 8 files:   0%|          | 0/8 [00:00<?, ?it/s]Fetching 8 files:  12%|█▎        | 1/8 [00:00<00:04,  1.50it/s]Fetching 8 files:  38%|███▊      | 3/8 [00:00<00:01,  3.84it/s]Fetching 8 files:  88%|████████▊ | 7/8 [00:01<00:00,  3.84it/s]Fetching 8 files:  88%|████████▊ | 7/8 [00:20<00:02,  2.86s/it]Fetching 8 files: 100%|██████████| 8/8 [01:17<00:00,  9.69s/it]Fetching 8 files: 100%|██████████| 8/8 [01:17<00:00,  9.69s/it]
+2026-10-12 15:45:46.154 | DEBUG    | acestep.model_downloader:_sync_model_code_files:127 - [Model Sync] Synced configuration_acestep_v15.py -> /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/checkpoints/acestep-v15-sft/configuration_acestep_v15.py
+2026-10-12 15:45:46.157 | DEBUG    | acestep.model_downloader:_sync_model_code_files:127 - [Model Sync] Synced modeling_acestep_v15_base.py -> /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/checkpoints/acestep-v15-sft/modeling_acestep_v15_base.py
+2026-10-12 15:45:46.159 | DEBUG    | acestep.model_downloader:_sync_model_code_files:127 - [Model Sync] Synced apg_guidance.py -> /Users/erich/git/github/erichchampion/cadenza-10-34/external/acestep.cpp/checkpoints/acestep-v15-sft/apg_guidance.py
+2026-10-12 15:45:46.159 | INFO     | acestep.model_downloader:download_submodel:511 - [Model Download] Synced code files for acestep-v15-sft: ['configuration_acestep_v15.py', 'modeling_acestep_v15_base.py', 'apg_guidance.py']
+2026-10-12 15:45:46.159 | INFO     | acestep.core.generation.handler.init_service_downloads:_ensure_models_present:44 - [initialize_service] Successfully downloaded from HuggingFace: ACE-Step/acestep-v15-sft
+2026-10-12 15:45:47.164 | INFO     | acestep.core.generation.handler.init_service_loader:_load_main_model_from_checkpoint:163 - [initialize_service] Attempting to load model with attention implementation: sdpa
+2026-10-12 15:46:01.573 | INFO     | acestep.core.generation.handler.mlx_dit_init:_init_mlx_dit:22 - [MLX-DiT] MLX not available on this platform; skipping.
+2026-10-12 15:46:01.573 | INFO     | acestep.core.generation.handler.mlx_vae_init:_init_mlx_vae:37 - [MLX-VAE] MLX not available on this platform; skipping.
 [Python] detok output: (2170, 64)
 [Compare] GGML vs Python (2170 frames)
 detok_output (full)       cos=0.999997 maxdiff=0.014995 meandiff=0.002429 [OK]

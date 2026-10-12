@@ -488,6 +488,9 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
 
         H_text = te->cfg.hidden_size;
 
+        // Timed from here, the model in hand: the forwards themselves, as
+        // Phase B's line times its own (cadenza-audio #95).
+        s.timer.reset();
         for (int b = 0; b < batch_n; b++) {
             std::string text_str;
             std::string lyric_str;
@@ -525,6 +528,9 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
                 qwen3_embed_lookup(te, lyric_ids.data(), S_lyric, nc_fwd[b].lyric_embed.data());
             }
         }
+
+        fprintf(stderr, "[Encode-Text] Phase A: %d forward(s), %.1f ms\n",
+                batch_n * (s.need_enc_switch ? 2 : 1), s.timer.ms());
 
         // Debug dump of sample 0 while text_hidden and lyric_embed are live.
         debug_dump_2d(&s.dbg, "text_hidden", main_fwd[0].text_hidden.data(), main_fwd[0].S_text, H_text);
