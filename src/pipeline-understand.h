@@ -55,11 +55,12 @@ struct AceUnderstandCall {
     bool metadata_complete;  // the model closed the metadata block (</think>): the
                              // fields it wrote are whole -- not that every field
                              // is there, since a model may leave one out. False
-                             // when its bound, or the metadata's own cap
-                             // (ACE_UNDERSTAND_METADATA_TOKENS), stopped it
-                             // inside: the fields it finished are kept and the
-                             // one it was writing dropped (cadenza-audio #648),
-                             // so a tempo or key may be missing, never cut.
+                             // when the block's cap (ACE_UNDERSTAND_METADATA_TOKENS,
+                             // which lands before the decode's bound) closed it:
+                             // the fields it finished are kept, and the one it
+                             // was writing, and any it did not know, dropped
+                             // (cadenza-audio #648) -- so a tempo or key may be
+                             // missing, never cut.
 };
 
 // The most tokens the metadata block may take (cadenza-audio #648). It is

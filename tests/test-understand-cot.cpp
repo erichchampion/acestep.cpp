@@ -57,6 +57,20 @@ int main() {
         CHECK(p.caption == "a slow ballad with soft piano");
         CHECK(p.duration == 0.0f);
     }
+    // A block that ran on into fields it does not have (the FSM stuck on an
+    // unknown one, or off): cut at the first, so their lines are not read
+    // into the caption before them -- which, followed by a field, is whole.
+    {
+        const std::string ran = "<think>\nbpm: 120\ncaption: a bright pop song\ngenres: pop\n  more\nmood: up\nvibe";
+        CHECK(cot_drop_open_field(ran) == "<think>\nbpm: 120\ncaption: a bright pop song\n");
+        AcePrompt p = parsed(ran);
+        CHECK(p.bpm == 120);
+        CHECK(p.caption == "a bright pop song");
+        // Known fields after an unknown one go with it: the block left its
+        // fields there.
+        CHECK(parsed("<think>\nbpm: 120\nmood: up\nkeyscale: C major\n").keyscale.empty());
+    }
+
     // Nothing written yet, or no <think>: nothing to keep, and no crash.
     CHECK(cot_drop_open_field("").empty());
     CHECK(cot_drop_open_field("<think>") == "<think>");

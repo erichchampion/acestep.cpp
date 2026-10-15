@@ -122,6 +122,10 @@ static bool qw3lm_json_bool(const char * json, const char * key, bool fb) {
     return (strncmp(p, "true", 4) == 0);
 }
 
+// The KV window a load given none sizes (config_json does not carry one):
+// what ace_understand_code_capacity counts by then (cadenza-audio #648).
+#define QW3LM_DEFAULT_MAX_SEQ 8192
+
 // Load config from GGUF KV metadata (acestep.config_json)
 static Qwen3LMConfig qw3lm_load_config(const GGUFModel & gf) {
     // 0.6B defaults
@@ -136,7 +140,7 @@ static Qwen3LMConfig qw3lm_load_config(const GGUFModel & gf) {
         /*rope_theta*/ 1000000.0f,
         /*rms_norm_eps*/ 1e-6f,
         /*tie_embeddings*/ true,
-        /*max_seq_len*/ 8192,
+        /*max_seq_len*/ QW3LM_DEFAULT_MAX_SEQ,
     };
 
     const char * j = gf_get_str(gf, "acestep.config_json");

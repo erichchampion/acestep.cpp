@@ -134,7 +134,7 @@ int ace_understand_code_capacity(const AceUnderstand * ctx, bool metadata_only, 
         return -1;
     }
     // The LM's context, as qw3lm_load sizes it from the key.
-    const int max_seq = ctx->params.max_seq > 0 ? ctx->params.max_seq : 8192;
+    const int max_seq = ctx->params.max_seq > 0 ? ctx->params.max_seq : QW3LM_DEFAULT_MAX_SEQ;
     return understand_fit(max_seq, ctx->framing, understand_reserve(decode_reserve, metadata_only));
 }
 
@@ -487,28 +487,29 @@ int ace_understand_generate(AceUnderstand *      ctx,
 
     fprintf(stderr, "[Understand-Decode] %zu tokens, %.0fms (%.1f tok/s)\n", gen_tokens.size(), t_gen.ms(),
             (float) gen_tokens.size() / (t_gen.ms() / 1000.0f));
-    // Stopped by the bound, not the model: what it wrote may be cut short (#434).
+    // Stopped by the bound (or, for the metadata alone, the cap), not the
+    // model: what it wrote may be cut short (#434).
     call->decode_bounded = !ended;
-    // The model closed the metadata block: its fields are whole (#456).
+    // The model closed the metadata block: its fields are whole (#456). The
+    // bound cannot stop a decode inside the block -- the cap closes it a token
+    // before -- so only the cap leaves one the model did not close (#648).
     call->metadata_complete = past_think && !closed_by_cap;
-    if (!call->metadata_complete) {
-        fprintf(stderr, "[Understand-Decode] stopped before </think>: the metadata is incomplete\n");
-    }
-    if (call->decode_bounded) {
+    if (closed_by_cap) {
+        fprintf(stderr, "[Understand-Decode] the model did not close the metadata block: its last field is dropped\n");
+    } else if (call->decode_bounded) {
         fprintf(stderr, "[Understand-Decode] stopped at its %d-token bound, before its end\n", max_tokens);
     }
 
-    // Step 6: decode tokens to text, parse CoT metadata + lyrics
-    // A block the decode stopped inside keeps only the fields it finished
-    // (#648): the tokens before the cap's close, or all of them when the bound
-    // came first.
+    // Step 6: decode tokens to text, parse CoT metadata + lyrics. A block the
+    // cap closed keeps only the fields it finished (#648): the tokens before
+    // the cap's close are a block the decode stopped inside.
     std::string text;
     if (closed_by_cap) {
         std::vector<int> block(gen_tokens.begin(), gen_tokens.begin() + cap_at);
         std::vector<int> after(gen_tokens.begin() + cap_at, gen_tokens.end());
         text = cot_drop_open_field(bpe_decode(*bpe, block)) + bpe_decode(*bpe, after);
     } else {
-        text = cot_drop_open_field(bpe_decode(*bpe, gen_tokens));
+        text = bpe_decode(*bpe, gen_tokens);
     }
     AcePrompt parsed = {};
     parse_cot_and_lyrics(text, &parsed);

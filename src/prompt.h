@@ -36,8 +36,11 @@ struct AcePrompt {
 // This keeps the finished ones and drops that one, from its name on: what
 // parse_cot_and_lyrics would otherwise read as whole (a tempo of 12 for 120).
 // The last field is finished only when its line ended and it is not the
-// caption, which wraps onto indented lines and so may not have. Text that
-// closed the block is returned as it is.
+// caption, which wraps onto indented lines and so may not have. A block that
+// ran on -- the case the cap is for -- may have gone on to fields the model
+// does not write: it is cut at the first, so their lines are not read into
+// the caption, which runs to the next field it knows. Text that closed the
+// block is returned as it is.
 static std::string cot_drop_open_field(const std::string & text) {
     if (text.find("</think>") != std::string::npos) {
         return text;
@@ -50,6 +53,16 @@ static std::string cot_drop_open_field(const std::string & text) {
         size_t nl  = text.find('\n', p);
         size_t end = nl == std::string::npos ? text.size() : nl;
         if (end > p && text[p] != ' ' && text[p] != '\t') {
+            // A whole line naming a field the block does not have: the block
+            // ran on past its fields, and ends before it.
+            static const char * known[] = { "bpm:", "caption:", "duration:", "keyscale:", "language:", "timesignature:" };
+            bool                is_known = false;
+            for (const char * k : known) {
+                is_known = is_known || text.compare(p, strlen(k), k) == 0;
+            }
+            if (!is_known && nl != std::string::npos) {
+                return text.substr(0, p);
+            }
             field = p;
         }
         if (nl == std::string::npos) {
