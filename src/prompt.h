@@ -7,6 +7,7 @@
 #include "bpe.h"
 #include "task-types.h"
 
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -53,17 +54,31 @@ static std::string cot_drop_open_field(const std::string & text) {
         size_t nl  = text.find('\n', p);
         size_t end = nl == std::string::npos ? text.size() : nl;
         if (end > p && text[p] != ' ' && text[p] != '\t') {
-            // A whole line naming a field the block does not have: the block
-            // ran on past its fields, and ends before it.
-            static const char * known[] = { "bpm:", "caption:", "duration:", "keyscale:", "language:", "timesignature:" };
-            bool                is_known = false;
-            for (const char * k : known) {
-                is_known = is_known || text.compare(p, strlen(k), k) == 0;
+            // A field's line names it: a word, then ':'. A whole line that
+            // does not is a caption's text wrapped without an indent, and goes
+            // on the field before it; the unfinished last line is the field
+            // being written, whatever it holds so far.
+            size_t w = p;
+            while (w < end && (isalpha((unsigned char) text[w]) || text[w] == '_')) {
+                w++;
             }
-            if (!is_known && nl != std::string::npos) {
-                return text.substr(0, p);
+            const bool names_field = w > p && w < end && text[w] == ':';
+            if (names_field && nl != std::string::npos) {
+                // A field the block does not have: the block ran on past its
+                // fields, and ends before it.
+                static const char * known[] = { "bpm:",      "caption:", "duration:",
+                                                "keyscale:", "language:", "timesignature:" };
+                bool                is_known = false;
+                for (const char * k : known) {
+                    is_known = is_known || text.compare(p, strlen(k), k) == 0;
+                }
+                if (!is_known) {
+                    return text.substr(0, p);
+                }
             }
-            field = p;
+            if (names_field || nl == std::string::npos) {
+                field = p;
+            }
         }
         if (nl == std::string::npos) {
             break;

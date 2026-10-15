@@ -71,6 +71,19 @@ int main() {
         CHECK(parsed("<think>\nbpm: 120\nmood: up\nkeyscale: C major\n").keyscale.empty());
     }
 
+    // A caption wrapped onto a line without an indent goes on the caption, not
+    // the end of the block: the fields after it are kept, and it is whole.
+    {
+        AcePrompt p = parsed("<think>\nbpm: 120\ncaption: a bright pop\nsong with drums\nkeyscale: C major\nlangu");
+        CHECK(p.bpm == 120);
+        CHECK(p.caption == "a bright pop song with drums");
+        CHECK(p.keyscale == "C major");
+        CHECK(p.vocal_language.empty());
+        // ...and an unindented wrap as the block's last line is the caption's,
+        // which may go on: dropped with it.
+        CHECK(parsed("<think>\nbpm: 120\ncaption: a bright pop\nsong with drums\n").caption.empty());
+    }
+
     // Nothing written yet, or no <think>: nothing to keep, and no crash.
     CHECK(cot_drop_open_field("").empty());
     CHECK(cot_drop_open_field("<think>") == "<think>");
