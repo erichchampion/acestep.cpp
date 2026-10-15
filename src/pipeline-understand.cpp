@@ -141,6 +141,7 @@ int ace_understand_code_capacity(const AceUnderstand * ctx, bool metadata_only, 
 void ace_understand_default_call(AceUnderstandCall * c) {
     c->metadata_only  = -1;
     c->decode_reserve = 0;
+    c->metadata_tokens = 0;
     c->codes_total    = 0;
     c->codes_start    = 0;
     c->codes_used     = 0;
@@ -415,7 +416,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
     // the tokens before it are a block the decode stopped inside.
     bool             closed_by_cap = false;
     size_t           cap_at        = 0;
-    const int        think_limit   = ace_understand_metadata_limit(max_tokens);
+    const int        think_limit   = ace_understand_metadata_limit(max_tokens, call->metadata_tokens);
 
     if (ace_cancelled(progress,
                       ACE_STAGE_LM)) {  // honour a cancel before the loop; the loop's step-0 poll sizes the bar

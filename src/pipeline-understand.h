@@ -43,6 +43,9 @@ struct AceUnderstandCall {
                           // leaves this much room are clipped, keeping the middle of
                           // the track, so a long input runs instead of failing.
                           // <= 0: 256 for a metadata-only call, 1024 otherwise.
+    int  metadata_tokens; // the metadata block's cap (cadenza-audio #648): a block
+                          // still open after this many tokens is closed. <= 0:
+                          // ACE_UNDERSTAND_METADATA_TOKENS. A test sets it low.
     // Reported by the call:
     int  codes_total;     // codes the audio made
     int  codes_start;     // the first of them the prompt holds
@@ -66,9 +69,10 @@ struct AceUnderstandCall {
 static const int ACE_UNDERSTAND_METADATA_TOKENS = 512;
 
 // The decode step at which a block still open is closed, given the decode's
-// bound: the cap, or the bound's last token when that comes first.
-static inline int ace_understand_metadata_limit(int max_tokens) {
-    return std::min(ACE_UNDERSTAND_METADATA_TOKENS, max_tokens - 1);
+// bound and a call's cap (<= 0: the engine's): the cap, or the bound's last
+// token when that comes first.
+static inline int ace_understand_metadata_limit(int max_tokens, int cap = 0) {
+    return std::min(cap > 0 ? cap : ACE_UNDERSTAND_METADATA_TOKENS, max_tokens - 1);
 }
 
 void ace_understand_default_call(AceUnderstandCall * c);

@@ -69,6 +69,11 @@ int main() {
     CHECK(ace_understand_metadata_limit(ACE_UNDERSTAND_METADATA_TOKENS + 1) == ACE_UNDERSTAND_METADATA_TOKENS);
     CHECK(ace_understand_metadata_limit(256) == 255);
     CHECK(ace_understand_metadata_limit(1) == 0);
+    // A call's own cap, as a test sets it; none (<= 0) is the engine's.
+    CHECK(ace_understand_metadata_limit(4096, 8) == 8);
+    CHECK(ace_understand_metadata_limit(4, 8) == 3);
+    CHECK(ace_understand_metadata_limit(4096, 0) == ACE_UNDERSTAND_METADATA_TOKENS);
+    CHECK(ace_understand_metadata_limit(4096, -1) == ACE_UNDERSTAND_METADATA_TOKENS);
     // Far above a block's 100-160 tokens: a whole one is never cut.
     CHECK(ACE_UNDERSTAND_METADATA_TOKENS >= 3 * 160);
 
