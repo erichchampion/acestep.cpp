@@ -34,6 +34,12 @@ add_executable(test-vae-tiling test-vae-tiling.cpp)
 target_link_libraries(test-vae-tiling PRIVATE acestep-core)
 link_ggml_backends(test-vae-tiling)
 
+# test-understand-cot: what an understand pass keeps of a metadata block its
+# decode stopped inside, and where it closes one that runs on (cadenza-audio
+# #648). No model is loaded.
+add_executable(test-understand-cot test-understand-cot.cpp)
+target_link_libraries(test-understand-cot PRIVATE acestep-core)
+
 # test-philox: Philox RNG reference dumper.
 add_executable(test-philox test-philox.cpp)
 target_include_directories(test-philox PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -61,6 +67,7 @@ link_ggml_backends(test-lm-prompt)
 add_test(NAME test-ace-fatal COMMAND test-ace-fatal)
 add_test(NAME test-progress COMMAND test-progress)
 add_test(NAME test-backend-config COMMAND test-backend-config)
+add_test(NAME test-understand-cot COMMAND test-understand-cot)
 add_test(NAME test-gpu-fail COMMAND test-gpu-fail)
 set_tests_properties(test-gpu-fail PROPERTIES SKIP_RETURN_CODE 77)
 set(ACESTEP_TEST_MODELS "" CACHE PATH "Directory of GGUFs for the tests that read them (empty: not run)")

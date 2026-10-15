@@ -18,6 +18,7 @@
 #include "timer.h"
 #include "vae-enc.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -33,6 +34,9 @@ struct AceUnderstand {
 
     // LM is optional: dump_dir set + no model_path means tok-only (FSQ debug).
     bool have_lm;
+    // The understand prompt's tokens around the codes, measured once at load
+    // (cadenza-audio #648). 0 without an LM.
+    int framing;
 
     ModelKey lm_key;
     ModelKey vae_enc_key;
@@ -81,6 +85,7 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
     ctx->fsq_tok_key.path = params->dit_path;
     ctx->fsq_tok_key.file_id = store_file_identity(params->dit_path);
 
+    ctx->framing = 0;
     if (ctx->have_lm) {
         // LM key MUST stay identical to the one ace_lm builds, so the store
         // returns the same Qwen3LM instance to both pipelines. Drift here
@@ -91,6 +96,15 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
         ctx->lm_key.max_seq   = params->max_seq;
         ctx->lm_key.n_kv_sets = 2 * params->max_batch;
         ctx->lm_key.file_id   = store_file_identity(params->model_path);
+        // The tokenizer is the store's CPU-side cache, which every call reads
+        // anyway: read here, it sizes the framing once, not per call.
+        BPETokenizer * bpe = store_bpe(store, params->model_path, ctx->lm_key.file_id);
+        if (!bpe) {
+            fprintf(stderr, "[Understand-Load] ERROR: the LM's tokenizer did not load\n");
+            delete ctx;
+            return NULL;
+        }
+        ctx->framing = (int) build_understand_prompt(*bpe, nullptr, 0).size();
     }
 
     fprintf(stderr, "[Understand-Load] Ready: lm=%s, fa=%s, fsm=%s\n", ctx->have_lm ? "yes" : "no",
@@ -102,6 +116,26 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
         store_hold_key(store, ctx->lm_key);
     }
     return ctx;
+}
+
+// The decode's reserve a call asked for, or the engine's.
+static int understand_reserve(int decode_reserve, bool metadata_only) {
+    return decode_reserve > 0 ? decode_reserve : (metadata_only ? 256 : 1024);
+}
+
+// The codes a context of `max_seq` tokens holds beside `framing`, the
+// prompt's end token and `reserve`.
+static int understand_fit(int max_seq, int framing, int reserve) {
+    return max_seq - framing - 1 - reserve;
+}
+
+int ace_understand_code_capacity(const AceUnderstand * ctx, bool metadata_only, int decode_reserve) {
+    if (!ctx || !ctx->have_lm) {
+        return -1;
+    }
+    // The LM's context, as qw3lm_load sizes it from the key.
+    const int max_seq = ctx->params.max_seq > 0 ? ctx->params.max_seq : 8192;
+    return understand_fit(max_seq, ctx->framing, understand_reserve(decode_reserve, metadata_only));
 }
 
 void ace_understand_default_call(AceUnderstandCall * c) {
@@ -330,12 +364,11 @@ int ace_understand_generate(AceUnderstand *      ctx,
     // The codes the context holds with room left for the decode (#416): past
     // that, the middle of the track, which most likely carries its groove and
     // its voice. Every caller gets this, not only those that window first.
-    const int framing = (int) build_understand_prompt(*bpe, nullptr, 0).size();
-    const int reserve = call->decode_reserve > 0 ? call->decode_reserve : (metadata_only ? 256 : 1024);
-    const int fit     = model->cfg.max_seq_len - framing - 1 - reserve;
+    const int reserve = understand_reserve(call->decode_reserve, metadata_only);
+    const int fit     = understand_fit(model->cfg.max_seq_len, ctx->framing, reserve);
     if (fit < 1) {
         fprintf(stderr, "[Understand] FATAL: the %d-token context holds no codes beside %d of framing and %d for the decode\n",
-                model->cfg.max_seq_len, framing, reserve);
+                model->cfg.max_seq_len, ctx->framing, reserve);
         return -1;
     }
     int start = 0, used = (int) codes.size();
@@ -378,6 +411,11 @@ int ace_understand_generate(AceUnderstand *      ctx,
     std::vector<int> gen_tokens;
     bool             past_think = false;
     bool             ended      = false;  // at the end token, or the metadata's end when that is all asked
+    // The metadata block closed by the cap, not the model (#648), and where:
+    // the tokens before it are a block the decode stopped inside.
+    bool             closed_by_cap = false;
+    size_t           cap_at        = 0;
+    const int        think_limit   = ace_understand_metadata_limit(max_tokens);
 
     if (ace_cancelled(progress,
                       ACE_STAGE_LM)) {  // honour a cancel before the loop; the loop's step-0 poll sizes the bar
@@ -407,7 +445,17 @@ int ace_understand_generate(AceUnderstand *      ctx,
             logits[TOKEN_IM_END] = -INFINITY;
         }
 
-        int tok = sample_top_k_p(logits.data(), V, temperature, top_p, top_k, rng);
+        // A block run past its cap, or to a token before the bound, is closed
+        // (cadenza-audio #648): the lyrics, if asked, get the room left.
+        int tok;
+        if (!past_think && step >= think_limit) {
+            tok           = TOKEN_THINK_END;
+            closed_by_cap = true;
+            cap_at        = gen_tokens.size();
+            fprintf(stderr, "[Understand-Decode] the metadata block ran %d tokens without closing: closed\n", step);
+        } else {
+            tok = sample_top_k_p(logits.data(), V, temperature, top_p, top_k, rng);
+        }
 
         if (tok == TOKEN_IM_END) {
             ended = true;
@@ -423,8 +471,10 @@ int ace_understand_generate(AceUnderstand *      ctx,
             past_think = true;
             if (metadata_only) {
                 gen_tokens.push_back(tok);
-                ended = true;
-                break;  // the metadata is complete; the lyrics are not wanted
+                // The metadata is closed; the lyrics are not wanted. Closed by
+                // the cap, the decode was stopped short of its end: bounded.
+                ended = !closed_by_cap;
+                break;
             }
         }
 
@@ -438,9 +488,9 @@ int ace_understand_generate(AceUnderstand *      ctx,
             (float) gen_tokens.size() / (t_gen.ms() / 1000.0f));
     // Stopped by the bound, not the model: what it wrote may be cut short (#434).
     call->decode_bounded = !ended;
-    // The metadata block closed: its fields are whole (cadenza-audio #456).
-    call->metadata_complete = past_think;
-    if (!past_think) {
+    // The model closed the metadata block: its fields are whole (#456).
+    call->metadata_complete = past_think && !closed_by_cap;
+    if (!call->metadata_complete) {
         fprintf(stderr, "[Understand-Decode] stopped before </think>: the metadata is incomplete\n");
     }
     if (call->decode_bounded) {
@@ -448,8 +498,18 @@ int ace_understand_generate(AceUnderstand *      ctx,
     }
 
     // Step 6: decode tokens to text, parse CoT metadata + lyrics
-    std::string text   = bpe_decode(*bpe, gen_tokens);
-    AcePrompt   parsed = {};
+    // A block the decode stopped inside keeps only the fields it finished
+    // (#648): the tokens before the cap's close, or all of them when the bound
+    // came first.
+    std::string text;
+    if (closed_by_cap) {
+        std::vector<int> block(gen_tokens.begin(), gen_tokens.begin() + cap_at);
+        std::vector<int> after(gen_tokens.begin() + cap_at, gen_tokens.end());
+        text = cot_drop_open_field(bpe_decode(*bpe, block)) + bpe_decode(*bpe, after);
+    } else {
+        text = cot_drop_open_field(bpe_decode(*bpe, gen_tokens));
+    }
+    AcePrompt parsed = {};
     parse_cot_and_lyrics(text, &parsed);
 
     if (parsed.bpm > 0) {

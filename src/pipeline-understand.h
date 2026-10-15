@@ -8,6 +8,7 @@
 #include "progress.h"
 #include "request.h"
 
+#include <algorithm>
 #include <vector>
 
 struct AceUnderstand;
@@ -48,10 +49,27 @@ struct AceUnderstandCall {
     int  codes_used;      // how many the prompt holds (codes_total unless clipped)
     bool decode_bounded;  // the decode stopped at its token bound, not at its end
                           // token: what it wrote (the lyrics) may be cut short
-    bool metadata_complete;  // the decode reached </think>: the metadata block is
-                             // whole. False when it stopped (bound or end token)
-                             // inside it, so a tempo or key may be missing or cut.
+    bool metadata_complete;  // the model closed the metadata block (</think>): the
+                             // fields it wrote are whole -- not that every field
+                             // is there, since a model may leave one out. False
+                             // when its bound, or the metadata's own cap
+                             // (ACE_UNDERSTAND_METADATA_TOKENS), stopped it
+                             // inside: the fields it finished are kept and the
+                             // one it was writing dropped (cadenza-audio #648),
+                             // so a tempo or key may be missing, never cut.
 };
+
+// The most tokens the metadata block may take (cadenza-audio #648). It is
+// 100-160 tokens; a decode that runs on without closing it -- stuck on a field
+// the FSM does not know, or with the FSM off -- is closed here, or a token
+// before its bound when that comes first, rather than running to the bound.
+static const int ACE_UNDERSTAND_METADATA_TOKENS = 512;
+
+// The decode step at which a block still open is closed, given the decode's
+// bound: the cap, or the bound's last token when that comes first.
+static inline int ace_understand_metadata_limit(int max_tokens) {
+    return std::min(ACE_UNDERSTAND_METADATA_TOKENS, max_tokens - 1);
+}
 
 void ace_understand_default_call(AceUnderstandCall * c);
 
@@ -93,6 +111,12 @@ int ace_understand_generate(AceUnderstand *      ctx,
                             int *                T_latent_out = nullptr,
                             AceProgress          progress     = {},
                             AceUnderstandCall *  call         = nullptr);
+
+// The audio codes a call's prompt holds whole (cadenza-audio #648): the
+// context less the prompt's framing (measured at load), its end and the
+// decode's reserve (as AceUnderstandCall: <= 0 is the engine's). Past this a
+// call clips the codes to the track's middle. -1 without an LM.
+int ace_understand_code_capacity(const AceUnderstand * ctx, bool metadata_only, int decode_reserve);
 
 // Whether the files this context loaded are still the files at their paths
 // (#309); false once one was replaced or deleted: load the context again.

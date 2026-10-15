@@ -14,6 +14,7 @@
 #include "model-store.h"
 #include "pipeline-lm.h"
 #include "pipeline-understand.h"
+#include "prompt.h"
 #include "version.h"
 
 #include <cstdio>
@@ -371,6 +372,24 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
                 k_lm->n_kv_sets);
         fprintf(stderr, "  ace-understand: kind=%d max_seq=%d n_kv_sets=%d\n", (int) k_und->kind, k_und->max_seq,
                 k_und->n_kv_sets);
+        ace_understand_free(und);
+        ace_lm_free(lm);
+        store_free(s);
+        return 1;
+    }
+
+    // The codes a call holds whole (cadenza-audio #648): the context less the
+    // prompt's framing, its end token and the decode's reserve -- the
+    // engine's when none is asked (1024, or 256 for the metadata alone).
+    BPETokenizer * bpe = store_bpe(s, lm_path, k_und->file_id);
+    const int framing = bpe ? (int) build_understand_prompt(*bpe, nullptr, 0).size() : -1;
+    const int full    = ace_understand_code_capacity(und, false, 0);
+    const int meta    = ace_understand_code_capacity(und, true, 0);
+    const int asked   = ace_understand_code_capacity(und, false, 500);
+    if (framing <= 0 || full != 4096 - framing - 1 - 1024 || meta != 4096 - framing - 1 - 256 ||
+        asked != 4096 - framing - 1 - 500 || ace_understand_code_capacity(nullptr, false, 0) != -1) {
+        fprintf(stderr, "[Test] FAIL: code capacity full=%d meta=%d asked=%d (framing %d)\n", full, meta, asked,
+                framing);
         ace_understand_free(und);
         ace_lm_free(lm);
         store_free(s);

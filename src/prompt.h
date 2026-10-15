@@ -31,6 +31,43 @@ struct AcePrompt {
     std::string vocal_language;
 };
 
+// A metadata block its decode stopped inside -- no </think> -- holds the
+// fields it finished and, last, the one it was writing (cadenza-audio #648).
+// This keeps the finished ones and drops that one, from its name on: what
+// parse_cot_and_lyrics would otherwise read as whole (a tempo of 12 for 120).
+// The last field is finished only when its line ended and it is not the
+// caption, which wraps onto indented lines and so may not have. Text that
+// closed the block is returned as it is.
+static std::string cot_drop_open_field(const std::string & text) {
+    if (text.find("</think>") != std::string::npos) {
+        return text;
+    }
+    size_t body = text.find("<think>");
+    body        = body == std::string::npos ? 0 : body + 7;
+    // The last field's first line: the last line of the block not indented.
+    size_t field = std::string::npos;
+    for (size_t p = body; p < text.size();) {
+        size_t nl  = text.find('\n', p);
+        size_t end = nl == std::string::npos ? text.size() : nl;
+        if (end > p && text[p] != ' ' && text[p] != '\t') {
+            field = p;
+        }
+        if (nl == std::string::npos) {
+            break;
+        }
+        p = nl + 1;
+    }
+    if (field == std::string::npos) {
+        return text;
+    }
+    const bool line_ended = text.back() == '\n';
+    const bool caption    = text.compare(field, 8, "caption:") == 0;
+    if (line_ended && !caption) {
+        return text;
+    }
+    return text.substr(0, field);
+}
+
 // CoT parsing (extract metadata + lyrics from LLM Phase1 output)
 static bool parse_cot_and_lyrics(const std::string & text, AcePrompt * out) {
     // Extract CoT content between <think>...</think>
