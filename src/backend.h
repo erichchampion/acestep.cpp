@@ -155,32 +155,47 @@ inline void backend_load_all_once(void) {
 //
 // The ceiling is the patched ggml's own, read from its Metal registry
 // (ggml_backend_metal_max_n_cb, 128 today), not a copy kept here (#408).
-// Without the export -- no Metal, or a ggml without our patch -- it is
-// upstream's 8, which any ggml-metal's n_cb setter takes.
+// Reading it loads the registry, which opens the Metal device, so it is read
+// only when it is needed: on iOS, or for an override. The registry is found
+// by name because the shim asks before any backend exists. Without the
+// export -- no Metal, or a ggml without our patch -- it is upstream's 8,
+// which any ggml-metal's n_cb setter takes, and iOS, which needs the finer
+// split, says so. `inline`: one cached answer per process, not one per
+// translation unit.
 static constexpr int BACKEND_METAL_UPSTREAM_MAX_N_CB = 8;
 
-static int backend_metal_max_n_cb(void) {
+inline int backend_metal_max_n_cb(void) {
     static const int ceiling = [] {
         backend_load_all_once();
         using max_n_cb_t       = int (*)(void);
         ggml_backend_reg_t reg = ggml_backend_reg_by_name("MTL");
         auto max_n_cb = reg ? (max_n_cb_t) ggml_backend_reg_get_proc_address(reg, "ggml_backend_metal_max_n_cb") : nullptr;
         const int n   = max_n_cb ? max_n_cb() : 0;
-        return n >= 1 ? n : BACKEND_METAL_UPSTREAM_MAX_N_CB;
+        if (n >= 1) {
+            return n;
+        }
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        if (reg) {
+            fprintf(stderr, "[Load] WARNING: this ggml does not export ggml_backend_metal_max_n_cb -- "
+                            "graphs split at most %d ways, and iOS's GPU watchdog may reset long steps\n",
+                    BACKEND_METAL_UPSTREAM_MAX_N_CB + 1);
+        }
+#endif
+        return BACKEND_METAL_UPSTREAM_MAX_N_CB;
     }();
     return ceiling;
 }
 
-static int backend_metal_n_cb(void) {
-    const int ceiling = backend_metal_max_n_cb();
+inline int backend_metal_n_cb(void) {
     if (const char * v = std::getenv("ACE_METAL_N_CB")) {
         const int n = atoi(v);
         if (n >= 1) {
+            const int ceiling = backend_metal_max_n_cb();
             return n < ceiling ? n : ceiling;
         }
     }
 #if defined(__APPLE__) && TARGET_OS_IPHONE
-    return ceiling;
+    return backend_metal_max_n_cb();
 #else
     return 1;
 #endif
