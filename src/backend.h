@@ -188,10 +188,12 @@ inline int backend_metal_max_n_cb(void) {
 
 inline int backend_metal_n_cb(void) {
     if (const char * v = std::getenv("ACE_METAL_N_CB")) {
-        const int n = atoi(v);
+        // strtol, not atoi: a value past long's range saturates (ERANGE)
+        // rather than wrapping, so it is held to the ceiling like any other.
+        const long n = std::strtol(v, nullptr, 10);
         if (n >= 1) {
             const int ceiling = backend_metal_max_n_cb();
-            return n < ceiling ? n : ceiling;
+            return n < ceiling ? (int) n : ceiling;
         }
     }
 #if defined(__APPLE__) && TARGET_OS_IPHONE
