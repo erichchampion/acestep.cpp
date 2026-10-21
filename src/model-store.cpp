@@ -559,7 +559,7 @@ void store_release_unheld(ModelStore * s) {
             idle.push_back(kv.first);
         }
     }
-    drop_gpu_entries(s, idle);
+    drop_gpu_entries(s, idle, "idle, freed for room");
 }
 
 // Each require_* follows the same shape: lock, check cache, evict if needed,
