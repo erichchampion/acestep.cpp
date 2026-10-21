@@ -131,6 +131,15 @@ void         store_free(ModelStore * s);
 // survives).
 void         store_release_stale(ModelStore * s);
 
+// Free every idle GPU module no live pipeline holds (store_hold_key), its
+// file changed or not: what EVICT_NEVER keeps for reuse, given back on
+// request (cadenza-audio #750) -- a planner after Thinking Mode, a DiT
+// switched away from, an understand pipeline after detection. A module a
+// caller has required and not released, or a live context holds, stays.
+// CPU tables stay (small, and store_release_stale's to free). Same rules
+// as store_release_stale: never from inside a store call.
+void         store_release_unheld(ModelStore * s);
+
 // A GPU compute failed (#405): take every cached module on a backend now in
 // its error state out of service, in this store (`store_drop_broken`) or in
 // every live one -- freed now if idle, when its holder lets go if not -- and

@@ -548,6 +548,20 @@ void store_release_stale(ModelStore * s) {
     }
 }
 
+void store_release_unheld(ModelStore * s) {
+    if (!s) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(s->mtx);
+    std::vector<ModelKey> idle;
+    for (const auto & kv : s->gpu) {
+        if (kv.second.refcount == 0 && !s->held_keys.count(kv.first)) {
+            idle.push_back(kv.first);
+        }
+    }
+    drop_gpu_entries(s, idle);
+}
+
 // Each require_* follows the same shape: lock, check cache, evict if needed,
 // load, install entry. The deleter is a plain C function that matches the
 // module's free signature, avoiding template plumbing.

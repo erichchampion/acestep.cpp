@@ -403,6 +403,71 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
     return 0;
 }
 
+// Scenario 8: store_release_unheld (cadenza-audio #750). Under NEVER an idle
+// module stays for reuse; release_unheld frees it -- but not one a caller
+// still has required, nor one a live context holds (store_hold_key).
+static int scenario_release_unheld(const char * vae_path) {
+    fprintf(stderr, "[Test] scenario 8: release unheld\n");
+    ModelStore * s = store_create(EVICT_NEVER);
+
+    ModelKey k_enc = { MODEL_VAE_ENC, vae_path, 0, 0, "", 1.0f };
+    ModelKey k_dec = { MODEL_VAE_DEC, vae_path, 0, 0, "", 1.0f };
+    k_enc.file_id = store_key_identity(k_enc);  // stamped, as a pipeline's are
+    k_dec.file_id = store_key_identity(k_dec);
+
+    auto * enc = store_require_vae_enc(s, k_enc);
+    auto * dec = store_require_vae_dec(s, k_dec);
+    if (!enc || !dec) {
+        fprintf(stderr, "[Test] FAIL: VAE enc or dec load\n");
+        store_free(s);
+        return 1;
+    }
+    store_hold_key(s, k_dec);  // a live context's
+
+    // The encoder is still required: nothing goes.
+    store_release_unheld(s);
+    if (store_gpu_module_count(s) != 2) {
+        fprintf(stderr, "[Test] FAIL: release_unheld freed a required module, %d left\n", store_gpu_module_count(s));
+        store_free(s);
+        return 1;
+    }
+
+    // Both released: the held decoder stays, the idle encoder goes.
+    store_release(s, enc);
+    store_release(s, dec);
+    if (store_gpu_module_count(s) != 2) {
+        fprintf(stderr, "[Test] FAIL: NEVER unloaded on release, %d left\n", store_gpu_module_count(s));
+        store_free(s);
+        return 1;
+    }
+    store_release_unheld(s);
+    dump(s, "after release_unheld");
+    if (store_gpu_module_count(s) != 1) {
+        fprintf(stderr, "[Test] FAIL: expected the held decoder alone, got %d modules\n", store_gpu_module_count(s));
+        store_free(s);
+        return 1;
+    }
+    if (store_require_vae_dec(s, k_dec) != dec) {
+        fprintf(stderr, "[Test] FAIL: the held decoder was not the one kept\n");
+        store_free(s);
+        return 1;
+    }
+    store_release(s, dec);
+
+    // Its context gone, the decoder is unheld: freed too.
+    store_drop_key(s, k_dec);
+    store_release_unheld(s);
+    if (store_gpu_module_count(s) != 0 || store_vram_bytes(s) != 0) {
+        fprintf(stderr, "[Test] FAIL: expected an empty store, got %d modules\n", store_gpu_module_count(s));
+        store_free(s);
+        return 1;
+    }
+
+    store_free(s);
+    fprintf(stderr, "[Test] scenario 8: PASS\n");
+    return 0;
+}
+
 static void usage(const char * prog) {
     fprintf(stderr, "acestep.cpp %s\n\n", ACE_VERSION);
     fprintf(stderr,
@@ -467,6 +532,7 @@ int main(int argc, char ** argv) {
     rc |= scenario_kind_split(vae_path);
     rc |= scenario_refcount(vae_path);
     rc |= scenario_integration(lm_path, dit_path, vae_path);
+    rc |= scenario_release_unheld(vae_path);
 
     if (rc == 0) {
         fprintf(stderr, "[Test] ALL PASS\n");
