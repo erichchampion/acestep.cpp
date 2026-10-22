@@ -187,9 +187,10 @@ inline int backend_metal_max_n_cb(void) {
 }
 
 // The n_cb for an ACE_METAL_N_CB value `request` (null: unset), without
-// reading the environment: an embedder's tests ask it for each value rather
+// reading ACE_METAL_N_CB: an embedder's tests ask it for each value rather
 // than setenv the variable under threads that may be reading it
-// (cadenza-audio #759).
+// (cadenza-audio #759). Reading the ceiling still loads the registry, as
+// backend_metal_max_n_cb says, and ggml's setenv with it.
 inline int backend_metal_n_cb_for(const char * request) {
     if (request) {
         // strtol, not atoi: a value past long's range saturates (ERANGE)
