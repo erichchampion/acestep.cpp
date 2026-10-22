@@ -186,11 +186,15 @@ inline int backend_metal_max_n_cb(void) {
     return ceiling;
 }
 
-inline int backend_metal_n_cb(void) {
-    if (const char * v = std::getenv("ACE_METAL_N_CB")) {
+// The n_cb for an ACE_METAL_N_CB value `request` (null: unset), without
+// reading the environment: an embedder's tests ask it for each value rather
+// than setenv the variable under threads that may be reading it
+// (cadenza-audio #759).
+inline int backend_metal_n_cb_for(const char * request) {
+    if (request) {
         // strtol, not atoi: a value past long's range saturates (ERANGE)
         // rather than wrapping, so it is held to the ceiling like any other.
-        const long n = std::strtol(v, nullptr, 10);
+        const long n = std::strtol(request, nullptr, 10);
         if (n >= 1) {
             const int ceiling = backend_metal_max_n_cb();
             return n < ceiling ? (int) n : ceiling;
@@ -201,6 +205,10 @@ inline int backend_metal_n_cb(void) {
 #else
     return 1;
 #endif
+}
+
+inline int backend_metal_n_cb(void) {
+    return backend_metal_n_cb_for(std::getenv("ACE_METAL_N_CB"));
 }
 
 static void backend_split_command_buffers(ggml_backend_t backend) {
