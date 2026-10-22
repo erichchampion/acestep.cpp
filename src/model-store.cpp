@@ -1006,19 +1006,7 @@ std::shared_ptr<const DiTMeta> store_dit_meta_shared(ModelStore *        s,
 }
 
 size_t store_vram_bytes(const ModelStore * s) {
-    if (!s) {
-        return 0;
-    }
-    std::lock_guard<std::mutex> lock(s->mtx);
-    size_t                      total = 0;
-    for (const auto & kv : s->gpu) {
-        total += kv.second.bytes;
-    }
-    // Retired modules are still resident until their last release.
-    for (const auto & kv : s->retired_gpu) {
-        total += kv.second.bytes;
-    }
-    return total;
+    return store_vram_bytes_except(s, {});
 }
 
 size_t store_vram_bytes_except(const ModelStore * s, const std::vector<const ModelKey *> & keys) {
@@ -1037,6 +1025,7 @@ size_t store_vram_bytes_except(const ModelStore * s, const std::vector<const Mod
             total += kv.second.bytes;
         }
     }
+    // Retired modules are still resident until their last release.
     for (const auto & kv : s->retired_gpu) {
         total += kv.second.bytes;
     }
