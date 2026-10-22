@@ -778,6 +778,14 @@ bool ace_synth_is_current(const AceSynth * ctx) {
     return true;
 }
 
+std::vector<const ModelKey *> ace_synth_keys(const AceSynth * ctx) {
+    if (!ctx) {
+        return {};
+    }
+    const auto keys = synth_keys(ctx);
+    return { keys.begin(), keys.end() };
+}
+
 void ace_synth_retain(AceSynth * ctx) {
     if (ctx) {
         store_hold_key(ctx->store, ctx->vae_dec_key);  // may throw: nothing taken yet

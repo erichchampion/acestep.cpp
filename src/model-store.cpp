@@ -1021,6 +1021,28 @@ size_t store_vram_bytes(const ModelStore * s) {
     return total;
 }
 
+size_t store_vram_bytes_except(const ModelStore * s, const std::vector<const ModelKey *> & keys) {
+    if (!s) {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(s->mtx);
+    ModelKeyEq                  eq;
+    size_t                      total = 0;
+    for (const auto & kv : s->gpu) {
+        bool own = false;
+        for (const ModelKey * k : keys) {
+            own = own || (k && eq(kv.first, *k));
+        }
+        if (!own) {
+            total += kv.second.bytes;
+        }
+    }
+    for (const auto & kv : s->retired_gpu) {
+        total += kv.second.bytes;
+    }
+    return total;
+}
+
 int store_gpu_module_count(const ModelStore * s) {
     if (!s) {
         return 0;

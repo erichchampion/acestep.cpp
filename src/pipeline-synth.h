@@ -12,6 +12,7 @@
 #include "request.h"
 
 #include <cstdlib>
+#include <vector>
 
 struct AceSynth;
 struct AceSynthJob;
@@ -110,6 +111,13 @@ void ace_audio_free(AceAudio * audio);
 // lives, so it keeps working; but one freed meanwhile (STRICT eviction) is
 // not read again from a replaced file -- load the pipeline again.
 bool ace_synth_is_current(const AceSynth * ctx);
+
+// The keys of every module this pipeline uses, valid while it lives: what
+// store_vram_bytes_except leaves out to weigh what is kept beyond a run's
+// own set (cadenza-audio #764). A module not yet loaded is simply not
+// resident.
+struct ModelKey;
+std::vector<const ModelKey *> ace_synth_keys(const AceSynth * ctx);
 
 // A job that decodes through `ctx` after its owner may have freed it (a
 // reload while takes are parked) retains it, and releases it when done; the

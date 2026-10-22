@@ -58,6 +58,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <vector>
 
 struct ModelStore;
 
@@ -204,6 +205,12 @@ std::shared_ptr<const DiTMeta> store_dit_meta_shared(ModelStore *        s,
 // eviction policy invariants.
 size_t store_vram_bytes(const ModelStore * s);
 int    store_gpu_module_count(const ModelStore * s);
+// The same sum without the modules of `keys` (null entries skipped): what
+// the store holds beyond a run's own set, for an embedder weighing that run's
+// measured peak, which counts its own weights already (cadenza-audio #764).
+// Retired modules are always counted: their files were replaced, so no run
+// to come uses them.
+size_t store_vram_bytes_except(const ModelStore * s, const std::vector<const ModelKey *> & keys);
 
 // RAII helper. Builds on top of store_release, nothing else.
 struct ModelHandle {

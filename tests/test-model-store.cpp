@@ -468,6 +468,51 @@ static int scenario_release_unheld(const char * vae_path) {
     return 0;
 }
 
+// Scenario 9: store_vram_bytes_except (cadenza-audio #764). The resident sum
+// without a run's own keys is the rest's: none of them, one of them, all of
+// them left out, and a key not resident (or null) changes nothing.
+static int scenario_vram_except(const char * vae_path) {
+    fprintf(stderr, "[Test] scenario 9: vram except\n");
+    ModelStore * s = store_create(EVICT_NEVER);
+
+    ModelKey k_enc = { MODEL_VAE_ENC, vae_path, 0, 0, "", 1.0f };
+    ModelKey k_dec = { MODEL_VAE_DEC, vae_path, 0, 0, "", 1.0f };
+    ModelKey k_tok = { MODEL_FSQ_TOK, vae_path, 0, 0, "", 1.0f };  // never loaded
+    k_enc.file_id = store_key_identity(k_enc);
+    k_dec.file_id = store_key_identity(k_dec);
+
+    auto * enc = store_require_vae_enc(s, k_enc);
+    auto * dec = store_require_vae_dec(s, k_dec);
+    if (!enc || !dec) {
+        fprintf(stderr, "[Test] FAIL: VAE enc or dec load\n");
+        store_free(s);
+        return 1;
+    }
+    const size_t total = store_vram_bytes(s);
+    const size_t enc_only = store_vram_bytes_except(s, { &k_dec });
+    const size_t dec_only = store_vram_bytes_except(s, { &k_enc });
+    int          rc = 0;
+    if (store_vram_bytes_except(s, {}) != total || store_vram_bytes_except(s, { &k_tok, nullptr }) != total) {
+        fprintf(stderr, "[Test] FAIL: leaving out nothing resident changed the sum\n");
+        rc = 1;
+    }
+    if (enc_only == 0 || dec_only == 0 || enc_only + dec_only != total) {
+        fprintf(stderr, "[Test] FAIL: enc %zu + dec %zu is not the total %zu\n", enc_only, dec_only, total);
+        rc = 1;
+    }
+    if (store_vram_bytes_except(s, { &k_enc, &k_dec, &k_tok }) != 0) {
+        fprintf(stderr, "[Test] FAIL: leaving out every resident key left bytes\n");
+        rc = 1;
+    }
+    store_release(s, enc);
+    store_release(s, dec);
+    store_free(s);
+    if (rc == 0) {
+        fprintf(stderr, "[Test] scenario 9: PASS\n");
+    }
+    return rc;
+}
+
 static void usage(const char * prog) {
     fprintf(stderr, "acestep.cpp %s\n\n", ACE_VERSION);
     fprintf(stderr,
@@ -533,6 +578,7 @@ int main(int argc, char ** argv) {
     rc |= scenario_refcount(vae_path);
     rc |= scenario_integration(lm_path, dit_path, vae_path);
     rc |= scenario_release_unheld(vae_path);
+    rc |= scenario_vram_except(vae_path);
 
     if (rc == 0) {
         fprintf(stderr, "[Test] ALL PASS\n");
