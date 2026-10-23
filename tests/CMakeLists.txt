@@ -22,6 +22,11 @@ add_executable(test-gpu-fail test-gpu-fail.cpp)
 target_link_libraries(test-gpu-fail PRIVATE acestep-core)
 link_ggml_backends(test-gpu-fail)
 
+# test-page-release: a released staged-page range stays reserved until gf_close
+# unmaps the whole mapping (cadenza-audio #819). No model, no GPU.
+add_executable(test-page-release test-page-release.cpp)
+target_link_libraries(test-page-release PRIVATE acestep-core)
+
 # test-audio-layout: the channel-layout contract at the pipeline boundary
 # (#28). Needs only the VAE GGUF: run with --vae <gguf>.
 add_executable(test-audio-layout test-audio-layout.cpp)
@@ -69,6 +74,8 @@ add_test(NAME test-progress COMMAND test-progress)
 add_test(NAME test-backend-config COMMAND test-backend-config)
 add_test(NAME test-understand-cot COMMAND test-understand-cot)
 add_test(NAME test-gpu-fail COMMAND test-gpu-fail)
+add_test(NAME test-page-release COMMAND test-page-release)
+set_tests_properties(test-page-release PROPERTIES SKIP_RETURN_CODE 77)
 set_tests_properties(test-gpu-fail PROPERTIES SKIP_RETURN_CODE 77)
 set(ACESTEP_TEST_MODELS "" CACHE PATH "Directory of GGUFs for the tests that read them (empty: not run)")
 if(ACESTEP_TEST_MODELS)

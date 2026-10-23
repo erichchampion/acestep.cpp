@@ -12,7 +12,7 @@
 //
 // Loaders that copy straight out of a file mapping record where the bytes came
 // from (wctx_push_file_copy in gguf-weights.h); wctx_alloc releases those staged
-// pages as it copies (Apple: munmap, Linux: madvise), which is what keeps load-time
+// pages as it copies (Apple: an anonymous mapping over them, Linux: madvise), which is what keeps load-time
 // page residency near one tensor instead of the whole file.
 
 #include "ace-fatal.h"
@@ -28,7 +28,7 @@
 #include <vector>
 
 // One decision point for "this platform has a staged-page release mechanism"
-// (munmap on Apple, madvise on Linux): the include block, the release body and the
+// (an anonymous mapping on Apple, madvise on Linux): the include block, the release body and the
 // completion report below all key off it, so adding a platform is one edit.
 #if defined(__APPLE__) || defined(__linux__)
 #    define ACE_HAS_PAGE_RELEASE 1
@@ -36,7 +36,7 @@
 
 #ifdef ACE_HAS_PAGE_RELEASE
 #    ifdef __APPLE__
-#        include <sys/mman.h>  // munmap
+#        include <sys/mman.h>  // mmap, MAP_FIXED
 #    else
 #        include <sys/mman.h>  // madvise, MADV_DONTNEED
 #    endif
@@ -134,15 +134,21 @@ static bool wctx_page_unmap_disabled(void) {
 // The per-platform release primitive over a page-aligned interior range. Same
 // contract on both: drop the pages, return false + set errno on failure.
 #    if defined(__APPLE__)
-// munmap is the only call that works on macOS: the madvise family (POSIX_MADV_DONTNEED,
-// MADV_DONTNEED, MADV_FREE) is a no-op there -- measured with mincore, they free
-// nothing. munmap is destructive (an unexpected re-read faults instead of refaulting),
-// which is why the containment and interior-only rules in the caller matter.
+// The madvise family (POSIX_MADV_DONTNEED, MADV_DONTNEED, MADV_FREE) is a no-op on
+// macOS -- measured with mincore, they free nothing -- so the file pages have to leave
+// the mapping. Not by munmap: that leaves a hole the kernel hands to the next
+// allocation, from any thread, and gf_close's munmap of the whole original range then
+// unmapped that allocation under its owner -- a malloc block cached in a hole came back
+// unmapped, and its first write faulted (cadenza-audio #819). An anonymous PROT_NONE
+// mapping laid over the range instead drops the file pages just the same, costs nothing
+// resident, and keeps the addresses reserved until gf_close. Destructive either way (an
+// unexpected re-read faults instead of refaulting), which is why the containment and
+// interior-only rules in the caller matter.
 static bool wctx_release_pages(void * start, size_t len) {
-    return munmap(start, len) == 0;
+    return mmap(start, len, PROT_NONE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) == start;
 }
 
-inline const char * wctx_release_op = "munmap";  // inline: odr-used by the inline warn-once below
+inline const char * wctx_release_op = "mmap over";  // inline: odr-used by the inline warn-once below
 #    else
 // Linux: madvise(MADV_DONTNEED) does work on file mappings there and keeps the
 // mapping intact -- same drop-and-refault semantics for these read-only staged pages.

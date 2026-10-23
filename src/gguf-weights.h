@@ -68,11 +68,11 @@ static void gf_close(GGUFModel * gf) {
     }
 #else
     if (gf->mapping) {
-        // After a 2.7 load this range carries interior holes where wctx_alloc already
-        // released staged pages. Unmapping over holes works on macOS and Linux
-        // (verified), but hole tolerance is implementation behaviour rather than a
-        // POSIX guarantee -- so a failure here means the whole mapping stays resident
-        // until process exit. Plain fprintf, not warn-once: this runs once per model,
+        // After a 2.7 load parts of this range no longer hold the file: wctx_alloc
+        // released their staged pages, on Apple by laying anonymous PROT_NONE
+        // mappings over them -- reserved, never holes, so nothing else can have been
+        // placed inside the range this unmaps (cadenza-audio #819). A failure here
+        // means the whole mapping stays resident until process exit. Plain fprintf, not warn-once: this runs once per model,
         // and every failing close is a distinct mapping worth its own line.
         if (munmap(gf->mapping, gf->file_size) != 0) {
             fprintf(stderr, "[GGUF] WARNING: munmap of the model mapping failed (%s); its pages stay resident\n",
@@ -191,8 +191,8 @@ static bool gf_load(GGUFModel * gf, const char * path) {
 }
 
 // Queue a copy straight from the file mapping, recording where the bytes came from so
-// wctx_alloc can release those staged pages once copied (Apple: munmap, Linux:
-// madvise). The recorded range survives an adapter merge repointing src at a heap
+// wctx_alloc can release those staged pages once copied (Apple: an anonymous
+// mapping over them, Linux: madvise). The recorded range survives an adapter merge repointing src at a heap
 // staging buffer, so the original pages are still released. Copies from heap staging
 // or the stack push PendingCopy directly -- they have nothing to release.
 static void wctx_push_file_copy(WeightCtx *          wctx,
