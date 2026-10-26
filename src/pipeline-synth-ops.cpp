@@ -921,43 +921,50 @@ static void ops_vae_splice_track(SynthState & s, int b) {
 // array or at a standalone AceAudio -- the element is all this function sees.
 static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceAudio * out, SynthState & s,
                                 AceProgress progress) {
-    int                T_latent    = s.T;
-    int                T_audio_max = T_latent * 1920;
-    std::vector<float> audio(2 * T_audio_max);
+    int T_latent    = s.T;
+    int T_audio_max = T_latent * 1920;
 
     float * dit_out = s.output.data() + (size_t) b * s.Oc * s.T;
 
+    // Decode straight into the take's own buffer: the decoder writes [2, T_audio]
+    // packed, so no staging copy is needed. A staging vector held the take
+    // twice at the end of every decode (~66 MB each at 180 s), on the stage
+    // a 4 GB phone is closest to its page limit (erichchampion/cadenza-audio#752).
+    out->samples     = NULL;
+    out->n_samples   = 0;
+    out->sample_rate = 48000;
+    float * audio    = (float *) malloc((size_t) 2 * T_audio_max * sizeof(float));
+    if (!audio) {
+        fprintf(stderr, "[VAE-Decode Batch%d] ERROR: OOM allocating output (%d samples)\n", b, 2 * T_audio_max);
+        return 0;
+    }
+
     s.timer.reset();
-    int T_audio = vae_ggml_decode_tiled(vae, dit_out, T_latent, audio.data(), T_audio_max, ctx->params.vae_chunk,
+    int T_audio = vae_ggml_decode_tiled(vae, dit_out, T_latent, audio, T_audio_max, ctx->params.vae_chunk,
                                         ctx->params.vae_overlap, progress);
     if (T_audio < 0) {
+        free(audio);
         if (ace_cancelled(progress, ACE_STAGE_VAE_DECODE)) {
             fprintf(stderr, "[VAE-Decode Batch%d] Cancelled\n", b);
             return -1;
         }
         fprintf(stderr, "[VAE-Decode Batch%d] ERROR: decode failed\n", b);
-        out->samples     = NULL;
-        out->n_samples   = 0;
-        out->sample_rate = 48000;
         return 0;
     }
     fprintf(stderr, "[VAE-Decode Batch%d] Decode: %.1f ms\n", b, s.timer.ms());
 
     if (b == 0) {
-        debug_dump_2d(&s.dbg, "vae_audio", audio.data(), 2, T_audio);
+        debug_dump_2d(&s.dbg, "vae_audio", audio, 2, T_audio);
     }
 
-    int n_total    = 2 * T_audio;
-    out->samples = (float *) malloc((size_t) n_total * sizeof(float));
-    if (!out->samples) {
-        fprintf(stderr, "[VAE-Decode Batch%d] ERROR: OOM allocating output (%d samples)\n", b, n_total);
-        out->n_samples   = 0;
-        out->sample_rate = 48000;
-        return 0;
+    // A shorter decode gives back the tail; a failed shrink keeps the larger block.
+    if (T_audio < T_audio_max) {
+        if (float * fit = (float *) realloc(audio, (size_t) 2 * (T_audio > 0 ? T_audio : 1) * sizeof(float))) {
+            audio = fit;
+        }
     }
-    memcpy(out->samples, audio.data(), (size_t) n_total * sizeof(float));
-    out->n_samples   = T_audio;
-    out->sample_rate = 48000;
+    out->samples   = audio;
+    out->n_samples = T_audio;
 
     // Waveform hard splice (audio path only): replace out-of-zone samples
     // with the original source PCM. The VAE roundtrip is lossy, so this
