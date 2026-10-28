@@ -590,3 +590,14 @@ void ace_understand_free(AceUnderstand * ctx) {
 const ModelKey * ace_understand_lm_key(const AceUnderstand * ctx) {
     return ctx && ctx->have_lm ? &ctx->lm_key : nullptr;
 }
+
+std::vector<const ModelKey *> ace_understand_keys(const AceUnderstand * ctx) {
+    if (!ctx) {
+        return {};
+    }
+    std::vector<const ModelKey *> keys = { &ctx->vae_enc_key, &ctx->fsq_tok_key };
+    if (ctx->have_lm) {
+        keys.push_back(&ctx->lm_key);
+    }
+    return keys;
+}

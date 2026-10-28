@@ -133,3 +133,9 @@ void ace_understand_free(AceUnderstand * ctx);
 // same LM instance; a drift here silently doubles VRAM under --keep-loaded.
 struct ModelKey;
 const ModelKey * ace_understand_lm_key(const AceUnderstand * ctx);
+
+// The keys of every module this pipeline uses (its VAE encoder, FSQ tokenizer
+// and, with one, its LM), valid while it lives: what store_vram_bytes_except
+// leaves out to weigh what the store keeps beyond an understand pass's own
+// set (cadenza-audio #804), as ace_synth_keys does for a run.
+std::vector<const ModelKey *> ace_understand_keys(const AceUnderstand * ctx);
