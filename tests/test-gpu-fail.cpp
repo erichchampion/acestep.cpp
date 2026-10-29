@@ -182,6 +182,7 @@ int main(void) {
         log = failed_with(dev, fail_chain, refused, "MTLCommandBufferErrorDomain", 1, "a fault", chain, 3, CYCLE,
                           &was_refused, &closed);
         CHECK(closed);
+        CHECK(!was_refused);
         CHECK(count_of(log, "; underlying ") == 3);
         CHECK(count_of(log, "the kernel") == 1);
 
@@ -193,12 +194,21 @@ int main(void) {
         log = failed_with(dev, fail_chain, refused, "MTLCommandBufferErrorDomain", 1, "a fault", many, 20, WIDE,
                           &was_refused);
         CHECK(log.find("error: a fault (MTLCommandBufferErrorDomain 1)") != std::string::npos);
+        CHECK(!was_refused);
         CHECK(count_of(log, "; underlying ") == 15);
-        // The first fifteen, in order.
-        const size_t first = log.find("underlying IOGPUCommandQueueErrorDomain 0: ");
-        const size_t last = log.find("underlying IOGPUCommandQueueErrorDomain 14: ");
-        CHECK(first != std::string::npos && last != std::string::npos && first < last);
-        CHECK(log.find("underlying IOGPUCommandQueueErrorDomain 15: ") == std::string::npos);
+        // The first fifteen, each in order, and none after them.
+        size_t at = 0;
+        for (int i = 0; i < 20; i++) {
+            char entry[64];
+            snprintf(entry, sizeof(entry), "underlying IOGPUCommandQueueErrorDomain %d: ", i);
+            const size_t found = log.find(entry);
+            if (i < 15) {
+                CHECK(found != std::string::npos && found >= at);
+                at = found == std::string::npos ? at : found;
+            } else {
+                CHECK(found == std::string::npos);
+            }
+        }
 
         // Two errors alike -- domain, code and text -- are two errors, each
         // logged: once by identity, not by isEqual.
@@ -206,6 +216,8 @@ int main(void) {
                                      { "IOGPUCommandQueueErrorDomain", 9, "the same" } };
         log = failed_with(dev, fail_chain, refused, "MTLCommandBufferErrorDomain", 1, "a fault", alike, 2, WIDE,
                           &was_refused);
+        CHECK(!was_refused);
+        CHECK(count_of(log, "; underlying ") == 2);
         CHECK(count_of(log, "underlying IOGPUCommandQueueErrorDomain 9: the same") == 2);
 
         // A refusal named only underneath: said, and taken for a fault.
