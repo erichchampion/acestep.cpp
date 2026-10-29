@@ -45,10 +45,11 @@ static void usage(const char * prog) {
             "\n"
             "Debug:\n"
             "  --max-seq <N>           KV cache size (default: %d)\n"
+            "  --max-batch <N>         KV sets as 2*N, as a planner sized for N takes (default: %d)\n"
             "  --no-fsm                Disable FSM constrained decoding\n"
             "  --no-fa                 Disable flash attention\n"
             "  --dump <dir>            Dump tok_latents + tok_codes (skip LM)\n",
-            prog, d.vae_chunk, d.vae_overlap, d.max_seq);
+            prog, d.vae_chunk, d.vae_overlap, d.max_seq, d.max_batch);
 }
 
 int main(int argc, char ** argv) {
@@ -79,6 +80,8 @@ int main(int argc, char ** argv) {
             dump_dir = argv[++i];
         } else if (!strcmp(argv[i], "--max-seq") && i + 1 < argc) {
             params.max_seq = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--max-batch") && i + 1 < argc) {
+            params.max_batch = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--vae-chunk") && i + 1 < argc) {
             params.vae_chunk = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--vae-overlap") && i + 1 < argc) {
