@@ -50,7 +50,7 @@ struct test_error {
     long         code;
     const char * text;
 };
-typedef void (*fail_chain_fn_t)(ggml_backend_t, const char *, long, const char *, const test_error *, int, int);
+typedef bool (*fail_chain_fn_t)(ggml_backend_t, const char *, long, const char *, const test_error *, int, int);
 enum { CHAIN = 0, WIDE = 1, CYCLE = 2 };
 
 // What ggml logs while a case runs.
@@ -86,10 +86,16 @@ static void failed_as(ggml_backend_dev_t dev, fail_fn_t fail, has_error_fn_t has
 }
 
 // A fresh backend failed with an error wrapping `underlying` as `shape`:
-// what was logged, and whether it was refused.
+// what was logged -- echoed, so a failed check shows it -- whether it was
+// refused, and whether a cycle closed. Neither, with no backend.
 static std::string failed_with(ggml_backend_dev_t dev, fail_chain_fn_t fail, has_error_fn_t refused,
                                const char * domain, long code, const char * text,
-                               const test_error * underlying, int n, int shape, bool * was_refused) {
+                               const test_error * underlying, int n, int shape, bool * was_refused,
+                               bool * closed = NULL) {
+    *was_refused = false;
+    if (closed) {
+        *closed = false;
+    }
     ggml_backend_t backend = ggml_backend_dev_init(dev, /*params=*/NULL);
     CHECK(backend != NULL);
     if (backend == NULL) {
@@ -97,9 +103,13 @@ static std::string failed_with(ggml_backend_dev_t dev, fail_chain_fn_t fail, has
     }
     g_log.clear();
     ggml_log_set(capture, NULL);
-    fail(backend, domain, code, text, underlying, n, shape);
+    const bool cycle = fail(backend, domain, code, text, underlying, n, shape);
     ggml_log_set(NULL, NULL);
+    fputs(g_log.c_str(), stderr);
     *was_refused = refused(backend);
+    if (closed) {
+        *closed = cycle;
+    }
     ggml_backend_free(backend);
     return g_log;
 }
@@ -166,9 +176,12 @@ int main(void) {
         CHECK(queue < device && device < kernel);
         CHECK(count_of(log, "names a background refusal") == 0);
 
-        // A cycle: each once, and the walk ends.
+        // A cycle -- closed, the last wrapping the error again -- each once,
+        // and the walk ends (ctest times a hang out).
+        bool closed = false;
         log = failed_with(dev, fail_chain, refused, "MTLCommandBufferErrorDomain", 1, "a fault", chain, 3, CYCLE,
-                          &was_refused);
+                          &was_refused, &closed);
+        CHECK(closed);
         CHECK(count_of(log, "; underlying ") == 3);
         CHECK(count_of(log, "the kernel") == 1);
 
@@ -179,7 +192,21 @@ int main(void) {
         }
         log = failed_with(dev, fail_chain, refused, "MTLCommandBufferErrorDomain", 1, "a fault", many, 20, WIDE,
                           &was_refused);
+        CHECK(log.find("error: a fault (MTLCommandBufferErrorDomain 1)") != std::string::npos);
         CHECK(count_of(log, "; underlying ") == 15);
+        // The first fifteen, in order.
+        const size_t first = log.find("underlying IOGPUCommandQueueErrorDomain 0: ");
+        const size_t last = log.find("underlying IOGPUCommandQueueErrorDomain 14: ");
+        CHECK(first != std::string::npos && last != std::string::npos && first < last);
+        CHECK(log.find("underlying IOGPUCommandQueueErrorDomain 15: ") == std::string::npos);
+
+        // Two errors alike -- domain, code and text -- are two errors, each
+        // logged: once by identity, not by isEqual.
+        const test_error alike[] = { { "IOGPUCommandQueueErrorDomain", 9, "the same" },
+                                     { "IOGPUCommandQueueErrorDomain", 9, "the same" } };
+        log = failed_with(dev, fail_chain, refused, "MTLCommandBufferErrorDomain", 1, "a fault", alike, 2, WIDE,
+                          &was_refused);
+        CHECK(count_of(log, "underlying IOGPUCommandQueueErrorDomain 9: the same") == 2);
 
         // A refusal named only underneath: said, and taken for a fault.
         const test_error named[] = { { "IOGPUCommandQueueErrorDomain", 6,
