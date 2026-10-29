@@ -15,6 +15,11 @@
 //   code of that domain, nor code 7 of another -- read back through
 //   ggml_backend_metal_refused. A hook puts a backend in the error state a
 //   failed buffer would, as this test cannot make Metal fail or refuse one.
+//   A backend failed twice, refused once and faulted once, is refused (#817).
+// - The error's underlying errors are logged beside it (#849, #857): a chain,
+//   a wide set and a cycle, each error once and at most 16 in all; and one
+//   that names a background refusal only in an underlying error's text is
+//   said, though taken for a fault. A second hook builds those errors.
 // - This whole binary is the leak test (#402): main returns with a live Metal
 //   buffer and its device, buffer type and backend still referenced, and exit
 //   must be clean -- with the statics leaked on purpose, there is no Metal
@@ -33,11 +38,36 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <string>
 
 #include "test-util.h"
 
 typedef bool (*has_error_fn_t)(ggml_backend_t);
 typedef void (*fail_fn_t)(ggml_backend_t, const char *, long);
+// ggml_backend_metal_fail_for_test_chain's, as ggml-metal-context.h declares it.
+struct test_error {
+    const char * domain;
+    long         code;
+    const char * text;
+};
+typedef void (*fail_chain_fn_t)(ggml_backend_t, const char *, long, const char *, const test_error *, int, int);
+enum { CHAIN = 0, WIDE = 1, CYCLE = 2 };
+
+// What ggml logs while a case runs.
+static std::string g_log;
+static void capture(ggml_log_level level, const char * text, void * user) {
+    (void) level;
+    (void) user;
+    g_log += text;
+}
+
+static int count_of(const std::string & haystack, const char * needle) {
+    int n = 0;
+    for (size_t at = haystack.find(needle); at != std::string::npos; at = haystack.find(needle, at + 1)) {
+        n++;
+    }
+    return n;
+}
 
 // A fresh backend failed as a command buffer with that error would leave it:
 // whether it is in its error state, and whether that was a refusal.
@@ -53,6 +83,25 @@ static void failed_as(ggml_backend_dev_t dev, fail_fn_t fail, has_error_fn_t has
     CHECK(has_error(backend));
     CHECK(refused(backend) == want_refused);
     ggml_backend_free(backend);
+}
+
+// A fresh backend failed with an error wrapping `underlying` as `shape`:
+// what was logged, and whether it was refused.
+static std::string failed_with(ggml_backend_dev_t dev, fail_chain_fn_t fail, has_error_fn_t refused,
+                               const char * domain, long code, const char * text,
+                               const test_error * underlying, int n, int shape, bool * was_refused) {
+    ggml_backend_t backend = ggml_backend_dev_init(dev, /*params=*/NULL);
+    CHECK(backend != NULL);
+    if (backend == NULL) {
+        return "";
+    }
+    g_log.clear();
+    ggml_log_set(capture, NULL);
+    fail(backend, domain, code, text, underlying, n, shape);
+    ggml_log_set(NULL, NULL);
+    *was_refused = refused(backend);
+    ggml_backend_free(backend);
+    return g_log;
 }
 
 int main(void) {
@@ -82,6 +131,69 @@ int main(void) {
         failed_as(dev, fail, has_error, refused, "IOGPUCommandQueueErrorDomain", 7, false);  // code 7 of another domain
         failed_as(dev, fail, has_error, refused, NULL, 7, false);                            // no error to read
         failed_as(dev, fail, has_error, refused, "\xff", 7, false);                          // not UTF-8: none either
+
+        // Failed twice (#817): one refusal is enough, whichever came first.
+        for (int refusal_first = 0; refusal_first < 2; refusal_first++) {
+            ggml_backend_t backend = ggml_backend_dev_init(dev, /*params=*/NULL);
+            CHECK(backend != NULL);
+            if (backend != NULL) {
+                fail(backend, "MTLCommandBufferErrorDomain", refusal_first ? 7 : 1);
+                fail(backend, "MTLCommandBufferErrorDomain", refusal_first ? 1 : 7);
+                CHECK(has_error(backend) && refused(backend));
+                ggml_backend_free(backend);
+            }
+        }
+    }
+
+    // The underlying errors (#849, #857), logged after the error's own.
+    auto fail_chain = (fail_chain_fn_t)ggml_backend_reg_get_proc_address(reg, "ggml_backend_metal_fail_for_test_chain");
+    CHECK(fail_chain != NULL && refused != NULL);
+    if (fail_chain != NULL && refused != NULL) {
+        bool was_refused = true;
+        const test_error chain[] = { { "IOGPUCommandQueueErrorDomain", 3, "the queue" },
+                                     { "IOGPUDeviceErrorDomain", 4, "the device" },
+                                     { "NSPOSIXErrorDomain", 5, "the kernel" } };
+        // A chain, each once and in order, after the error's own.
+        std::string log = failed_with(dev, fail_chain, refused, "MTLCommandBufferErrorDomain", 1, "a fault",
+                                      chain, 3, CHAIN, &was_refused);
+        CHECK(!was_refused);
+        CHECK(count_of(log, "; underlying ") == 3);
+        const size_t queue = log.find("underlying IOGPUCommandQueueErrorDomain 3: the queue");
+        const size_t device = log.find("underlying IOGPUDeviceErrorDomain 4: the device");
+        const size_t kernel = log.find("underlying NSPOSIXErrorDomain 5: the kernel");
+        CHECK(log.find("error: a fault (MTLCommandBufferErrorDomain 1)") != std::string::npos);
+        CHECK(queue != std::string::npos && device != std::string::npos && kernel != std::string::npos);
+        CHECK(queue < device && device < kernel);
+        CHECK(count_of(log, "names a background refusal") == 0);
+
+        // A cycle: each once, and the walk ends.
+        log = failed_with(dev, fail_chain, refused, "MTLCommandBufferErrorDomain", 1, "a fault", chain, 3, CYCLE,
+                          &was_refused);
+        CHECK(count_of(log, "; underlying ") == 3);
+        CHECK(count_of(log, "the kernel") == 1);
+
+        // Wide: at most 16 errors in all, the error's own among them.
+        test_error many[20];
+        for (int i = 0; i < 20; i++) {
+            many[i] = { "IOGPUCommandQueueErrorDomain", (long) i, "one of many" };
+        }
+        log = failed_with(dev, fail_chain, refused, "MTLCommandBufferErrorDomain", 1, "a fault", many, 20, WIDE,
+                          &was_refused);
+        CHECK(count_of(log, "; underlying ") == 15);
+
+        // A refusal named only underneath: said, and taken for a fault.
+        const test_error named[] = { { "IOGPUCommandQueueErrorDomain", 6,
+                                       "kIOGPUCommandBufferCallbackErrorBackgroundExecutionNotPermitted" } };
+        log = failed_with(dev, fail_chain, refused, "MTLCommandBufferErrorDomain", 1, "a fault", named, 1, CHAIN,
+                          &was_refused);
+        CHECK(!was_refused);
+        CHECK(count_of(log, "names a background refusal") == 1);
+
+        // The refusal's own code with underlying errors: refused, no warning.
+        log = failed_with(dev, fail_chain, refused, "MTLCommandBufferErrorDomain", 7,
+                          "kIOGPUCommandBufferCallbackErrorBackgroundExecutionNotPermitted", chain, 3, CHAIN, &was_refused);
+        CHECK(was_refused);
+        CHECK(count_of(log, "names a background refusal") == 0);
     }
 
     ggml_backend_t backend = ggml_backend_dev_init(dev, /*params=*/NULL);
