@@ -205,6 +205,11 @@ std::shared_ptr<const DiTMeta> store_dit_meta_shared(ModelStore *        s,
 // eviction policy invariants.
 size_t store_vram_bytes(const ModelStore * s);
 int    store_gpu_module_count(const ModelStore * s);
+// The CPU thread count of the backend pair the latest module load got, in
+// any store -- made for it, or shared from an earlier load and so made with
+// that load's count -- or 0 before any load (cadenza-audio #889). Read from
+// the one translation unit whose loads reach backend_init.
+int    store_backend_cpu_threads(void);
 // The same sum without the modules of `keys` (null entries skipped): what
 // the store holds beyond a run's own set, for an embedder weighing that run's
 // measured peak, which counts its own weights already (cadenza-audio #764).

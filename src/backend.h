@@ -47,6 +47,7 @@ struct BackendPair {
 struct BackendSlot {
     BackendPair bp;
     int         refs;
+    int         n_threads;  // the CPU backend's thread count, as made
 };
 
 static std::vector<BackendSlot> g_backend_slots;        // every live pair
@@ -59,6 +60,11 @@ static std::recursive_mutex & backend_slots_mtx() {
     return *m;
 }
 static int                      g_backend_current = -1;  // the one new loads share, or -1
+// The CPU thread count of the pair the latest backend_init handed out, made
+// or shared, or 0 before any: what a load ran with, which a config set since
+// does not change while a pair made before it is still shared
+// (cadenza-audio #889). Under backend_slots_mtx.
+static int                      g_backend_last_threads = 0;
 
 // The auto GGML CPU thread count: one thread per useful physical core. GEMM
 // shares SIMD units across hyperthreads, so one-per-physical is optimal.
@@ -306,6 +312,7 @@ static BackendPair backend_init(const char * label) {
     if (g_backend_current >= 0) {
         BackendSlot & slot = g_backend_slots[g_backend_current];
         slot.refs++;
+        g_backend_last_threads = slot.n_threads;
         fprintf(stderr, "[Load] %s backend: %s (shared)\n", label, ggml_backend_name(slot.bp.backend));
         return slot.bp;
     }
@@ -371,7 +378,7 @@ static BackendPair backend_init(const char * label) {
     fprintf(stderr, "[Load] %s backend: %s (CPU threads: %d)\n", label, ggml_backend_name(bp.backend), n_threads);
 
     try {
-        g_backend_slots.push_back({ bp, 1 });
+        g_backend_slots.push_back({ bp, 1, n_threads });
     } catch (...) {
         if (bp.backend && bp.backend != bp.cpu_backend) {
             ggml_backend_free(bp.backend);
@@ -379,8 +386,16 @@ static BackendPair backend_init(const char * label) {
         ggml_backend_free(bp.cpu_backend);
         throw;
     }
-    g_backend_current = (int) g_backend_slots.size() - 1;
+    g_backend_current      = (int) g_backend_slots.size() - 1;
+    g_backend_last_threads = n_threads;
     return bp;
+}
+
+// The CPU thread count the latest load's backend pair runs with (see
+// g_backend_last_threads), or 0 before any load.
+static int backend_cpu_threads_loaded(void) {
+    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
+    return g_backend_last_threads;
 }
 
 // Release a backend reference. Frees GPU + CPU backends when refcount hits 0.

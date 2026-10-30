@@ -1032,6 +1032,10 @@ size_t store_vram_bytes_except(const ModelStore * s, const std::vector<const Mod
     return total;
 }
 
+int store_backend_cpu_threads(void) {
+    return backend_cpu_threads_loaded();
+}
+
 int store_gpu_module_count(const ModelStore * s) {
     if (!s) {
         return 0;

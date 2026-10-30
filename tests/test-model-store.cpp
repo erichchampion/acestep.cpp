@@ -10,6 +10,7 @@
 // Scans the registry exactly like the CLI binaries and picks the first entry
 // of each bucket (LM, DiT, VAE).
 
+#include "backend-config.h"
 #include "model-registry.h"
 #include "model-store.h"
 #include "pipeline-lm.h"
@@ -523,6 +524,48 @@ static void usage(const char * prog) {
             prog);
 }
 
+// Scenario 10: the CPU thread count a load ran with (cadenza-audio #889). A
+// load shared from a live pair runs with that pair's count, not the one
+// configured since; a pair made once none is alive runs with the new one.
+static int scenario_loaded_threads(const char * vae_path) {
+    fprintf(stderr, "[Test] scenario 10: loaded CPU threads\n");
+    ModelKey k_enc = { MODEL_VAE_ENC, vae_path, 0, 0, "", 1.0f };
+    ModelKey k_dec = { MODEL_VAE_DEC, vae_path, 0, 0, "", 1.0f };
+    int      rc    = 0;
+
+    ace_backend_set_threads(3);
+    ModelStore * s   = store_create(EVICT_NEVER);
+    auto *       enc = store_require_vae_enc(s, k_enc);
+    if (!enc || store_backend_cpu_threads() != 3) {
+        fprintf(stderr, "[Test] FAIL: a pair made at 3 threads reads %d\n", store_backend_cpu_threads());
+        rc = 1;
+    }
+    // The encoder holds the pair, so the decoder shares it.
+    ace_backend_set_threads(5);
+    auto * dec = store_require_vae_dec(s, k_dec);
+    if (!dec || store_backend_cpu_threads() != 3) {
+        fprintf(stderr, "[Test] FAIL: a load sharing the 3-thread pair reads %d\n", store_backend_cpu_threads());
+        rc = 1;
+    }
+    store_release(s, enc);
+    store_release(s, dec);
+    store_free(s);
+
+    s   = store_create(EVICT_NEVER);
+    dec = store_require_vae_dec(s, k_dec);
+    if (!dec || store_backend_cpu_threads() != 5) {
+        fprintf(stderr, "[Test] FAIL: a pair made at 5 threads reads %d\n", store_backend_cpu_threads());
+        rc = 1;
+    }
+    store_release(s, dec);
+    store_free(s);
+    ace_backend_set_threads(0);
+    if (rc == 0) {
+        fprintf(stderr, "[Test] scenario 10: PASS\n");
+    }
+    return rc;
+}
+
 int main(int argc, char ** argv) {
     const char * models_dir = nullptr;
 
@@ -579,6 +622,7 @@ int main(int argc, char ** argv) {
     rc |= scenario_integration(lm_path, dit_path, vae_path);
     rc |= scenario_release_unheld(vae_path);
     rc |= scenario_vram_except(vae_path);
+    rc |= scenario_loaded_threads(vae_path);
 
     if (rc == 0) {
         fprintf(stderr, "[Test] ALL PASS\n");
