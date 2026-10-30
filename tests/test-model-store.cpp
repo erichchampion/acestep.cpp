@@ -527,34 +527,49 @@ static void usage(const char * prog) {
 // Scenario 10: the CPU thread count a load ran with (cadenza-audio #889). A
 // load shared from a live pair runs with that pair's count, not the one
 // configured since; a pair made once none is alive runs with the new one.
+// The counts fit any host: a configured count is capped at its logical CPUs.
 static int scenario_loaded_threads(const char * vae_path) {
     fprintf(stderr, "[Test] scenario 10: loaded CPU threads\n");
-    ModelKey k_enc = { MODEL_VAE_ENC, vae_path, 0, 0, "", 1.0f };
-    ModelKey k_dec = { MODEL_VAE_DEC, vae_path, 0, 0, "", 1.0f };
-    int      rc    = 0;
+    ModelKey  k_enc = { MODEL_VAE_ENC, vae_path, 0, 0, "", 1.0f };
+    ModelKey  k_dec = { MODEL_VAE_DEC, vae_path, 0, 0, "", 1.0f };
+    const int a     = 1;
+    const int b     = ace_logical_cpus() > 1 ? 2 : 1;
+    int       rc    = 0;
+    unsigned long long before = 0, after = 0;
 
-    ace_backend_set_threads(3);
+    store_last_load_cpu_threads(&before);
+    ace_backend_set_threads(a);
     ModelStore * s   = store_create(EVICT_NEVER);
     auto *       enc = store_require_vae_enc(s, k_enc);
-    if (!enc || store_backend_cpu_threads() != 3) {
-        fprintf(stderr, "[Test] FAIL: a pair made at 3 threads reads %d\n", store_backend_cpu_threads());
+    int          got = store_last_load_cpu_threads(&after);
+    if (!enc || got != a || after != before + 1) {
+        fprintf(stderr, "[Test] FAIL: a pair made at %d threads reads %d after %llu loads\n", a, got, after - before);
         rc = 1;
     }
     // The encoder holds the pair, so the decoder shares it.
-    ace_backend_set_threads(5);
+    ace_backend_set_threads(b);
     auto * dec = store_require_vae_dec(s, k_dec);
-    if (!dec || store_backend_cpu_threads() != 3) {
-        fprintf(stderr, "[Test] FAIL: a load sharing the 3-thread pair reads %d\n", store_backend_cpu_threads());
+    got        = store_last_load_cpu_threads(&after);
+    if (!dec || got != a || after != before + 2) {
+        fprintf(stderr, "[Test] FAIL: a load sharing the %d-thread pair reads %d after %llu loads\n", a, got,
+                after - before);
         rc = 1;
     }
     store_release(s, enc);
     store_release(s, dec);
     store_free(s);
+    // Freed, the pair's count stays, and no load has happened since.
+    got = store_last_load_cpu_threads(&before);
+    if (got != a || before != after) {
+        fprintf(stderr, "[Test] FAIL: freeing moved the reading to %d threads, %llu loads\n", got, before);
+        rc = 1;
+    }
 
     s   = store_create(EVICT_NEVER);
     dec = store_require_vae_dec(s, k_dec);
-    if (!dec || store_backend_cpu_threads() != 5) {
-        fprintf(stderr, "[Test] FAIL: a pair made at 5 threads reads %d\n", store_backend_cpu_threads());
+    got = store_last_load_cpu_threads(&after);
+    if (!dec || got != b || after != before + 1) {
+        fprintf(stderr, "[Test] FAIL: a pair made at %d threads reads %d\n", b, got);
         rc = 1;
     }
     store_release(s, dec);

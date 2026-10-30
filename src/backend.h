@@ -63,8 +63,12 @@ static int                      g_backend_current = -1;  // the one new loads sh
 // The CPU thread count of the pair the latest backend_init handed out, made
 // or shared, or 0 before any: what a load ran with, which a config set since
 // does not change while a pair made before it is still shared
-// (cadenza-audio #889). Under backend_slots_mtx.
+// (cadenza-audio #889). Kept after that pair is freed, so it is read with
+// g_backend_inits, the backend_inits so far: a caller that noted the count
+// before its loads tells "none since" from a count left by earlier ones.
+// Under backend_slots_mtx.
 static int                      g_backend_last_threads = 0;
+static unsigned long long       g_backend_inits        = 0;
 
 // The auto GGML CPU thread count: one thread per useful physical core. GEMM
 // shares SIMD units across hyperthreads, so one-per-physical is optimal.
@@ -313,6 +317,7 @@ static BackendPair backend_init(const char * label) {
         BackendSlot & slot = g_backend_slots[g_backend_current];
         slot.refs++;
         g_backend_last_threads = slot.n_threads;
+        g_backend_inits++;
         fprintf(stderr, "[Load] %s backend: %s (shared)\n", label, ggml_backend_name(slot.bp.backend));
         return slot.bp;
     }
@@ -388,13 +393,18 @@ static BackendPair backend_init(const char * label) {
     }
     g_backend_current      = (int) g_backend_slots.size() - 1;
     g_backend_last_threads = n_threads;
+    g_backend_inits++;
     return bp;
 }
 
-// The CPU thread count the latest load's backend pair runs with (see
-// g_backend_last_threads), or 0 before any load.
-static int backend_cpu_threads_loaded(void) {
+// The CPU thread count the latest load's backend pair ran with, or 0 before
+// any load; `inits`, when given, gets the backend_inits so far (see
+// g_backend_last_threads). Both read under one lock.
+static int backend_cpu_threads_loaded(unsigned long long * inits) {
     std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
+    if (inits) {
+        *inits = g_backend_inits;
+    }
     return g_backend_last_threads;
 }
 
