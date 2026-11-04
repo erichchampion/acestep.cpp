@@ -561,13 +561,18 @@ static int scenario_loaded_threads(const char * vae_path) {
     // loads wrote -- the thread record and load count, the live pairs and
     // the one new loads share -- one copy per binary, not one per TU
     // (cadenza-audio #900).
-    unsigned long long here = 0;
-    if (backend_cpu_threads_loaded(&here) != got || here != after) {
-        fprintf(stderr, "[Test] FAIL: this file's backend state reads %llu loads, model-store's %llu: a copy per TU\n",
-                here, after);
+    unsigned long long here    = 0;
+    const int          threads = backend_cpu_threads_loaded(&here);
+    if (threads != got || here != after) {
+        fprintf(stderr,
+                "[Test] FAIL: this file's backend state reads %d threads after %llu loads, model-store's %d after "
+                "%llu: a copy per TU\n",
+                threads, here, got, after);
         rc = 1;
     }
-    {
+    // Only while the encoder holds a pair: a failed load leaves none, and
+    // says so above.
+    if (enc) {
         std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
         if (backend_slots().empty() || g_backend_current < 0) {
             fprintf(stderr, "[Test] FAIL: this file sees %zu live pairs and current %d while the encoder holds one: "

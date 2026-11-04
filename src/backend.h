@@ -32,10 +32,11 @@ struct BackendPair {
 };
 
 // Cached backend state, shared across every model that loads within one binary.
-// Inline (cadenza-audio #900): one copy per linked binary -- the linker merges
-// inline definitions within a binary, not across a dynamic library and its
-// host, as backend-config.h says of its own -- whichever translation unit
-// reaches backend_init(): model-store.cpp's store_require_* for every engine
+// Inline (cadenza-audio #900): one copy per statically linked image, as
+// backend-config.h says of its own -- across a dynamic library and its host it
+// depends on symbol visibility and dyld's weak coalescing, so don't count on
+// either -- whichever translation unit reaches backend_init(): model-store.cpp's
+// store_require_* for every engine
 // load, the neural-codec tool's own VAE load, or any loader added later. So
 // their loads share one cache, one refcount and one record of the threads a
 // load ran with.
@@ -303,7 +304,8 @@ static inline bool ace_backend_device_available(const char * name) {
 // release it.
 static void backend_invalidate(ggml_backend_t backend) {
     std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
-    if (g_backend_current >= 0 && backend_slots()[g_backend_current].bp.backend == backend) {
+    auto &                                slots = backend_slots();
+    if (g_backend_current >= 0 && slots[g_backend_current].bp.backend == backend) {
         fprintf(stderr, "[Load] %s backend failed: new loads get a fresh one\n", ggml_backend_name(backend));
         g_backend_current = -1;
     }
@@ -315,13 +317,14 @@ static void backend_invalidate(ggml_backend_t backend) {
 // Subsequent calls reuse the same backend (single VMM pool).
 static BackendPair backend_init(const char * label) {
     std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
+    auto &                                slots = backend_slots();
     // A shared backend a failed command buffer left broken (#403) is not
     // handed out again: this load, and every one after, gets a fresh pair.
-    if (g_backend_current >= 0 && !ace_backend_healthy(backend_slots()[g_backend_current].bp.backend)) {
-        backend_invalidate(backend_slots()[g_backend_current].bp.backend);
+    if (g_backend_current >= 0 && !ace_backend_healthy(slots[g_backend_current].bp.backend)) {
+        backend_invalidate(slots[g_backend_current].bp.backend);
     }
     if (g_backend_current >= 0) {
-        BackendSlot & slot = backend_slots()[g_backend_current];
+        BackendSlot & slot = slots[g_backend_current];
         slot.refs++;
         g_backend_last_threads = slot.n_threads;
         g_backend_inits++;
@@ -390,7 +393,7 @@ static BackendPair backend_init(const char * label) {
     fprintf(stderr, "[Load] %s backend: %s (CPU threads: %d)\n", label, ggml_backend_name(bp.backend), n_threads);
 
     try {
-        backend_slots().push_back({ bp, 1, n_threads });
+        slots.push_back({ bp, 1, n_threads });
     } catch (...) {
         if (bp.backend && bp.backend != bp.cpu_backend) {
             ggml_backend_free(bp.backend);
@@ -398,7 +401,7 @@ static BackendPair backend_init(const char * label) {
         ggml_backend_free(bp.cpu_backend);
         throw;
     }
-    g_backend_current      = (int) backend_slots().size() - 1;
+    g_backend_current      = (int) slots.size() - 1;
     g_backend_last_threads = n_threads;
     g_backend_inits++;
     return bp;
@@ -427,14 +430,15 @@ static void backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) 
         return;
     }
     std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
-    int i = 0;
-    while (i < (int) backend_slots().size() && backend_slots()[i].bp.backend != backend) {
+    auto &                                slots = backend_slots();
+    int                                   i     = 0;
+    while (i < (int) slots.size() && slots[i].bp.backend != backend) {
         i++;
     }
-    if (i == (int) backend_slots().size()) {
+    if (i == (int) slots.size()) {
         return;
     }
-    if (--backend_slots()[i].refs > 0) {
+    if (--slots[i].refs > 0) {
         return;
     }
     if (backend != cpu_backend) {
@@ -444,7 +448,7 @@ static void backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) 
     if (cpu_backend) {
         ggml_backend_free(cpu_backend);
     }
-    backend_slots().erase(backend_slots().begin() + i);
+    slots.erase(slots.begin() + i);
     if (g_backend_current == i) {
         g_backend_current = -1;
     } else if (g_backend_current > i) {
