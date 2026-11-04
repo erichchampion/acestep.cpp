@@ -322,9 +322,19 @@ static bool pinned_encode_src_and_timbre(AceSynth *    ctx,
         if (ops_encode_src(ctx, src_audio, src_len, src_latents, src_T_latent, s, progress) != 0) {
             return false;
         }
+        // Kept for a run again (#875) -- before the FSQ roundtrip degrades
+        // them in place -- unless the run reads the source's samples again:
+        // repaint's and a lego region's padded_src, spliced after decode, and
+        // encoded padded.
+        if (have_src_audio && !have_src_latents && s.padded_src.empty()) {
+            ctx->kept_src_latents = s.cover_latents;
+        }
     }
     if (ops_encode_timbre(ctx, ref_audio, ref_len, ref_latents, ref_T_latent, s, progress) != 0) {
         return false;
+    }
+    if (s.timbre_encoded) {
+        ctx->kept_ref_latents = s.timbre_feats;
     }
     return true;
 }
@@ -654,24 +664,21 @@ static AceSynthJob * run_complete(AceSynth *         ctx,
     return job_owner.release();
 }
 
-// Phase 1 entry point. Dispatches on reqs[0].task_type to the right task
-// function. task_type is always set: request_init defaults it to text2music,
-// the JSON parser ignores empty strings.
-AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
-                                    const AceRequest * reqs,
-                                    const float *      src_audio,
-                                    int                src_len,
-                                    const float *      src_latents,
-                                    int                src_T_latent,
-                                    const float *      ref_audio,
-                                    int                ref_len,
-                                    const float *      ref_latents,
-                                    int                ref_T_latent,
-                                    int                batch_n,
-                                    AceProgress        progress) {
-    if (!ctx || !reqs || batch_n < 1 || batch_n > 9) {
-        return NULL;
-    }
+// Dispatches on reqs[0].task_type to the right task function. task_type is
+// always set: request_init defaults it to text2music, the JSON parser ignores
+// empty strings.
+static AceSynthJob * run_task(AceSynth *         ctx,
+                              const AceRequest * reqs,
+                              const float *      src_audio,
+                              int                src_len,
+                              const float *      src_latents,
+                              int                src_T_latent,
+                              const float *      ref_audio,
+                              int                ref_len,
+                              const float *      ref_latents,
+                              int                ref_T_latent,
+                              int                batch_n,
+                              AceProgress        progress) {
     const std::string & task = reqs[0].task_type;
     if (task == TASK_TEXT2MUSIC) {
         return run_text2music(ctx, reqs, ref_audio, ref_len, ref_latents, ref_T_latent, batch_n, progress);
@@ -702,6 +709,46 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
     }
     fprintf(stderr, "[Synth-Run] ERROR: unknown task_type '%s'\n", task.c_str());
     return NULL;
+}
+
+// Phase 1 entry point.
+AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
+                                    const AceRequest * reqs,
+                                    const float *      src_audio,
+                                    int                src_len,
+                                    const float *      src_latents,
+                                    int                src_T_latent,
+                                    const float *      ref_audio,
+                                    int                ref_len,
+                                    const float *      ref_latents,
+                                    int                ref_T_latent,
+                                    int                batch_n,
+                                    AceProgress        progress) {
+    if (!ctx || !reqs || batch_n < 1 || batch_n > 9) {
+        return NULL;
+    }
+    // This run's encodes only, and only while it has not succeeded (#875).
+    ace_synth_take_encoded(ctx, NULL, NULL);
+    AceSynthJob * job = run_task(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len,
+                                 ref_latents, ref_T_latent, batch_n, progress);
+    if (job) {
+        ace_synth_take_encoded(ctx, NULL, NULL);
+    }
+    return job;
+}
+
+void ace_synth_take_encoded(AceSynth * ctx, std::vector<float> * src_latents, std::vector<float> * ref_latents) {
+    std::vector<float> src, ref;
+    if (ctx) {
+        src.swap(ctx->kept_src_latents);
+        ref.swap(ctx->kept_ref_latents);
+    }
+    if (src_latents) {
+        src_latents->swap(src);
+    }
+    if (ref_latents) {
+        ref_latents->swap(ref);
+    }
 }
 
 // Pointer to the post-DiT latent for one track in s.output, time-major

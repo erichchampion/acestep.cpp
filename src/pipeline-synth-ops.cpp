@@ -403,8 +403,9 @@ int ops_encode_timbre(const AceSynth * ctx,
             s.S_ref_timbre = 1;
             s.timbre_feats.assign(ctx->meta->silence_full.data(), ctx->meta->silence_full.data() + 64);
         } else {
-            s.S_ref_timbre = T_ref;
+            s.S_ref_timbre   = T_ref;
             s.timbre_feats.assign(ref_lat_buf.data(), ref_lat_buf.data() + (size_t) T_ref * 64);
+            s.timbre_encoded = true;
             fprintf(stderr, "[Encode-Timbre] ref_audio: %d frames (%.1fs), %.1f ms\n", T_ref, (float) T_ref / 25.0f,
                     s.timer.ms());
         }

@@ -79,6 +79,16 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
                                     int                batch_n,
                                     AceProgress        progress = {});
 
+// The VAE encodes the last ace_synth_job_run_dit on ctx made from samples
+// before it failed, moved into *src_latents and *ref_latents (either may be
+// NULL; ctx keeps none after), each [T_latent * 64] f32 time-major: what that
+// side's *_latents takes, so a run again skips the encode (cadenza-audio
+// #875). A run that succeeded keeps none. A side is empty when the run gave it
+// latents, its encode did not finish (or the timbre's fell back to silence),
+// or -- the source of a repaint or a lego region -- the run reads its samples
+// again after the encode, so latents would not make the same takes.
+void ace_synth_take_encoded(AceSynth * ctx, std::vector<float> * src_latents, std::vector<float> * ref_latents);
+
 // Access the post-DiT denoised latent for one track of the job, owned by the
 // job and valid until ace_synth_job_free. Layout is flat [T_latent * 64] f32
 // time-major, identical to the /vae wire format: feeding it to /vae decode
