@@ -211,8 +211,9 @@ int    store_gpu_module_count(const ModelStore * s);
 // or any one store's: with several engines loading at once it is whichever
 // loaded last. `loads`, when given, gets the module loads so far, read with
 // the count: a caller that noted it before its own loads knows whether the
-// count is theirs. Read from the one translation unit whose loads reach
-// backend_init.
+// count is theirs. Every load in the process counts, whichever translation
+// unit reached backend_init: its state is one program-wide copy
+// (cadenza-audio #900).
 int    store_last_load_cpu_threads(unsigned long long * loads = nullptr);
 // The same sum without the modules of `keys` (null entries skipped): what
 // the store holds beyond a run's own set, for an embedder weighing that run's

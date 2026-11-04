@@ -11,6 +11,7 @@
 // of each bucket (LM, DiT, VAE).
 
 #include "backend-config.h"
+#include "backend.h"
 #include "model-registry.h"
 #include "model-store.h"
 #include "pipeline-lm.h"
@@ -528,6 +529,8 @@ static void usage(const char * prog) {
 // load shared from a live pair runs with that pair's count, not the one
 // configured since; a pair made once none is alive runs with the new one.
 // The counts fit any host: a configured count is capped at its logical CPUs.
+// On a one-CPU host both are 1, so a shared pair's count and the configured
+// one can't be told apart there: the scenario says so, and checks the rest.
 static int scenario_loaded_threads(const char * vae_path) {
     fprintf(stderr, "[Test] scenario 10: loaded CPU threads\n");
     ModelKey  k_enc = { MODEL_VAE_ENC, vae_path, 0, 0, "", 1.0f };
@@ -536,6 +539,10 @@ static int scenario_loaded_threads(const char * vae_path) {
     const int b     = ace_logical_cpus() > 1 ? 2 : 1;
     int       rc    = 0;
     unsigned long long before = 0, after = 0;
+    if (a == b) {
+        fprintf(stderr, "[Test] scenario 10: one logical CPU: a shared pair's count and a new one's are both %d, "
+                        "so sharing is not told from the configured count here\n", a);
+    }
 
     store_last_load_cpu_threads(&before);
     ace_backend_set_threads(a);
@@ -543,7 +550,18 @@ static int scenario_loaded_threads(const char * vae_path) {
     auto *       enc = store_require_vae_enc(s, k_enc);
     int          got = store_last_load_cpu_threads(&after);
     if (!enc || got != a || after != before + 1) {
-        fprintf(stderr, "[Test] FAIL: a pair made at %d threads reads %d after %llu loads\n", a, got, after - before);
+        fprintf(stderr,
+                "[Test] FAIL: a pair made at %d threads reads %d after %llu loads (or a pair an earlier "
+                "scenario left alive was shared)\n",
+                a, got, after - before);
+        rc = 1;
+    }
+    // This translation unit reads the same backend state model-store.cpp's
+    // loads wrote: one program-wide copy, not one per TU (cadenza-audio #900).
+    unsigned long long here = 0;
+    if (backend_cpu_threads_loaded(&here) != got || here != after) {
+        fprintf(stderr, "[Test] FAIL: this file's backend state reads %llu loads, model-store's %llu: a copy per TU\n",
+                here, after);
         rc = 1;
     }
     // The encoder holds the pair, so the decoder shares it.

@@ -32,13 +32,11 @@ struct BackendPair {
 };
 
 // Cached backend state, shared across every model that loads within one binary.
-// static-in-header (internal linkage) means one copy per TU, not one program-wide
-// like ace_backend_config() -- and that is fine only because exactly one TU per
-// binary ever reaches backend_init(): in the engine every load goes through
-// model-store.cpp's store_require_*, and the neural-codec tool is a standalone TU
-// that loads its own VAE. If a second TU in the same binary ever called a loader
-// directly, its loads would get a separate cache and refcount and not share --
-// make this a shared singleton (ace_backend_config-style) if that day comes.
+// C++17 inline variables (cadenza-audio #900): one copy program-wide, like
+// ace_backend_config(), whichever translation unit reaches backend_init() --
+// model-store.cpp's store_require_* for every engine load, the neural-codec
+// tool's own VAE load, or any loader added later -- so their loads share one
+// cache, one refcount and one record of the threads a load ran with.
 //
 // Each backend pair counts its own holders (#403): a GPU backend left in the
 // error state by a failed command buffer is taken out of sharing
@@ -50,16 +48,17 @@ struct BackendSlot {
     int         n_threads;  // the CPU backend's thread count, as made
 };
 
-static std::vector<BackendSlot> g_backend_slots;        // every live pair
+inline std::vector<BackendSlot> g_backend_slots;        // every live pair
 // Guards the slots and the current index: a GPU failure's sweep may run on
 // one engine's thread while another engine loads (#613). Recursive, as
 // backend_init invalidates; taken after a store's own mutex, never before.
-// Leaked, as the Metal statics are (#402).
-static std::recursive_mutex & backend_slots_mtx() {
+// Leaked, as the Metal statics are (#402). Inline, so its one mutex is the
+// program's, as the state it guards is.
+inline std::recursive_mutex & backend_slots_mtx() {
     static auto * m = new std::recursive_mutex();
     return *m;
 }
-static int                      g_backend_current = -1;  // the one new loads share, or -1
+inline int                      g_backend_current = -1;  // the one new loads share, or -1
 // The CPU thread count of the pair the latest backend_init handed out, made
 // or shared, or 0 before any: what a load ran with, which a config set since
 // does not change while a pair made before it is still shared
@@ -67,8 +66,8 @@ static int                      g_backend_current = -1;  // the one new loads sh
 // g_backend_inits, the backend_inits so far: a caller that noted the count
 // before its loads tells "none since" from a count left by earlier ones.
 // Under backend_slots_mtx.
-static int                      g_backend_last_threads = 0;
-static unsigned long long       g_backend_inits        = 0;
+inline int                      g_backend_last_threads = 0;
+inline unsigned long long       g_backend_inits        = 0;
 
 // The auto GGML CPU thread count: one thread per useful physical core. GEMM
 // shares SIMD units across hyperthreads, so one-per-physical is optimal.
