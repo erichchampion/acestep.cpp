@@ -550,19 +550,30 @@ static int scenario_loaded_threads(const char * vae_path) {
     auto *       enc = store_require_vae_enc(s, k_enc);
     int          got = store_last_load_cpu_threads(&after);
     if (!enc || got != a || after != before + 1) {
-        fprintf(stderr,
-                "[Test] FAIL: a pair made at %d threads reads %d after %llu loads (or a pair an earlier "
-                "scenario left alive was shared)\n",
-                a, got, after - before);
+        // Loaded, and counted, but at another count: likely a pair an
+        // earlier scenario left alive, shared at its own count.
+        const bool shared = enc && after == before + 1;
+        fprintf(stderr, "[Test] FAIL: a pair made at %d threads reads %d after %llu loads%s\n", a, got,
+                after - before, shared ? " (a pair an earlier scenario left alive, shared?)" : "");
         rc = 1;
     }
     // This translation unit reads the same backend state model-store.cpp's
-    // loads wrote: one program-wide copy, not one per TU (cadenza-audio #900).
+    // loads wrote -- the thread record and load count, the live pairs and
+    // the one new loads share -- one copy per binary, not one per TU
+    // (cadenza-audio #900).
     unsigned long long here = 0;
     if (backend_cpu_threads_loaded(&here) != got || here != after) {
         fprintf(stderr, "[Test] FAIL: this file's backend state reads %llu loads, model-store's %llu: a copy per TU\n",
                 here, after);
         rc = 1;
+    }
+    {
+        std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
+        if (backend_slots().empty() || g_backend_current < 0) {
+            fprintf(stderr, "[Test] FAIL: this file sees %zu live pairs and current %d while the encoder holds one: "
+                            "a copy per TU\n", backend_slots().size(), g_backend_current);
+            rc = 1;
+        }
     }
     // The encoder holds the pair, so the decoder shares it.
     ace_backend_set_threads(b);
