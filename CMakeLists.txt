@@ -151,6 +151,7 @@ endif()
 
 # Core library (shared between binaries)
 add_library(acestep-core STATIC
+    src/backend.cpp
     src/request.cpp
     src/model-store.cpp
     src/pipeline-lm.cpp
@@ -236,7 +237,10 @@ if(ACESTEP_BUILD_TOOLS)
     link_ggml_backends(quantize)
 
     # neural-codec: Oobleck VAE neural audio codec (encode/decode WAV <-> latent)
+    # It loads its VAE through backend.h, whose state is acestep-core's
+    # (src/backend.cpp, cadenza-audio #973).
     add_executable(neural-codec tools/neural-codec.cpp)
+    target_link_libraries(neural-codec PRIVATE acestep-core)
     link_ggml_backends(neural-codec)
 
     # mp3-codec: MP3 encoder/decoder (standalone, no ggml needed)

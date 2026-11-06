@@ -560,7 +560,7 @@ static int scenario_loaded_threads(const char * vae_path) {
     // This translation unit reads the same backend state model-store.cpp's
     // loads wrote -- the thread record and load count, the live pairs and
     // the one new loads share -- one copy per binary, not one per TU
-    // (cadenza-audio #900).
+    // (cadenza-audio #900; defined once, in backend.cpp, since #973).
     unsigned long long here    = 0;
     const int          threads = backend_cpu_threads_loaded(&here);
     if (threads != got || here != after) {
