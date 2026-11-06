@@ -128,7 +128,7 @@ inline bool is_cpu(ggml_backend_t b) {
 
 // A function the backend's own registry exports by name -- the patched
 // ggml's ggml_backend_metal_has_error, ggml_backend_metal_set_n_cb -- or
-// null for a backend without it. The one lookup backend.h shares.
+// null for a backend without it. The one lookup backend.h and backend.cpp share.
 inline void * backend_proc(ggml_backend_t b, const char * name) {
     ggml_backend_dev_t d = b ? ggml_backend_get_device(b) : nullptr;
     ggml_backend_reg_t r = d ? ggml_backend_dev_backend_reg(d) : nullptr;

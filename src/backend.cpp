@@ -4,6 +4,11 @@
 
 #include "backend.h"
 
+#include <thread>
+#ifdef __APPLE__
+#    include <sys/sysctl.h>
+#endif
+
 // Every live pair. Made on first use and leaked, as the mutex below is:
 // constructed before any load reaches it, whichever translation unit's static
 // initialisation runs first, and never destroyed under a late release at exit.
@@ -27,8 +32,9 @@ int                g_backend_current = -1;  // the one new loads share, or -1
 // g_backend_inits, the backend_inits so far: a caller that noted the count
 // before its loads tells "none since" from a count left by earlier ones.
 // Under backend_slots_mtx.
-int                g_backend_last_threads = 0;
-unsigned long long g_backend_inits        = 0;
+// File-local: backend_cpu_threads_loaded is their reader, under the lock.
+static int                g_backend_last_threads = 0;
+static unsigned long long g_backend_inits        = 0;
 
 // The auto GGML CPU thread count: one thread per useful physical core. GEMM
 // shares SIMD units across hyperthreads, so one-per-physical is optimal.

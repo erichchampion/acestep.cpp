@@ -609,7 +609,7 @@ static std::string audio_encode_mp3(const float * audio, int T_audio, int sr, in
     // bounding CPU for battery/thermals means the MP3 export too, not just
     // inference. With no cap, all logical cores: MP3 is ALU-bound with a small
     // working set, so hyperthreads help here (unlike GGML GEMM, which shares SIMD
-    // units, hence the P-core default in backend.h -- so both the auto default and
+    // units, hence the P-core default in backend.cpp -- so both the auto default and
     // the clamp ceiling here are the logical count, not that P-core count). Same
     // shared clamp as backend_cpu_n_threads(), sourced from the same ace_logical_cpus()
     // (robust to hardware_concurrency() returning 0 via an Apple sysctl), so an

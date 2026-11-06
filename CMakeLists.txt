@@ -237,10 +237,11 @@ if(ACESTEP_BUILD_TOOLS)
     link_ggml_backends(quantize)
 
     # neural-codec: Oobleck VAE neural audio codec (encode/decode WAV <-> latent)
-    # It loads its VAE through backend.h, whose state is acestep-core's
-    # (src/backend.cpp, cadenza-audio #973).
-    add_executable(neural-codec tools/neural-codec.cpp)
-    target_link_libraries(neural-codec PRIVATE acestep-core)
+    # It loads its VAE through backend.h, so it compiles backend.cpp, the
+    # state's one definition (cadenza-audio #973) -- its own copy rather than
+    # acestep-core, whose PUBLIC ACESTEP_FATAL_THROWS would turn the tool's
+    # fatals, which nothing here catches, into an abort.
+    add_executable(neural-codec tools/neural-codec.cpp src/backend.cpp)
     link_ggml_backends(neural-codec)
 
     # mp3-codec: MP3 encoder/decoder (standalone, no ggml needed)

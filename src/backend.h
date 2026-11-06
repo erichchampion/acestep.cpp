@@ -18,12 +18,8 @@
 #include <cstring>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
-#ifdef __APPLE__
-#    include <sys/sysctl.h>
-#endif
 
 struct BackendPair {
     ggml_backend_t backend;
@@ -57,11 +53,6 @@ std::vector<BackendSlot> & backend_slots();
 // mutex, never before.
 std::recursive_mutex &     backend_slots_mtx();
 extern int                 g_backend_current;       // the one new loads share, or -1
-// The CPU thread count of the pair the latest backend_init handed out, and
-// the backend_inits so far (see backend_cpu_threads_loaded). Under
-// backend_slots_mtx.
-extern int                 g_backend_last_threads;
-extern unsigned long long  g_backend_inits;
 
 // GGML CPU thread count: an embedder override (ace_backend_configure),
 // otherwise one thread per useful physical core (backend.cpp says why).
@@ -70,8 +61,8 @@ int backend_cpu_n_threads(void);
 // ggml's backends, loaded once per process: every device lookup -- a
 // backend_init, the enumeration below -- reads the same registry. `inline`,
 // not `static inline`: one function across translation units, so its
-// once-flag is shared, and every target that includes this header has it
-// (a tool that links no model-store.cpp too).
+// once-flag is shared. (A target that calls backend_init or its kin must
+// also build backend.cpp, as acestep-core does.)
 inline void backend_load_all_once(void) {
     static std::once_flag once;
     std::call_once(once, [] { ggml_backend_load_all(); });
