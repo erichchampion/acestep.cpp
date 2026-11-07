@@ -20,7 +20,8 @@
 // CPU backend has no such state and is not asked. A failure raises
 // ace_gpu_error (an ace_fatal_error; the app build's C shim reports it as its
 // own status), naming the stage. A scheduler that could not allocate the
-// graph is out of memory, not a GPU fault: std::bad_alloc in the app build
+// graph is out of memory, not a GPU fault: ace_graph_alloc_error, a
+// std::bad_alloc, in the app build
 // (the CLIs' ace_fatal otherwise).
 //
 // The backend stays broken until it is recreated. Modules share one backend
@@ -41,7 +42,8 @@
 // marks the backend broken, so the store sees what Metal's flag would say;
 // ace_test_refuse_gpu_stage(<stage>) does the same as the system's refusal.
 // Set by a call, not read from the environment on every compute (#405): a
-// shipping build pays one relaxed load.
+// shipping build pays one relaxed load, behind the out-of-line call each
+// check is now (gpu-compute.cpp) -- a few calls a graph, next to the graph.
 //
 // The state all this keeps -- the sets of backends a test broke, the
 // injected stage, the per-registry export caches, the probe graph -- is
@@ -54,6 +56,7 @@
 #include "ggml.h"
 
 #include <exception>
+#include <new>
 #include <string>
 
 // The GPU failed a compute: an ace_fatal_error of its own type, so an
@@ -66,6 +69,15 @@ struct ace_gpu_error : ace_fatal_error {
     bool refused;
 
     ace_gpu_error(int c, std::string msg, bool r = false) : ace_fatal_error(c, std::move(msg)), refused(r) {}
+};
+
+// A graph the scheduler could not allocate (ace_check_compute), thrown under
+// ACESTEP_FATAL_THROWS: a std::bad_alloc, as an embedder's out-of-memory
+// handling expects, and its own type, so a tool can fail it with the status
+// the exit()ing build exits with without masking any other bad_alloc
+// (tools/tool-main.h, cadenza-audio #1049).
+struct ace_graph_alloc_error : std::bad_alloc {
+    const char * what() const noexcept override { return "could not allocate the graph"; }
 };
 
 namespace ace_gpu {

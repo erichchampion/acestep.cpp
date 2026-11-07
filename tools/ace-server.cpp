@@ -169,9 +169,7 @@ static void worker_main() {
             fn = std::move(g_work_queue.front());
             g_work_queue.pop_front();
         }
-        // A fatal thrown by a job ends the server with its status, as it does
-        // in the exit()ing build (tool-main.h).
-        ace_tool_run(fn);
+        fn();
     }
 }
 
@@ -224,6 +222,18 @@ struct Job {
     // and only reads result fields after seeing done/failed. this guarantees
     // visibility without an explicit mutex on the result fields.
 };
+
+// Queue `fn` for `job`: a fatal it throws fails that job, and the server goes
+// on (tool-main.h, cadenza-audio #1049); the backend a GPU fault broke is
+// recreated at the next load.
+template <class F> static void work_push_job(const std::shared_ptr<Job> & job, F fn) {
+    work_push([job, fn = std::move(fn)]() mutable {
+        if (!ace_tool_job(fn)) {
+            fprintf(stderr, "[Server] job %s failed: a fatal error in the engine\n", job->id.c_str());
+            job->status.store(JobStatus::FAILED);
+        }
+    });
+}
 
 static std::mutex                                            mtx_jobs;
 static std::unordered_map<std::string, std::shared_ptr<Job>> g_jobs;
@@ -668,7 +678,7 @@ static void handle_lm(const httplib::Request & req, httplib::Response & res) {
 
     request_resolve_lm_seed(&ace_req);
 
-    work_push([job, ace_req, lm_batch_size, mode]() { lm_worker(job, ace_req, lm_batch_size, mode); });
+    work_push_job(job, [job, ace_req, lm_batch_size, mode]() { lm_worker(job, ace_req, lm_batch_size, mode); });
 
     std::string body = "{\"id\":\"" + job->id + "\"}";
     res.set_content(body, "application/json");
@@ -1030,9 +1040,9 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     auto job = job_create();
     fprintf(stderr, "[Server] Job %s created (%d requests)\n", job->id.c_str(), (int) ace_reqs.size());
 
-    work_push([job, reqs = std::move(ace_reqs), src_interleaved, src_len, src_lat = std::move(src_latents),
-               src_T_latent, ref_interleaved, ref_len, ref_lat = std::move(ref_latents), ref_T_latent, output_wav,
-               wav_fmt, peak_clip]() mutable {
+    work_push_job(job, [job, reqs = std::move(ace_reqs), src_interleaved, src_len, src_lat = std::move(src_latents),
+                        src_T_latent, ref_interleaved, ref_len, ref_lat = std::move(ref_latents), ref_T_latent,
+                        output_wav, wav_fmt, peak_clip]() mutable {
         synth_worker(job, std::move(reqs), src_interleaved, src_len, std::move(src_lat), src_T_latent, ref_interleaved,
                      ref_len, std::move(ref_lat), ref_T_latent, output_wav, wav_fmt, peak_clip);
     });
@@ -1206,9 +1216,10 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
 
     request_resolve_lm_seed(&ace_req);
 
-    work_push([job, ace_req, src_interleaved, src_len, latents = std::move(src_latents), src_T_latent]() mutable {
-        understand_worker(job, ace_req, src_interleaved, src_len, std::move(latents), src_T_latent);
-    });
+    work_push_job(job,
+                  [job, ace_req, src_interleaved, src_len, latents = std::move(src_latents), src_T_latent]() mutable {
+                      understand_worker(job, ace_req, src_interleaved, src_len, std::move(latents), src_T_latent);
+                  });
 
     std::string body = "{\"id\":\"" + job->id + "\"}";
     res.set_content(body, "application/json");
@@ -1453,7 +1464,7 @@ static void handle_vae(const httplib::Request & req, httplib::Response & res) {
         fprintf(stderr, "[Server] Job %s created (vae encode, %.2fs audio)\n", job->id.c_str(),
                 (float) src_len / 48000.0f);
 
-        work_push([job, ace_req, src_interleaved, src_len]() mutable {
+        work_push_job(job, [job, ace_req, src_interleaved, src_len]() mutable {
             encode_worker(job, ace_req, src_interleaved, src_len);
         });
 
@@ -1490,7 +1501,7 @@ static void handle_vae(const httplib::Request & req, httplib::Response & res) {
     auto job = job_create();
     fprintf(stderr, "[Server] Job %s created (vae decode, %d latent frames)\n", job->id.c_str(), T);
 
-    work_push([job, ace_req, latents = std::move(src_latents), T, output_wav, wav_fmt, peak_clip]() mutable {
+    work_push_job(job, [job, ace_req, latents = std::move(src_latents), T, output_wav, wav_fmt, peak_clip]() mutable {
         decode_worker(job, ace_req, std::move(latents), T, output_wav, wav_fmt, peak_clip);
     });
 

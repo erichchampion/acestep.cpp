@@ -247,7 +247,7 @@ void ace_check_compute(ggml_status st, ggml_backend_t broken, const char * what)
     if (st == GGML_STATUS_ALLOC_FAILED) {
 #ifdef ACESTEP_FATAL_THROWS
         fprintf(stderr, "[%s] FATAL: could not allocate the graph\n", what);
-        throw std::bad_alloc();
+        throw ace_graph_alloc_error();
 #else
         ace_fatal(1, "[%s] FATAL: could not allocate the graph\n", what);
 #endif
