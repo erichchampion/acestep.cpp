@@ -70,7 +70,7 @@ struct DetokGGML {
 static bool detok_ggml_load(DetokGGML * m, const char * gguf_path) {
     m->cfg = detok_config();
 
-    BackendPair bp    = backend_init("Detokenizer");
+    BackendPair bp    = ace_backend_init("Detokenizer");
     m->backend        = bp.backend;
     m->cpu_backend    = bp.cpu_backend;
     m->use_flash_attn = bp.has_gpu;
@@ -221,6 +221,6 @@ static void detok_ggml_free(DetokGGML * m) {
         ggml_backend_sched_free(m->sched);
     }
     wctx_free(&m->wctx);
-    backend_release(m->backend, m->cpu_backend);
+    ace_backend_release(m->backend, m->cpu_backend);
     *m = {};
 }

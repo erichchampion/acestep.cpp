@@ -217,7 +217,7 @@ static void vae_ggml_load(VAEGGML * m, const char * path) {
     m->c2w = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, 7, 128, 2);
 
     // Phase 2: allocate backend buffer
-    BackendPair bp = backend_init("VAE");
+    BackendPair bp = ace_backend_init("VAE");
     m->backend     = bp.backend;
     m->cpu_backend = bp.cpu_backend;
     m->sched       = backend_sched_new(bp, 8192);
@@ -603,6 +603,6 @@ static void vae_ggml_free(VAEGGML * m) {
     if (m->weight_ctx) {
         ggml_free(m->weight_ctx);
     }
-    backend_release(m->backend, m->cpu_backend);
+    ace_backend_release(m->backend, m->cpu_backend);
     *m = {};
 }

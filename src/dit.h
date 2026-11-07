@@ -253,7 +253,7 @@ static bool dit_ggml_load(DiTGGML *    m,
                           float        adapter_scale = 1.0f) {
     // Backend init. flash_attn_ext accumulates in F16 on CPU, causing audible
     // drift over 24 layers x 8 steps: use F32 manual attention on CPU instead.
-    BackendPair bp    = backend_init("DiT");
+    BackendPair bp    = ace_backend_init("DiT");
     m->backend        = bp.backend;
     m->cpu_backend    = bp.cpu_backend;
     m->sched          = backend_sched_new(bp, 8192);
@@ -442,7 +442,7 @@ static void dit_ggml_free(DiTGGML * m) {
     if (m->sched) {
         ggml_backend_sched_free(m->sched);
     }
-    backend_release(m->backend, m->cpu_backend);
+    ace_backend_release(m->backend, m->cpu_backend);
     wctx_free(&m->wctx);
     *m = {};
 }

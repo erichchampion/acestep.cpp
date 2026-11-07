@@ -196,7 +196,7 @@ static T * install_entry(ModelStore *     s,
 
 // Take every cached module on a GPU backend that has failed (a GPU reset,
 // #403) out of service -- freed now if idle, when its holder lets go if not --
-// and stop sharing that backend (backend_invalidate), so what loads next gets
+// and stop sharing that backend (ace_backend_invalidate), so what loads next gets
 // a fresh one. A broken backend refuses every later compute until recreated,
 // and modules share it: left cached, each would fail its next run, and hold
 // its memory besides. Each distinct backend is probed once.
@@ -218,7 +218,7 @@ static void drop_on_broken_backends(ModelStore * s) {
                     continue;
                 }
                 broken.push_back(b);
-                backend_invalidate(b);
+                ace_backend_invalidate(b);
             }
             drop.push_back(kv.first);
             break;
@@ -643,7 +643,7 @@ static size_t bytes_of_fsq_detok(const DetokGGML * m) {
 
 // Owns a raw-new'd module until install_entry adopts it. Every store_require_*
 // below does `T * m = new T(); load(m); install_entry(...)`, and each load calls
-// backend_init / gf_load_tensor -- which exit(1) by default but throw under
+// ace_backend_init / gf_load_tensor -- which exit(1) by default but throw under
 // ACESTEP_FATAL_THROWS (see ace-fatal.h). #17 called out only the two void
 // loaders, but a throw escaping any of these functions skips its cleanup just
 // the same, so the half-built m -- with its backend, scheduler, ggml_context and
@@ -657,9 +657,9 @@ static size_t bytes_of_fsq_detok(const DetokGGML * m) {
 // eviction -- NOT a bare `delete`. These structs are POD: `delete m` would run a
 // trivial destructor and leak the backend/scheduler/context/buffer, since the
 // real teardown lives in qw3lm_free()/vae_enc_free()/etc. The del_* frees safely
-// on a partial module: every *_free() null-checks each handle, and backend_init
-// either fully took a ref (backend_release returns it) or threw before taking one
-// (it holds no backend, so backend_release early-returns).
+// on a partial module: every *_free() null-checks each handle, and ace_backend_init
+// either fully took a ref (ace_backend_release returns it) or threw before taking one
+// (it holds no backend, so ace_backend_release early-returns).
 //
 // dismiss() runs after install_entry, which is all-or-nothing: it rolls back its
 // first emplace if the second throws, so on any install failure m is in no
@@ -1033,7 +1033,7 @@ size_t store_vram_bytes_except(const ModelStore * s, const std::vector<const Mod
 }
 
 int store_last_load_cpu_threads(unsigned long long * loads) {
-    return backend_cpu_threads_loaded(loads);
+    return ace_backend_cpu_threads_loaded(loads);
 }
 
 int store_gpu_module_count(const ModelStore * s) {

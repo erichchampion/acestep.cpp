@@ -12,29 +12,70 @@
 // Every live pair. Made on first use and leaked, as the mutex below is:
 // constructed before any load reaches it, whichever translation unit's static
 // initialisation runs first, and never destroyed under a late release at exit.
-std::vector<BackendSlot> & backend_slots() {
+std::vector<BackendSlot> & ace_backend_slots() {
     static auto * slots = new std::vector<BackendSlot>();
     return *slots;
 }
 // Guards the slots and the current index: a GPU failure's sweep may run on
 // one engine's thread while another engine loads (#613). Recursive, as
-// backend_init invalidates; taken after a store's own mutex, never before.
+// ace_backend_init invalidates; taken after a store's own mutex, never before.
 // Leaked, as the Metal statics are (#402).
-std::recursive_mutex & backend_slots_mtx() {
+std::recursive_mutex & ace_backend_slots_mtx() {
     static auto * m = new std::recursive_mutex();
     return *m;
 }
-int                g_backend_current = -1;  // the one new loads share, or -1
-// The CPU thread count of the pair the latest backend_init handed out, made
+
+int                       g_ace_backend_current  = -1;  // the one new loads share, or -1
+// The CPU thread count of the pair the latest ace_backend_init handed out, made
 // or shared, or 0 before any: what a load ran with, which a config set since
 // does not change while a pair made before it is still shared
 // (cadenza-audio #889). Kept after that pair is freed, so it is read with
 // g_backend_inits, the backend_inits so far: a caller that noted the count
 // before its loads tells "none since" from a count left by earlier ones.
-// Under backend_slots_mtx.
-// File-local: backend_cpu_threads_loaded is their reader, under the lock.
+// Under ace_backend_slots_mtx.
+// File-local: ace_backend_cpu_threads_loaded is their reader, under the lock.
 static int                g_backend_last_threads = 0;
 static unsigned long long g_backend_inits        = 0;
+
+// ggml's backends, loaded once per process (backend.h). One once-flag for the
+// program: defined here, not inline in the header (cadenza-audio #1033).
+void ace_backend_load_all_once(void) {
+    static std::once_flag once;
+    std::call_once(once, [] { ggml_backend_load_all(); });
+}
+
+// The Metal command-buffer ceiling (backend.h). Reading it loads the registry,
+// which opens the Metal device, so it is read only when it is needed: on iOS,
+// or for an override. The registry is found by name because the shim asks
+// before any backend exists. Without the export -- no Metal, or a ggml without
+// our patch -- it is upstream's 8, which any ggml-metal's n_cb setter takes,
+// and iOS, which needs the finer split, says so. Cached once per process
+// (#1033).
+static constexpr int BACKEND_METAL_UPSTREAM_MAX_N_CB = 8;
+
+int ace_backend_metal_max_n_cb(void) {
+    static const int ceiling = [] {
+        ace_backend_load_all_once();
+        using max_n_cb_t       = int (*)(void);
+        ggml_backend_reg_t reg = ggml_backend_reg_by_name("MTL");
+        auto               max_n_cb =
+            reg ? (max_n_cb_t) ggml_backend_reg_get_proc_address(reg, "ggml_backend_metal_max_n_cb") : nullptr;
+        const int n = max_n_cb ? max_n_cb() : 0;
+        if (n >= 1) {
+            return n;
+        }
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+        if (reg) {
+            fprintf(stderr,
+                    "[Load] WARNING: this ggml does not export ggml_backend_metal_max_n_cb -- "
+                    "graphs split at most %d ways, and iOS's GPU watchdog may reset long steps\n",
+                    BACKEND_METAL_UPSTREAM_MAX_N_CB + 1);
+        }
+#endif
+        return BACKEND_METAL_UPSTREAM_MAX_N_CB;
+    }();
+    return ceiling;
+}
 
 // The auto GGML CPU thread count: one thread per useful physical core. GEMM
 // shares SIMD units across hyperthreads, so one-per-physical is optimal.
@@ -71,7 +112,7 @@ static int backend_cpu_auto_threads(void) {
 // (ace_logical_cpus(), the same source the MP3 path uses) so an absurd value cannot
 // ask GGML to spawn that many threads. The one-thread-per-physical-core reasoning is
 // the default's (backend_cpu_auto_threads); an explicit request overrides it.
-int backend_cpu_n_threads(void) {
+int ace_backend_cpu_n_threads(void) {
     return ace_resolve_threads(ace_backend_config().n_threads, ace_logical_cpus(), backend_cpu_auto_threads());
 }
 
@@ -132,14 +173,14 @@ static void backend_split_command_buffers(ggml_backend_t backend) {
 }
 
 // Stop sharing `backend` with new loads (#403): it is in the error state, and
-// the next backend_init makes a fresh pair. Its holders keep it until they
+// the next ace_backend_init makes a fresh pair. Its holders keep it until they
 // release it.
-void backend_invalidate(ggml_backend_t backend) {
-    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
-    auto &                                slots = backend_slots();
-    if (g_backend_current >= 0 && slots[g_backend_current].bp.backend == backend) {
+void ace_backend_invalidate(ggml_backend_t backend) {
+    std::lock_guard<std::recursive_mutex> lock(ace_backend_slots_mtx());
+    auto &                                slots = ace_backend_slots();
+    if (g_ace_backend_current >= 0 && slots[g_ace_backend_current].bp.backend == backend) {
         fprintf(stderr, "[Load] %s backend failed: new loads get a fresh one\n", ggml_backend_name(backend));
-        g_backend_current = -1;
+        g_ace_backend_current = -1;
     }
 }
 
@@ -147,16 +188,16 @@ void backend_invalidate(ggml_backend_t backend) {
 // pick the best one, keep CPU as fallback.
 // label: log prefix, e.g. "DiT", "VAE", "LM"
 // Subsequent calls reuse the same backend (single VMM pool).
-BackendPair backend_init(const char * label) {
-    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
-    auto &                                slots = backend_slots();
+BackendPair ace_backend_init(const char * label) {
+    std::lock_guard<std::recursive_mutex> lock(ace_backend_slots_mtx());
+    auto &                                slots = ace_backend_slots();
     // A shared backend a failed command buffer left broken (#403) is not
     // handed out again: this load, and every one after, gets a fresh pair.
-    if (g_backend_current >= 0 && !ace_backend_healthy(slots[g_backend_current].bp.backend)) {
-        backend_invalidate(slots[g_backend_current].bp.backend);
+    if (g_ace_backend_current >= 0 && !ace_backend_healthy(slots[g_ace_backend_current].bp.backend)) {
+        ace_backend_invalidate(slots[g_ace_backend_current].bp.backend);
     }
-    if (g_backend_current >= 0) {
-        BackendSlot & slot = slots[g_backend_current];
+    if (g_ace_backend_current >= 0) {
+        BackendSlot & slot = slots[g_ace_backend_current];
         slot.refs++;
         g_backend_last_threads = slot.n_threads;
         g_backend_inits++;
@@ -164,7 +205,7 @@ BackendPair backend_init(const char * label) {
         return slot.bp;
     }
 
-    backend_load_all_once();
+    ace_backend_load_all_once();
     BackendPair bp = {};
 
     // Device selection: an explicit ace_backend_configure() wins, then the
@@ -202,7 +243,7 @@ BackendPair backend_init(const char * label) {
         ace_fatal(1, "[Load] FATAL: no backend available\n");
     }
     bool best_is_cpu = (strcmp(ggml_backend_name(bp.backend), "CPU") == 0);
-    int  n_threads   = backend_cpu_n_threads();
+    int  n_threads   = ace_backend_cpu_n_threads();
     if (best_is_cpu) {
         ggml_backend_free(bp.backend);
         bp.backend     = cpu_backend_new(n_threads);
@@ -233,7 +274,7 @@ BackendPair backend_init(const char * label) {
         ggml_backend_free(bp.cpu_backend);
         throw;
     }
-    g_backend_current      = (int) slots.size() - 1;
+    g_ace_backend_current  = (int) slots.size() - 1;
     g_backend_last_threads = n_threads;
     g_backend_inits++;
     return bp;
@@ -242,8 +283,8 @@ BackendPair backend_init(const char * label) {
 // The CPU thread count the latest load's backend pair ran with, or 0 before
 // any load; `inits`, when given, gets the backend_inits so far (see
 // g_backend_last_threads). Both read under one lock.
-int backend_cpu_threads_loaded(unsigned long long * inits) {
-    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
+int ace_backend_cpu_threads_loaded(unsigned long long * inits) {
+    std::lock_guard<std::recursive_mutex> lock(ace_backend_slots_mtx());
     if (inits) {
         *inits = g_backend_inits;
     }
@@ -251,18 +292,18 @@ int backend_cpu_threads_loaded(unsigned long long * inits) {
 }
 
 // Release a backend reference. Frees GPU + CPU backends when refcount hits 0.
-void backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) {
+void ace_backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) {
     // A caller with no backend (m->backend == null) never took a ref -- e.g. a
-    // load that threw before backend_init under ACESTEP_FATAL_THROWS, whose
+    // load that threw before ace_backend_init under ACESTEP_FATAL_THROWS, whose
     // del_* still runs here. Every caller passes m->backend, so null means "no
     // ref"; decrementing would corrupt the shared count and could free a backend
     // another live module still holds. vae/vae-enc open the GGUF before
-    // backend_init, so they are the ones that reach here with a null backend.
+    // ace_backend_init, so they are the ones that reach here with a null backend.
     if (!backend) {
         return;
     }
-    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
-    auto &                                slots = backend_slots();
+    std::lock_guard<std::recursive_mutex> lock(ace_backend_slots_mtx());
+    auto &                                slots = ace_backend_slots();
     int                                   i     = 0;
     while (i < (int) slots.size() && slots[i].bp.backend != backend) {
         i++;
@@ -281,9 +322,9 @@ void backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) {
         ggml_backend_free(cpu_backend);
     }
     slots.erase(slots.begin() + i);
-    if (g_backend_current == i) {
-        g_backend_current = -1;
-    } else if (g_backend_current > i) {
-        g_backend_current--;
+    if (g_ace_backend_current == i) {
+        g_ace_backend_current = -1;
+    } else if (g_ace_backend_current > i) {
+        g_ace_backend_current--;
     }
 }

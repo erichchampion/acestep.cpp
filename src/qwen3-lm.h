@@ -167,7 +167,7 @@ static Qwen3LMConfig qw3lm_load_config(const GGUFModel & gf) {
 
 // Init backend (same pattern as qwen3.h)
 static void qw3lm_init_backend(Qwen3LM * m) {
-    BackendPair bp    = backend_init("LM");
+    BackendPair bp    = ace_backend_init("LM");
     m->backend        = bp.backend;
     m->cpu_backend    = bp.cpu_backend;
     m->sched          = backend_sched_new(bp, 8192);
@@ -807,7 +807,7 @@ static void qw3lm_free(Qwen3LM * m) {
     if (m->kv_ctx) {
         ggml_free(m->kv_ctx);
     }
-    backend_release(m->backend, m->cpu_backend);
+    ace_backend_release(m->backend, m->cpu_backend);
     wctx_free(&m->wctx);
     *m = {};
 }

@@ -26,8 +26,8 @@
 // The backend stays broken until it is recreated. Modules share one backend
 // (backend.h), so ModelStore, on every lookup -- a miss as much as a hit --
 // finds cached modules on a broken backend, stops sharing it
-// (backend_invalidate) and drops them: the next load makes a fresh backend,
-// and modules still held free the old one as they are released. backend_init
+// (ace_backend_invalidate) and drops them: the next load makes a fresh backend,
+// and modules still held free the old one as they are released. ace_backend_init
 // also refuses to share a broken backend, for loads outside the store.
 //
 // A failure the system caused -- iOS refusing GPU work from an app in the
@@ -128,7 +128,8 @@ inline bool is_cpu(ggml_backend_t b) {
 
 // A function the backend's own registry exports by name -- the patched
 // ggml's ggml_backend_metal_has_error, ggml_backend_metal_set_n_cb -- or
-// null for a backend without it. The one lookup backend.h and backend.cpp share.
+// null for a backend without it. The one lookup: the per-registry cache below
+// asks it, and backend.cpp, for the n_cb setter.
 inline void * backend_proc(ggml_backend_t b, const char * name) {
     ggml_backend_dev_t d = b ? ggml_backend_get_device(b) : nullptr;
     ggml_backend_reg_t r = d ? ggml_backend_dev_backend_reg(d) : nullptr;

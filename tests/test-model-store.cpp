@@ -559,26 +559,28 @@ static int scenario_loaded_threads(const char * vae_path) {
     }
     // This translation unit reads the same backend state model-store.cpp's
     // loads wrote -- the thread record and load count, the live pairs and
-    // the one new loads share. Defined once, in backend.cpp (#973), a copy
-    // per TU is a link error now, not something this can see; it still
-    // checks that this file's view of the state agrees with the store's
-    // (cadenza-audio #900).
+    // the one new loads share. Defined once, in backend.cpp (#973), the two
+    // views are one by construction; a disagreement now would mean the
+    // record was reset or left stale between the store's read and this one
+    // (cadenza-audio #900, #1033).
     unsigned long long here    = 0;
-    const int          threads = backend_cpu_threads_loaded(&here);
+    const int          threads = ace_backend_cpu_threads_loaded(&here);
     if (threads != got || here != after) {
         fprintf(stderr,
-                "[Test] FAIL: this file's backend state reads %d threads after %llu loads, model-store's %d after "
-                "%llu: a copy per TU\n",
+                "[Test] FAIL: the backend state reads %d threads after %llu loads, model-store's %d after "
+                "%llu: reset or stale between the two reads?\n",
                 threads, here, got, after);
         rc = 1;
     }
     // Only while the encoder holds a pair: a failed load leaves none, and
     // says so above.
     if (enc) {
-        std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
-        if (backend_slots().empty() || g_backend_current < 0) {
-            fprintf(stderr, "[Test] FAIL: this file sees %zu live pairs and current %d while the encoder holds one: "
-                            "a copy per TU\n", backend_slots().size(), g_backend_current);
+        std::lock_guard<std::recursive_mutex> lock(ace_backend_slots_mtx());
+        if (ace_backend_slots().empty() || g_ace_backend_current < 0) {
+            fprintf(stderr,
+                    "[Test] FAIL: %zu live pairs and current %d while the encoder holds one: "
+                    "its pair released or taken out of sharing early?\n",
+                    ace_backend_slots().size(), g_ace_backend_current);
             rc = 1;
         }
     }

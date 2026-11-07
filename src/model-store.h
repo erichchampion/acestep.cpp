@@ -212,7 +212,7 @@ int    store_gpu_module_count(const ModelStore * s);
 // loaded last. `loads`, when given, gets the module loads so far, read with
 // the count: a caller that noted it before its own loads knows whether the
 // count is theirs. Every load in the binary counts, whichever translation
-// unit reached backend_init: its state is defined once, in backend.cpp
+// unit reached ace_backend_init: its state is defined once, in backend.cpp
 // (cadenza-audio #900, #973).
 int    store_last_load_cpu_threads(unsigned long long * loads = nullptr);
 // The same sum without the modules of `keys` (null entries skipped): what

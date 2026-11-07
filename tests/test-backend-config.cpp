@@ -1,7 +1,7 @@
 // test-backend-config: explicit CPU thread count and device selection (#19).
 //
 // Verifies the embedder-facing contract: ace_backend_configure() sets the thread
-// count and device before first use, backend_cpu_n_threads() honours an explicit
+// count and device before first use, ace_backend_cpu_n_threads() honours an explicit
 // override (clamped to the logical CPU count) and otherwise auto-picks a positive
 // default, and clearing the config restores auto. All thread values here are
 // relative to this host's logical CPU count so the test passes on any machine.
@@ -30,7 +30,7 @@ int main() {
     // Auto by default: a positive thread count, no forced device, never more than
     // the logical CPUs.
     CHECK(ace_backend_config().device.empty());
-    const int auto_threads = backend_cpu_n_threads();
+    const int auto_threads = ace_backend_cpu_n_threads();
     CHECK(auto_threads > 0);
     if (hw > 0) {
         CHECK(auto_threads <= hw);
@@ -38,27 +38,27 @@ int main() {
 
     // An explicit count within [1, logical CPUs] is honoured exactly.
     ace_backend_configure(nullptr, 1);
-    CHECK(backend_cpu_n_threads() == 1);
+    CHECK(ace_backend_cpu_n_threads() == 1);
     ace_backend_configure(nullptr, t2);
-    CHECK(backend_cpu_n_threads() == t2);
+    CHECK(ace_backend_cpu_n_threads() == t2);
     if (hw > 0) {
         ace_backend_configure(nullptr, hw);  // exactly the ceiling
-        CHECK(backend_cpu_n_threads() == hw);
+        CHECK(ace_backend_cpu_n_threads() == hw);
         // Over the ceiling -- including an absurd value -- is clamped to it, not
         // passed through to spawn that many workers.
         ace_backend_configure(nullptr, hw + 100);
-        CHECK(backend_cpu_n_threads() == hw);
+        CHECK(ace_backend_cpu_n_threads() == hw);
         ace_backend_configure(nullptr, 100000);
-        CHECK(backend_cpu_n_threads() == hw);
+        CHECK(ace_backend_cpu_n_threads() == hw);
     }
 
     // <= 0 means auto again -- the positive default.
     ace_backend_configure(nullptr, 0);
-    CHECK(backend_cpu_n_threads() == auto_threads);
+    CHECK(ace_backend_cpu_n_threads() == auto_threads);
     ace_backend_configure(nullptr, -4);
-    CHECK(backend_cpu_n_threads() == auto_threads);
+    CHECK(ace_backend_cpu_n_threads() == auto_threads);
 
-    // ace_resolve_threads(): the shared clamp policy that both backend_cpu_n_threads
+    // ace_resolve_threads(): the shared clamp policy that both ace_backend_cpu_n_threads
     // (backend.h) and the MP3 encoder (audio-io.h) route through. Pure arithmetic, so
     // these exact values hold on any host regardless of its real core count.
     CHECK(ace_resolve_threads(0, 10, 8) == 8);        // <= 0 -> the caller's auto default
@@ -83,18 +83,18 @@ int main() {
     ace_backend_set_device("Metal");
     ace_backend_set_threads(1);
     CHECK(ace_backend_config().device == "Metal");
-    CHECK(backend_cpu_n_threads() == 1);
+    CHECK(ace_backend_cpu_n_threads() == 1);
     ace_backend_set_threads(t2);  // device untouched
     CHECK(ace_backend_config().device == "Metal");
-    CHECK(backend_cpu_n_threads() == t2);
+    CHECK(ace_backend_cpu_n_threads() == t2);
     ace_backend_set_device(nullptr);  // threads untouched
     CHECK(ace_backend_config().device.empty());
-    CHECK(backend_cpu_n_threads() == t2);
+    CHECK(ace_backend_cpu_n_threads() == t2);
     ace_backend_configure(nullptr, 0);  // reset both
 
     // A device name can be listed and checked before it is configured (#135):
     // CPU is always among them, a name is found whatever its case (as
-    // backend_init finds it), and a misspelling or an empty name is not --
+    // ace_backend_init finds it), and a misspelling or an empty name is not --
     // known now, not as a fatal at the first load.
     const size_t n_dev = ace_backend_device_count();
     CHECK(n_dev >= 1);
@@ -112,14 +112,14 @@ int main() {
     CHECK(!ace_backend_device_available(""));
     CHECK(!ace_backend_device_available(nullptr));
 
-    // End-to-end: a configured device actually drives backend_init's selection.
+    // End-to-end: a configured device actually drives ace_backend_init's selection.
     // "CPU" is always available, so this needs no GPU.
     ace_backend_configure("CPU", 1);
-    BackendPair bp = backend_init("test");
+    BackendPair bp = ace_backend_init("test");
     CHECK(bp.backend != nullptr);
     CHECK(strcmp(ggml_backend_name(bp.backend), "CPU") == 0);
     CHECK(!bp.has_gpu);
-    backend_release(bp.backend, bp.cpu_backend);
+    ace_backend_release(bp.backend, bp.cpu_backend);
     ace_backend_configure(nullptr, 0);
 
     printf("test-backend-config: auto threads = %d, logical = %d\n", auto_threads, hw);

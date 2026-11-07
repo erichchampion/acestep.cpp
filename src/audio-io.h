@@ -611,7 +611,7 @@ static std::string audio_encode_mp3(const float * audio, int T_audio, int sr, in
     // working set, so hyperthreads help here (unlike GGML GEMM, which shares SIMD
     // units, hence the P-core default in backend.cpp -- so both the auto default and
     // the clamp ceiling here are the logical count, not that P-core count). Same
-    // shared clamp as backend_cpu_n_threads(), sourced from the same ace_logical_cpus()
+    // shared clamp as ace_backend_cpu_n_threads(), sourced from the same ace_logical_cpus()
     // (robust to hardware_concurrency() returning 0 via an Apple sysctl), so an
     // absurd cap can't spawn that many encoders and auto never collapses to 1; the
     // length-based max_threads below is a second ceiling regardless. minimum ~2s per

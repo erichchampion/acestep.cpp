@@ -149,9 +149,20 @@ else()
     target_compile_options(yyjson PRIVATE -w)
 endif()
 
+# The shared backend state and the functions that keep it (src/backend.cpp,
+# cadenza-audio #973): one object library, built once with one set of
+# settings, whose objects go into acestep-core and into any tool that loads a
+# model through backend.h without acestep-core (neural-codec), rather than the
+# file sitting in two source lists (#1033). It carries the same
+# ACESTEP_FATAL_THROWS as acestep-core (set below): that define gates an
+# inline function, so one build-wide value is the only correct one, and a
+# tool linking this object library inherits it.
+add_library(acestep-backend OBJECT src/backend.cpp)
+link_ggml_backends(acestep-backend)
+
 # Core library (shared between binaries)
 add_library(acestep-core STATIC
-    src/backend.cpp
+    $<TARGET_OBJECTS:acestep-backend>
     src/request.cpp
     src/model-store.cpp
     src/pipeline-lm.cpp
@@ -193,6 +204,7 @@ target_compile_definitions(acestep-core PUBLIC GGML_MAX_NAME=128)
 option(ACESTEP_FATAL_THROWS "ace_fatal() throws instead of exit(1) (load-path only so far)" OFF)
 if(ACESTEP_FATAL_THROWS)
     target_compile_definitions(acestep-core PUBLIC ACESTEP_FATAL_THROWS)
+    target_compile_definitions(acestep-backend PUBLIC ACESTEP_FATAL_THROWS)
 endif()
 
 # The tools and the tests. Everything below is gated on ACESTEP_BUILD_TOOLS,
@@ -237,11 +249,11 @@ if(ACESTEP_BUILD_TOOLS)
     link_ggml_backends(quantize)
 
     # neural-codec: Oobleck VAE neural audio codec (encode/decode WAV <-> latent)
-    # It loads its VAE through backend.h, so it compiles backend.cpp, the
-    # state's one definition (cadenza-audio #973) -- its own copy rather than
-    # acestep-core, whose PUBLIC ACESTEP_FATAL_THROWS would turn the tool's
-    # fatals, which nothing here catches, into an abort.
-    add_executable(neural-codec tools/neural-codec.cpp src/backend.cpp)
+    # It loads its VAE through backend.h, so it links the backend state's one
+    # definition (acestep-backend, cadenza-audio #973, #1033) and nothing else
+    # of acestep-core: linking it adds its objects and its compile settings.
+    add_executable(neural-codec tools/neural-codec.cpp)
+    target_link_libraries(neural-codec PRIVATE acestep-backend)
     link_ggml_backends(neural-codec)
 
     # mp3-codec: MP3 encoder/decoder (standalone, no ggml needed)

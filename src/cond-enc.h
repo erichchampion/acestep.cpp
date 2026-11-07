@@ -87,7 +87,7 @@ struct CondGGML {
 // Tensors have prefix "encoder." for lyric/timbre, and "null_condition_emb"
 static bool cond_ggml_load(CondGGML * m, const char * gguf_path) {
     // Backend init
-    BackendPair bp    = backend_init("CondEncoder");
+    BackendPair bp    = ace_backend_init("CondEncoder");
     m->backend        = bp.backend;
     m->cpu_backend    = bp.cpu_backend;
     m->sched          = backend_sched_new(bp, 8192);
@@ -387,7 +387,7 @@ static void cond_ggml_free(CondGGML * m) {
     if (m->sched) {
         ggml_backend_sched_free(m->sched);
     }
-    backend_release(m->backend, m->cpu_backend);
+    ace_backend_release(m->backend, m->cpu_backend);
     wctx_free(&m->wctx);
     *m = {};
 }
