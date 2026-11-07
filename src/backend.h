@@ -33,27 +33,22 @@ struct BackendPair {
 // reaches ace_backend_init() -- model-store.cpp's store_require_* for every engine
 // load, the neural-codec tool's own VAE load, or any loader added later --
 // shares one cache, one refcount and one record of the threads a load ran
-// with, by construction. The state and every function that keeps it are
-// there; what stays inline here holds no state of its own.
+// with, by construction. The state is file-local there (cadenza-audio #1048):
+// only the functions below, each under its lock, can change it, and this
+// header holds none of it.
 //
 // Each backend pair counts its own holders (#403): a GPU backend left in the
 // error state by a failed command buffer is taken out of sharing
 // (ace_backend_invalidate), so the next load makes a fresh pair, while the
 // modules still on the old one free it as they are released.
-struct BackendSlot {
-    BackendPair bp;
-    int         refs;
-    int         n_threads;  // the CPU backend's thread count, as made
-};
 
-// Every live pair, made on first use and leaked (backend.cpp).
-std::vector<BackendSlot> & ace_backend_slots();
-// Guards the slots, the current index and backend.cpp's records: a GPU
-// failure's sweep may run on one engine's thread while another engine loads
-// (#613). Recursive, as ace_backend_init invalidates; taken after a store's own
-// mutex, never before.
-std::recursive_mutex &     ace_backend_slots_mtx();
-extern int                 g_ace_backend_current;  // the one new loads share, or -1
+// The sharing state as one locked read (tests): the live pairs, and the index
+// of the one new loads share, or -1.
+struct AceBackendSharing {
+    size_t live;
+    int    current;
+};
+AceBackendSharing ace_backend_sharing(void);
 
 // GGML CPU thread count: an embedder override (ace_backend_configure),
 // otherwise one thread per useful physical core (backend.cpp says why).

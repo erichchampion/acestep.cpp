@@ -4,6 +4,7 @@
 // comes from the request JSON. The registry resolves names to GGUF paths
 // under --models <dir> and --adapters <dir>.
 
+#include "tool-main.h"
 #include "audio-io.h"
 #include "model-registry.h"
 #include "model-store.h"
@@ -44,7 +45,7 @@ static void usage(const char * prog) {
             prog, d.vae_chunk, d.vae_overlap);
 }
 
-int main(int argc, char ** argv) {
+static int synth_main(int argc, char ** argv) {
     if (argc < 2) {
         usage(argv[0]);
         return 1;
@@ -331,4 +332,8 @@ int main(int argc, char ** argv) {
     store_free(store);
     fprintf(stderr, "[Ace-Synth] All done\n");
     return 0;
+}
+
+int main(int argc, char ** argv) {
+    return ace_tool_main(synth_main, argc, argv);
 }

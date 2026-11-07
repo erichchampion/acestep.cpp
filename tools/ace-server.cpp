@@ -28,6 +28,7 @@
 //   /synth      DiT + Text-Enc + VAE
 //   /understand LM + DiT + VAE
 
+#include "tool-main.h"
 #include "audio-io.h"
 #include "model-registry.h"
 #include "model-store.h"
@@ -1606,7 +1607,7 @@ static void usage(const char * prog) {
             prog, synth_d.vae_chunk, synth_d.vae_overlap, g_max_batch, lm_d.max_seq);
 }
 
-int main(int argc, char ** argv) {
+static int server_main(int argc, char ** argv) {
     ace_lm_default_params(&g_lm_params);
     ace_synth_default_params(&g_synth_params);
 
@@ -1877,4 +1878,8 @@ int main(int argc, char ** argv) {
     fprintf(stderr, "[Server] Done\n");
 
     return 0;
+}
+
+int main(int argc, char ** argv) {
+    return ace_tool_main(server_main, argc, argv);
 }

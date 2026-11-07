@@ -25,6 +25,7 @@
 //   neural-codec --vae model.gguf --encode --q4 -i song.wav -o song.nac4
 //   neural-codec --vae model.gguf --decode -i song.nac4 -o song.wav
 
+#include "tool-main.h"
 #include "audio-io.h"
 #include "vae-enc.h"
 #include "vae.h"
@@ -512,16 +513,8 @@ static int codec_main(int argc, char ** argv) {
     }
 }
 
-// A build with ACESTEP_FATAL_THROWS -- one value for every target, which this
-// tool inherits through acestep-backend (cadenza-audio #1033) -- throws a
-// fatal rather than exit()ing: caught here, so the tool still fails with the
-// fatal's message and status, not an abort.
+// A thrown fatal fails the tool with its status, as for every CLI
+// (tool-main.h, cadenza-audio #1033, #1049).
 int main(int argc, char ** argv) {
-    try {
-        return codec_main(argc, argv);
-    } catch (const ace_fatal_error & e) {
-        // ace_fatal said why before it threw; the status is the one it would
-        // have exited with. Anything else still crashes, as ace-fatal.h wants.
-        return e.code;
-    }
+    return ace_tool_main(codec_main, argc, argv);
 }

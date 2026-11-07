@@ -4,6 +4,7 @@
 //
 // Output: request JSON with metadata + lyrics, reusable as ace-lm or ace-synth input.
 
+#include "tool-main.h"
 #include "audio-io.h"
 #include "model-registry.h"
 #include "model-store.h"
@@ -52,7 +53,7 @@ static void usage(const char * prog) {
             prog, d.vae_chunk, d.vae_overlap, d.max_seq, d.max_batch);
 }
 
-int main(int argc, char ** argv) {
+static int understand_main(int argc, char ** argv) {
     const char * models_dir     = NULL;
     const char * src_audio_path = NULL;
     const char * request_path   = NULL;
@@ -206,4 +207,8 @@ int main(int argc, char ** argv) {
         request_write(&out, output_path);
     }
     return 0;
+}
+
+int main(int argc, char ** argv) {
+    return ace_tool_main(understand_main, argc, argv);
 }

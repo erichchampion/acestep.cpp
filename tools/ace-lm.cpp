@@ -3,6 +3,7 @@
 // writes output files. The model to use comes from request.lm_model, the
 // registry resolves it to a GGUF path under --models <dir>.
 
+#include "tool-main.h"
 #include "model-registry.h"
 #include "model-store.h"
 #include "pipeline-lm.h"
@@ -39,7 +40,7 @@ static void usage(const char * prog) {
             prog, d.max_seq);
 }
 
-int main(int argc, char ** argv) {
+static int lm_main(int argc, char ** argv) {
     AceLmParams params;
     ace_lm_default_params(&params);
 
@@ -176,4 +177,8 @@ int main(int argc, char ** argv) {
     ace_lm_free(ctx);
     store_free(store);
     return 0;
+}
+
+int main(int argc, char ** argv) {
+    return ace_tool_main(lm_main, argc, argv);
 }

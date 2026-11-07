@@ -29,18 +29,14 @@ struct AceBackendConfig {
     int         n_threads = 0;  // CPU worker threads; <= 0 = auto
 };
 
-// The one config instance, shared across translation units that link into the
-// same image: a function-local static inside an inline (external-linkage) function
-// has one instance per linked image, so the app's ace_backend_configure() and the
-// engine's backend init read the same object even in different TUs. acestep-core
-// links statically (build-ios-libs.sh, the CMake STATIC lib), so that image is the
-// whole app -- one instance. If the engine were ever built as a separate
-// dylib/framework, this static could duplicate across the boundary; move it to a
-// .cpp (one external definition) then.
-inline AceBackendConfig & ace_backend_config() {
-    static AceBackendConfig cfg;
-    return cfg;
-}
+// The one config instance: defined once, in backend-config.cpp (cadenza-audio
+// #1049), not as a function-local static in an inline function here, which was
+// one instance only while it stayed `inline` and the engine stayed in the app's
+// image. The app's ace_backend_configure() and the engine's backend init read
+// the same object by construction. backend-config.cpp is ggml-free, as this
+// header is, so a tool without ggml (mp3-codec, through audio-io.h) links it
+// alone (the acestep-config object library).
+AceBackendConfig & ace_backend_config();
 
 // Set the compute device: backend name, or NULL/"" for auto (falls back to the
 // GGML_BACKEND env var, then the best available device).

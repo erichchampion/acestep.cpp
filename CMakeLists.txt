@@ -149,13 +149,24 @@ else()
     target_compile_options(yyjson PRIVATE -w)
 endif()
 
+# The embedder's configuration (src/backend-config.cpp, cadenza-audio #1049):
+# its one definition, ggml-free as its header is, so the ggml-free mp3-codec
+# links it as acestep-core and neural-codec do.
+add_library(acestep-config OBJECT src/backend-config.cpp)
+
 # The shared backend state and the functions that keep it (src/backend.cpp,
-# cadenza-audio #973): one object library, built once with one set of
+# cadenza-audio #973), and the GPU-failure checks and their state
+# (src/gpu-compute.cpp, #1048): one object library, built once with one set of
 # settings, whose objects go into acestep-core and into any tool that loads a
 # model through backend.h without acestep-core (neural-codec), rather than the
-# file sitting in two source lists (#1033). It and acestep-core take
+# files sitting in two source lists (#1033). It and acestep-core take
 # ACESTEP_FATAL_THROWS from one place, acestep-fatal, below.
-add_library(acestep-backend OBJECT src/backend.cpp)
+#
+# A target linking an object library gets its objects only when it links it
+# directly (CMake does not pass them on): acestep-core links both, below, and
+# so does neural-codec; acestep-core's consumers get the objects from its
+# archive and the usage requirements through its PUBLIC links.
+add_library(acestep-backend OBJECT src/backend.cpp src/gpu-compute.cpp)
 link_ggml_backends(acestep-backend)
 
 # ace_fatal() exit(1)s by default; with this ON it throws ace_fatal_error so an
@@ -178,7 +189,6 @@ target_link_libraries(acestep-backend PUBLIC acestep-fatal)
 
 # Core library (shared between binaries)
 add_library(acestep-core STATIC
-    $<TARGET_OBJECTS:acestep-backend>
     src/request.cpp
     src/model-store.cpp
     src/pipeline-lm.cpp
@@ -186,7 +196,7 @@ add_library(acestep-core STATIC
     src/pipeline-synth-ops.cpp
     src/pipeline-understand.cpp
 )
-target_link_libraries(acestep-core PUBLIC yyjson acestep-fatal)
+target_link_libraries(acestep-core PUBLIC yyjson acestep-backend acestep-config acestep-fatal)
 link_ggml_backends(acestep-core)
 # Its public header surface is src/ -- what every embedder includes today
 # (model-store.h, pipeline-synth.h, request.h, backend-config.h) -- and ggml's
@@ -253,10 +263,11 @@ if(ACESTEP_BUILD_TOOLS)
 
     # neural-codec: Oobleck VAE neural audio codec (encode/decode WAV <-> latent)
     # It loads its VAE through backend.h, so it links the backend state's one
-    # definition (acestep-backend, cadenza-audio #973, #1033) and nothing else
-    # of acestep-core: linking it adds its objects and its compile settings.
+    # definition (acestep-backend, cadenza-audio #973, #1033) and the
+    # configuration's (acestep-config, #1049), and nothing else of
+    # acestep-core: linking them adds their objects and compile settings.
     add_executable(neural-codec tools/neural-codec.cpp)
-    target_link_libraries(neural-codec PRIVATE acestep-backend)
+    target_link_libraries(neural-codec PRIVATE acestep-backend acestep-config)
     link_ggml_backends(neural-codec)
 
     # mp3-codec: MP3 encoder/decoder (standalone, no ggml needed)
@@ -268,6 +279,9 @@ if(ACESTEP_BUILD_TOOLS)
         ${CMAKE_CURRENT_BINARY_DIR}
     )
     add_dependencies(mp3-codec version)
+    # audio-io.h reads the embedder's thread count: its one definition, which
+    # needs no ggml (cadenza-audio #1049).
+    target_link_libraries(mp3-codec PRIVATE acestep-config)
     if(MSVC)
         target_compile_options(mp3-codec PRIVATE /W4 /wd4100 /wd4505)
     else()

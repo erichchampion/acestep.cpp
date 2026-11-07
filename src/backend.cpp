@@ -9,31 +9,38 @@
 #    include <sys/sysctl.h>
 #endif
 
+// Everything below is file-local (cadenza-audio #1048): the functions in
+// backend.h are the only way to it, each under the lock.
+struct BackendSlot {
+    BackendPair bp;
+    int         refs;
+    int         n_threads;  // the CPU backend's thread count, as made
+};
+
 // Every live pair. Made on first use and leaked, as the mutex below is:
 // constructed before any load reaches it, whichever translation unit's static
 // initialisation runs first, and never destroyed under a late release at exit.
-std::vector<BackendSlot> & ace_backend_slots() {
+static std::vector<BackendSlot> & backend_slots() {
     static auto * slots = new std::vector<BackendSlot>();
     return *slots;
 }
-// Guards the slots and the current index: a GPU failure's sweep may run on
-// one engine's thread while another engine loads (#613). Recursive, as
-// ace_backend_init invalidates; taken after a store's own mutex, never before.
-// Leaked, as the Metal statics are (#402).
-std::recursive_mutex & ace_backend_slots_mtx() {
+// Guards the slots, the current index and the records below: a GPU failure's
+// sweep may run on one engine's thread while another engine loads (#613).
+// Recursive, as ace_backend_init invalidates; taken after a store's own
+// mutex, never before. Leaked, as the Metal statics are (#402).
+static std::recursive_mutex & backend_slots_mtx() {
     static auto * m = new std::recursive_mutex();
     return *m;
 }
 
-int                       g_ace_backend_current  = -1;  // the one new loads share, or -1
+static int                g_backend_current      = -1;  // the one new loads share, or -1
 // The CPU thread count of the pair the latest ace_backend_init handed out, made
 // or shared, or 0 before any: what a load ran with, which a config set since
 // does not change while a pair made before it is still shared
 // (cadenza-audio #889). Kept after that pair is freed, so it is read with
 // g_backend_inits, the ace_backend_init calls so far: a caller that noted the count
 // before its loads tells "none since" from a count left by earlier ones.
-// Under ace_backend_slots_mtx.
-// File-local: ace_backend_cpu_threads_loaded is their reader, under the lock.
+// Under backend_slots_mtx; ace_backend_cpu_threads_loaded is their reader.
 static int                g_backend_last_threads = 0;
 static unsigned long long g_backend_inits        = 0;
 
@@ -176,11 +183,11 @@ static void backend_split_command_buffers(ggml_backend_t backend) {
 // the next ace_backend_init makes a fresh pair. Its holders keep it until they
 // release it.
 void ace_backend_invalidate(ggml_backend_t backend) {
-    std::lock_guard<std::recursive_mutex> lock(ace_backend_slots_mtx());
-    auto &                                slots = ace_backend_slots();
-    if (g_ace_backend_current >= 0 && slots[g_ace_backend_current].bp.backend == backend) {
+    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
+    auto &                                slots = backend_slots();
+    if (g_backend_current >= 0 && slots[g_backend_current].bp.backend == backend) {
         fprintf(stderr, "[Load] %s backend failed: new loads get a fresh one\n", ggml_backend_name(backend));
-        g_ace_backend_current = -1;
+        g_backend_current = -1;
     }
 }
 
@@ -189,15 +196,15 @@ void ace_backend_invalidate(ggml_backend_t backend) {
 // label: log prefix, e.g. "DiT", "VAE", "LM"
 // Subsequent calls reuse the same backend (single VMM pool).
 BackendPair ace_backend_init(const char * label) {
-    std::lock_guard<std::recursive_mutex> lock(ace_backend_slots_mtx());
-    auto &                                slots = ace_backend_slots();
+    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
+    auto &                                slots = backend_slots();
     // A shared backend a failed command buffer left broken (#403) is not
     // handed out again: this load, and every one after, gets a fresh pair.
-    if (g_ace_backend_current >= 0 && !ace_backend_healthy(slots[g_ace_backend_current].bp.backend)) {
-        ace_backend_invalidate(slots[g_ace_backend_current].bp.backend);
+    if (g_backend_current >= 0 && !ace_backend_healthy(slots[g_backend_current].bp.backend)) {
+        ace_backend_invalidate(slots[g_backend_current].bp.backend);
     }
-    if (g_ace_backend_current >= 0) {
-        BackendSlot & slot = slots[g_ace_backend_current];
+    if (g_backend_current >= 0) {
+        BackendSlot & slot = slots[g_backend_current];
         slot.refs++;
         g_backend_last_threads = slot.n_threads;
         g_backend_inits++;
@@ -274,17 +281,23 @@ BackendPair ace_backend_init(const char * label) {
         ggml_backend_free(bp.cpu_backend);
         throw;
     }
-    g_ace_backend_current  = (int) slots.size() - 1;
+    g_backend_current  = (int) slots.size() - 1;
     g_backend_last_threads = n_threads;
     g_backend_inits++;
     return bp;
+}
+
+// The sharing state, read under the lock (backend.h).
+AceBackendSharing ace_backend_sharing(void) {
+    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
+    return { backend_slots().size(), g_backend_current };
 }
 
 // The CPU thread count the latest load's backend pair ran with, or 0 before
 // any load; `inits`, when given, gets the ace_backend_init calls so far (see
 // g_backend_last_threads). Both read under one lock.
 int ace_backend_cpu_threads_loaded(unsigned long long * inits) {
-    std::lock_guard<std::recursive_mutex> lock(ace_backend_slots_mtx());
+    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
     if (inits) {
         *inits = g_backend_inits;
     }
@@ -302,8 +315,8 @@ void ace_backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) {
     if (!backend) {
         return;
     }
-    std::lock_guard<std::recursive_mutex> lock(ace_backend_slots_mtx());
-    auto &                                slots = ace_backend_slots();
+    std::lock_guard<std::recursive_mutex> lock(backend_slots_mtx());
+    auto &                                slots = backend_slots();
     int                                   i     = 0;
     while (i < (int) slots.size() && slots[i].bp.backend != backend) {
         i++;
@@ -322,9 +335,9 @@ void ace_backend_release(ggml_backend_t backend, ggml_backend_t cpu_backend) {
         ggml_backend_free(cpu_backend);
     }
     slots.erase(slots.begin() + i);
-    if (g_ace_backend_current == i) {
-        g_ace_backend_current = -1;
-    } else if (g_ace_backend_current > i) {
-        g_ace_backend_current--;
+    if (g_backend_current == i) {
+        g_backend_current = -1;
+    } else if (g_backend_current > i) {
+        g_backend_current--;
     }
 }

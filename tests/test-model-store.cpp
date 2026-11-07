@@ -575,12 +575,12 @@ static int scenario_loaded_threads(const char * vae_path) {
     // Only while the encoder holds a pair: a failed load leaves none, and
     // says so above.
     if (enc) {
-        std::lock_guard<std::recursive_mutex> lock(ace_backend_slots_mtx());
-        if (ace_backend_slots().empty() || g_ace_backend_current < 0) {
+        const AceBackendSharing sharing = ace_backend_sharing();
+        if (sharing.live == 0 || sharing.current < 0) {
             fprintf(stderr,
                     "[Test] FAIL: %zu live pairs and current %d while the encoder holds one: "
                     "its pair released or taken out of sharing early?\n",
-                    ace_backend_slots().size(), g_ace_backend_current);
+                    sharing.live, sharing.current);
             rc = 1;
         }
     }
