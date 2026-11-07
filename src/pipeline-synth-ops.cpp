@@ -808,7 +808,7 @@ void ops_init_noise(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
     // blending needs the original clean VAE latents. noise_blend_latents holds the
     // clean copy when FSQ was applied; otherwise fall back to cover_latents (already clean).
     if (s.use_source_context && s.have_cover && s.rr.cover_noise_strength > 0.0f) {
-        const std::vector<float> & blend_src = s.noise_blend_latents.empty() ? s.cover_latents : s.noise_blend_latents;
+        const std::vector<float> & blend_src             = clean_src_latents(s);
         float                      effective_noise_level = 1.0f - s.rr.cover_noise_strength;
         // find nearest timestep in s.schedule
         int                        start_idx             = 0;

@@ -82,9 +82,8 @@ struct SynthState {
     std::vector<float> cover_latents;        // [T_cover * 64] time-major VAE latents
     std::vector<float> noise_blend_latents;  // clean VAE latents for cover_noise_strength blending
     // cover_latents came from encoding src audio that the run does not read
-    // again, so a failed run hands them out to be run again (cadenza-audio
-    // #875, #1035): clean in noise_blend_latents once the FSQ roundtrip has
-    // degraded cover_latents in place, in cover_latents before.
+    // again, so a failed run hands out its clean_src_latents to be run again
+    // (cadenza-audio #875, #1035).
     bool               src_encoded = false;
     int                T_cover;
 
@@ -164,6 +163,14 @@ struct SynthState {
     DebugDumper dbg;
     Timer       timer;
 };
+
+// The source's clean VAE latents: noise_blend_latents holds them once the FSQ
+// roundtrip has degraded cover_latents in place, cover_latents before (or
+// without one). The noise blend and a failed run's hand-out read the same
+// (cadenza-audio #1035).
+inline std::vector<float> & clean_src_latents(SynthState & s) {
+    return s.noise_blend_latents.empty() ? s.cover_latents : s.noise_blend_latents;
+}
 
 // Job bridges phase 1 (DiT) and phase 2 (VAE). The latents live in state.output
 // as time-major [batch_n, T, Oc=64] f32 until ace_synth_job_run_vae consumes

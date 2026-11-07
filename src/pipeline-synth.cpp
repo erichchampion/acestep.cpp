@@ -288,6 +288,7 @@ static void warn_if_turbo_stem(const AceSynth * ctx, const char * task_name) {
 // samples into the call's sink, when it has one, to be run again (cadenza-audio
 // #875, #975). Moved, never copied, and only on failure (#1035): a run that
 // succeeds hands out nothing and pays nothing.
+namespace {
 class JobOwner {
   public:
     JobOwner(AceSynth * ctx, AceSynthJob * job) : ctx_(ctx), job_(job) {}
@@ -301,10 +302,7 @@ class JobOwner {
         }
         SynthState & s = job_->state;
         if (s.src_encoded) {
-            // Clean: FSQ has not degraded them, or noise_blend_latents kept them.
-            std::vector<float> & clean = s.noise_blend_latents.empty() ? s.cover_latents : s.noise_blend_latents;
-
-            ctx_->encode_sink->src_latents = std::move(clean);
+            ctx_->encode_sink->src_latents = std::move(clean_src_latents(s));
         }
         if (s.timbre_encoded) {
             ctx_->encode_sink->ref_latents = std::move(s.timbre_feats);
@@ -319,6 +317,7 @@ class JobOwner {
     AceSynth *                   ctx_;
     std::unique_ptr<AceSynthJob> job_;
 };
+}  // namespace
 
 // Pin VAE-Enc across two back-to-back encodes (source then timbre) so STRICT
 // does not unload and reload the 160 MB weights between them. On return the
@@ -757,8 +756,10 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
                                     AceProgress        progress,
                                     AceSynthEncodes *  failed_encodes) {
     if (failed_encodes) {
-        failed_encodes->src_latents.clear();
-        failed_encodes->ref_latents.clear();
+        // Emptied and let go: a caller's sink reused after a failed call holds
+        // nothing of it through this one.
+        std::vector<float>().swap(failed_encodes->src_latents);
+        std::vector<float>().swap(failed_encodes->ref_latents);
     }
     if (!ctx || !reqs || batch_n < 1 || batch_n > 9) {
         return NULL;
