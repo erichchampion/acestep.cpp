@@ -33,17 +33,17 @@ struct AceSynthParams {
 };
 
 // Output audio buffer. Caller must free with ace_audio_free().
+struct AceAudio {
+    float * samples;      // planar stereo [L0..LN, R0..RN]
+    int     n_samples;    // per channel
+    int     sample_rate;  // always 48000
+};
+
 // The VAE encodes a failed ace_synth_job_run_dit made (failed_encodes there):
 // each [T_latent * 64] f32 time-major, empty for a side it did not keep.
 struct AceSynthEncodes {
     std::vector<float> src_latents;
     std::vector<float> ref_latents;
-};
-
-struct AceAudio {
-    float * samples;      // planar stereo [L0..LN, R0..RN]
-    int     n_samples;    // per channel
-    int     sample_rate;  // always 48000
 };
 
 void ace_synth_default_params(AceSynthParams * p);
