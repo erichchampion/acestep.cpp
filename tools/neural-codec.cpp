@@ -33,6 +33,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -353,7 +354,7 @@ static std::string auto_output(const char * input, const char * ext) {
     return s + ext;
 }
 
-int main(int argc, char ** argv) {
+static int codec_main(int argc, char ** argv) {
     const char * vae_path    = NULL;
     const char * input_path  = NULL;
     const char * output_path = NULL;
@@ -508,5 +509,20 @@ int main(int argc, char ** argv) {
         vae_ggml_free(&dec);
         fprintf(stderr, "[VAE] Done.\n");
         return 0;
+    }
+}
+
+// A build with ACESTEP_FATAL_THROWS -- one value for every target, which this
+// tool inherits through acestep-backend (cadenza-audio #1033) -- throws a
+// fatal rather than exit(1)ing: caught here, so the tool still fails with a
+// message and status 1, not an abort.
+int main(int argc, char ** argv) {
+    try {
+        return codec_main(argc, argv);
+    } catch (const ace_fatal_error &) {
+        return 1;  // ace_fatal said why before it threw
+    } catch (const std::exception & e) {
+        fprintf(stderr, "[neural-codec] FATAL: %s\n", e.what());
+        return 1;
     }
 }

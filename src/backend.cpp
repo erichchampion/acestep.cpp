@@ -167,7 +167,7 @@ static void backend_split_command_buffers(ggml_backend_t backend) {
 #endif
         return;
     }
-    const int n_cb = backend_metal_n_cb();
+    const int n_cb = ace_backend_metal_n_cb();
     set_n_cb(backend, n_cb);
     fprintf(stderr, "[Load] Metal command buffers per graph: %d\n", n_cb + 1);
 }

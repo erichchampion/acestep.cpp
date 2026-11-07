@@ -153,12 +153,28 @@ endif()
 # cadenza-audio #973): one object library, built once with one set of
 # settings, whose objects go into acestep-core and into any tool that loads a
 # model through backend.h without acestep-core (neural-codec), rather than the
-# file sitting in two source lists (#1033). It carries the same
-# ACESTEP_FATAL_THROWS as acestep-core (set below): that define gates an
-# inline function, so one build-wide value is the only correct one, and a
-# tool linking this object library inherits it.
+# file sitting in two source lists (#1033). It and acestep-core take
+# ACESTEP_FATAL_THROWS from one place, acestep-fatal, below.
 add_library(acestep-backend OBJECT src/backend.cpp)
 link_ggml_backends(acestep-backend)
+
+# ace_fatal() exit(1)s by default; with this ON it throws ace_fatal_error so an
+# embedder can catch a failed load instead of dying (see src/ace-fatal.h). It
+# gates the body of an inline function, so it is build-wide -- the one correct
+# way to turn it on, uniformly across acestep-core and its consumers, the way
+# GGML_MAX_NAME is. Defining it on only some targets is an ODR violation, so it
+# lives on one INTERFACE target, acestep-fatal, that acestep-backend and
+# acestep-core both link PUBLIC: they cannot disagree, and every consumer
+# inherits it (#1033). OFF by default, and do not turn it on until the
+# inference path is exception-safe: today only the model-store load path frees
+# cleanly on a throw (a forward-time fatal still leaks -- see the
+# ACESTEP_FATAL_THROWS follow-up).
+option(ACESTEP_FATAL_THROWS "ace_fatal() throws instead of exit(1) (load-path only so far)" OFF)
+add_library(acestep-fatal INTERFACE)
+if(ACESTEP_FATAL_THROWS)
+    target_compile_definitions(acestep-fatal INTERFACE ACESTEP_FATAL_THROWS)
+endif()
+target_link_libraries(acestep-backend PUBLIC acestep-fatal)
 
 # Core library (shared between binaries)
 add_library(acestep-core STATIC
@@ -170,7 +186,7 @@ add_library(acestep-core STATIC
     src/pipeline-synth-ops.cpp
     src/pipeline-understand.cpp
 )
-target_link_libraries(acestep-core PUBLIC yyjson)
+target_link_libraries(acestep-core PUBLIC yyjson acestep-fatal)
 link_ggml_backends(acestep-core)
 # Its public header surface is src/ -- what every embedder includes today
 # (model-store.h, pipeline-synth.h, request.h, backend-config.h) -- and ggml's
@@ -193,19 +209,6 @@ target_include_directories(acestep-core SYSTEM INTERFACE
 # the target's interface so every consumer inherits it without restating it.
 target_compile_definitions(acestep-core PUBLIC GGML_MAX_NAME=128)
 
-# ace_fatal() exit(1)s by default; with this ON it throws ace_fatal_error so an
-# embedder can catch a failed load instead of dying (see src/ace-fatal.h). It
-# gates the body of an inline function, so it is PUBLIC and build-wide -- the one
-# correct way to turn it on, uniformly across acestep-core and its consumers, the
-# way GGML_MAX_NAME is. Defining it on only some targets is an ODR violation.
-# OFF by default, and do not turn it on until the inference path is
-# exception-safe: today only the model-store load path frees cleanly on a throw
-# (a forward-time fatal still leaks -- see the ACESTEP_FATAL_THROWS follow-up).
-option(ACESTEP_FATAL_THROWS "ace_fatal() throws instead of exit(1) (load-path only so far)" OFF)
-if(ACESTEP_FATAL_THROWS)
-    target_compile_definitions(acestep-core PUBLIC ACESTEP_FATAL_THROWS)
-    target_compile_definitions(acestep-backend PUBLIC ACESTEP_FATAL_THROWS)
-endif()
 
 # The tools and the tests. Everything below is gated on ACESTEP_BUILD_TOOLS,
 # which is ON for a top-level build and OFF when acestep-core is embedded. Only

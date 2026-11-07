@@ -90,7 +90,7 @@ int ace_backend_metal_max_n_cb(void);
 // than setenv the variable under threads that may be reading it
 // (cadenza-audio #759). Reading the ceiling still loads the registry, as
 // ace_backend_metal_max_n_cb says, and ggml's setenv with it.
-inline int backend_metal_n_cb_for(const char * request) {
+inline int ace_backend_metal_n_cb_for(const char * request) {
     if (request) {
         // strtol, not atoi: a value past long's range saturates (ERANGE)
         // rather than wrapping, so it is held to the ceiling like any other.
@@ -107,8 +107,8 @@ inline int backend_metal_n_cb_for(const char * request) {
 #endif
 }
 
-inline int backend_metal_n_cb(void) {
-    return backend_metal_n_cb_for(std::getenv("ACE_METAL_N_CB"));
+inline int ace_backend_metal_n_cb(void) {
+    return ace_backend_metal_n_cb_for(std::getenv("ACE_METAL_N_CB"));
 }
 
 // The devices an embedder may name in ace_backend_configure() /
