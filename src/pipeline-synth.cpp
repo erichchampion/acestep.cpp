@@ -283,20 +283,42 @@ static void warn_if_turbo_stem(const AceSynth * ctx, const char * task_name) {
     }
 }
 
-// Copies a finished encode into the running call's sink, when it has one
-// (cadenza-audio #875, #975). Only an aid to a run again, so a copy that cannot
-// be made is said and skipped, never a failure of a run that may yet succeed.
-static void keep_encode(AceSynth * ctx, const std::vector<float> & latents, std::vector<float> AceSynthEncodes::*side) {
-    if (!ctx->encode_sink) {
-        return;
+// Owns a task's job until the task returns it. A run that ends without it --
+// NULL, or a throw (#403) -- frees it, first moving the encodes it made from
+// samples into the call's sink, when it has one, to be run again (cadenza-audio
+// #875, #975). Moved, never copied, and only on failure (#1035): a run that
+// succeeds hands out nothing and pays nothing.
+class JobOwner {
+  public:
+    JobOwner(AceSynth * ctx, AceSynthJob * job) : ctx_(ctx), job_(job) {}
+
+    JobOwner(const JobOwner &)             = delete;
+    JobOwner & operator=(const JobOwner &) = delete;
+
+    ~JobOwner() {
+        if (!job_ || !ctx_->encode_sink) {
+            return;
+        }
+        SynthState & s = job_->state;
+        if (s.src_encoded) {
+            // Clean: FSQ has not degraded them, or noise_blend_latents kept them.
+            std::vector<float> & clean = s.noise_blend_latents.empty() ? s.cover_latents : s.noise_blend_latents;
+
+            ctx_->encode_sink->src_latents = std::move(clean);
+        }
+        if (s.timbre_encoded) {
+            ctx_->encode_sink->ref_latents = std::move(s.timbre_feats);
+        }
     }
-    try {
-        ctx->encode_sink->*side = latents;
-    } catch (const std::bad_alloc &) {
-        (ctx->encode_sink->*side).clear();
-        fprintf(stderr, "[Pipeline-Synth] WARNING: out of memory keeping an encode for a run again; not kept\n");
-    }
-}
+
+    AceSynthJob * get() const { return job_.get(); }
+
+    AceSynthJob * release() { return job_.release(); }
+
+  private:
+    AceSynth *                   ctx_;
+    std::unique_ptr<AceSynthJob> job_;
+};
 
 // Pin VAE-Enc across two back-to-back encodes (source then timbre) so STRICT
 // does not unload and reload the 160 MB weights between them. On return the
@@ -337,19 +359,13 @@ static bool pinned_encode_src_and_timbre(AceSynth *    ctx,
         if (ops_encode_src(ctx, src_audio, src_len, src_latents, src_T_latent, s, progress) != 0) {
             return false;
         }
-        // Kept for a run again (#875) -- before the FSQ roundtrip degrades
-        // them in place -- unless the run reads the source's samples again:
-        // repaint's and a lego region's padded_src, spliced after decode, and
-        // encoded padded.
-        if (have_src_audio && !have_src_latents && s.padded_src.empty()) {
-            keep_encode(ctx, s.cover_latents, &AceSynthEncodes::src_latents);
-        }
+        // Handed out by a failed run (#875, #1035) unless the run reads the
+        // source's samples again: repaint's and a lego region's padded_src,
+        // spliced after decode, and encoded padded.
+        s.src_encoded = have_src_audio && !have_src_latents && s.padded_src.empty();
     }
     if (ops_encode_timbre(ctx, ref_audio, ref_len, ref_latents, ref_T_latent, s, progress) != 0) {
         return false;
-    }
-    if (s.timbre_encoded) {
-        keep_encode(ctx, s.timbre_feats, &AceSynthEncodes::ref_latents);
     }
     return true;
 }
@@ -391,8 +407,8 @@ static AceSynthJob * run_text2music(AceSynth *         ctx,
                                     AceProgress        progress) {
     // Owned until it is returned: a GPU failure throws (#403), and a
     // throw must not leak the job and its buffers.
-    std::unique_ptr<AceSynthJob> job_owner(alloc_job(ctx, reqs, batch_n));
-    AceSynthJob *                job = job_owner.get();
+    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
+    AceSynthJob * job    = job_owner.get();
     SynthState &  s      = job->state;
     // audio_codes from the LM produce a latent context; empty codes fall back
     // to silence (DiT-only). The DiT was trained with the cover instruction on
@@ -431,8 +447,8 @@ static AceSynthJob * run_cover(AceSynth *         ctx,
     }
     // Owned until it is returned: a GPU failure throws (#403), and a
     // throw must not leak the job and its buffers.
-    std::unique_ptr<AceSynthJob> job_owner(alloc_job(ctx, reqs, batch_n));
-    AceSynthJob *                job = job_owner.get();
+    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
+    AceSynthJob * job    = job_owner.get();
     SynthState &  s      = job->state;
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_COVER;
@@ -475,8 +491,8 @@ static AceSynthJob * run_cover_nofsq(AceSynth *         ctx,
     }
     // Owned until it is returned: a GPU failure throws (#403), and a
     // throw must not leak the job and its buffers.
-    std::unique_ptr<AceSynthJob> job_owner(alloc_job(ctx, reqs, batch_n));
-    AceSynthJob *                job = job_owner.get();
+    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
+    AceSynthJob * job    = job_owner.get();
     SynthState &  s      = job->state;
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_COVER;
@@ -515,8 +531,8 @@ static AceSynthJob * run_repaint(AceSynth *         ctx,
     }
     // Owned until it is returned: a GPU failure throws (#403), and a
     // throw must not leak the job and its buffers.
-    std::unique_ptr<AceSynthJob> job_owner(alloc_job(ctx, reqs, batch_n));
-    AceSynthJob *                job = job_owner.get();
+    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
+    AceSynthJob * job    = job_owner.get();
     SynthState &  s      = job->state;
     s.is_repaint         = true;
     s.use_source_context = true;
@@ -568,8 +584,8 @@ static AceSynthJob * run_lego(AceSynth *         ctx,
     }
     // Owned until it is returned: a GPU failure throws (#403), and a
     // throw must not leak the job and its buffers.
-    std::unique_ptr<AceSynthJob> job_owner(alloc_job(ctx, reqs, batch_n));
-    AceSynthJob *                job = job_owner.get();
+    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
+    AceSynthJob * job       = job_owner.get();
     SynthState &  s         = job->state;
     s.is_lego_region        = (s.rr.repainting_end > s.rr.repainting_start);
     s.use_source_context    = true;
@@ -621,8 +637,8 @@ static AceSynthJob * run_extract(AceSynth *         ctx,
     }
     // Owned until it is returned: a GPU failure throws (#403), and a
     // throw must not leak the job and its buffers.
-    std::unique_ptr<AceSynthJob> job_owner(alloc_job(ctx, reqs, batch_n));
-    AceSynthJob *                job = job_owner.get();
+    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
+    AceSynthJob * job       = job_owner.get();
     SynthState &  s         = job->state;
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Extract");
@@ -660,8 +676,8 @@ static AceSynthJob * run_complete(AceSynth *         ctx,
     }
     // Owned until it is returned: a GPU failure throws (#403), and a
     // throw must not leak the job and its buffers.
-    std::unique_ptr<AceSynthJob> job_owner(alloc_job(ctx, reqs, batch_n));
-    AceSynthJob *                job = job_owner.get();
+    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
+    AceSynthJob * job       = job_owner.get();
     SynthState &  s         = job->state;
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Complete");
@@ -754,16 +770,8 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
         ~SinkScope() { ctx->encode_sink = nullptr; }
     } scope{ ctx };
     ctx->encode_sink  = failed_encodes;
-    AceSynthJob * job = run_task(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len,
-                                 ref_latents, ref_T_latent, batch_n, progress);
-    if (job && failed_encodes) {
-        // Succeeded: nothing to run again.
-        failed_encodes->src_latents.clear();
-        failed_encodes->src_latents.shrink_to_fit();
-        failed_encodes->ref_latents.clear();
-        failed_encodes->ref_latents.shrink_to_fit();
-    }
-    return job;
+    return run_task(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
+                    ref_T_latent, batch_n, progress);
 }
 
 // Pointer to the post-DiT latent for one track in s.output, time-major

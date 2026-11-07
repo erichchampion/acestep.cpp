@@ -74,14 +74,16 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 // Cover-family tasks. Default {} = never cancel, no progress.
 // failed_encodes: when non-NULL, the VAE encodes this run made from samples,
 //   each [T_latent * 64] f32 time-major -- what that side's *_latents takes --
-//   left there when the run fails (returns NULL or throws: a GPU refusal of
+//   moved there when the run fails (returns NULL or throws: a GPU refusal of
 //   its DiT leaves a sourced run's encodes done), so a run again passing them
-//   skips the encodes (cadenza-audio #875). Empty after a run that succeeded,
-//   and for a side the run was given latents for, whose encode did not finish
-//   (or whose timbre fell back to silence), or -- the source of a repaint or a
-//   lego region -- whose samples the run reads again after the encode, so
-//   latents would not make the same takes. NULL: none are copied. The synth
-//   keeps nothing of them past the call (cadenza-audio #975).
+//   skips the encodes (cadenza-audio #875). Moved, not copied, and only on
+//   failure, so a run that succeeds pays nothing (cadenza-audio #1035). Empty
+//   after a run that succeeded, and for a side the run was given latents for,
+//   whose encode did not finish (or whose timbre fell back to silence), or --
+//   the source of a repaint or a lego region -- whose samples the run reads
+//   again after the encode, so latents would not make the same takes. NULL:
+//   none are kept. The synth keeps nothing of them past the call
+//   (cadenza-audio #975).
 // Returns NULL on error or cancellation.
 AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
                                     const AceRequest * reqs,

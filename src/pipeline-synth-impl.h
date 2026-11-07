@@ -62,9 +62,9 @@ struct AceSynth {
     ModelKey vae_enc_key;    // VAE encoder, from vae_path
     ModelKey vae_dec_key;    // VAE decoder, from vae_path
 
-    // Where the running ace_synth_job_run_dit copies the VAE encodes it makes
-    // from samples, as each finishes: its caller's AceSynthEncodes, or null
-    // when the caller asked for none. Set only for the call's duration
+    // Where the running ace_synth_job_run_dit moves the VAE encodes it made
+    // from samples when it fails: its caller's AceSynthEncodes, or null when
+    // the caller asked for none. Set only for the call's duration
     // (cadenza-audio #975): nothing outlives the run on the synth. Like the
     // run, not thread-safe.
     AceSynthEncodes * encode_sink = nullptr;
@@ -81,6 +81,11 @@ struct SynthState {
     bool               have_cover;
     std::vector<float> cover_latents;        // [T_cover * 64] time-major VAE latents
     std::vector<float> noise_blend_latents;  // clean VAE latents for cover_noise_strength blending
+    // cover_latents came from encoding src audio that the run does not read
+    // again, so a failed run hands them out to be run again (cadenza-audio
+    // #875, #1035): clean in noise_blend_latents once the FSQ roundtrip has
+    // degraded cover_latents in place, in cover_latents before.
+    bool               src_encoded = false;
     int                T_cover;
 
     // outpainting: silence padding for repaint beyond source bounds
