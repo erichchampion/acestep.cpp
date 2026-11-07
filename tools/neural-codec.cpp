@@ -514,15 +514,14 @@ static int codec_main(int argc, char ** argv) {
 
 // A build with ACESTEP_FATAL_THROWS -- one value for every target, which this
 // tool inherits through acestep-backend (cadenza-audio #1033) -- throws a
-// fatal rather than exit(1)ing: caught here, so the tool still fails with a
-// message and status 1, not an abort.
+// fatal rather than exit()ing: caught here, so the tool still fails with the
+// fatal's message and status, not an abort.
 int main(int argc, char ** argv) {
     try {
         return codec_main(argc, argv);
-    } catch (const ace_fatal_error &) {
-        return 1;  // ace_fatal said why before it threw
-    } catch (const std::exception & e) {
-        fprintf(stderr, "[neural-codec] FATAL: %s\n", e.what());
-        return 1;
+    } catch (const ace_fatal_error & e) {
+        // ace_fatal said why before it threw; the status is the one it would
+        // have exited with. Anything else still crashes, as ace-fatal.h wants.
+        return e.code;
     }
 }

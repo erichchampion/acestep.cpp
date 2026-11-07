@@ -166,7 +166,7 @@ void ace_backend_invalidate(ggml_backend_t backend);
 BackendPair ace_backend_init(const char * label);
 
 // The CPU thread count the latest load's backend pair ran with, or 0 before
-// any load; `inits`, when given, gets the backend_inits so far. Both read
+// any load; `inits`, when given, gets the ace_backend_init calls so far. Both read
 // under one lock.
 int ace_backend_cpu_threads_loaded(unsigned long long * inits);
 

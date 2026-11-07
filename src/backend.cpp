@@ -30,7 +30,7 @@ int                       g_ace_backend_current  = -1;  // the one new loads sha
 // or shared, or 0 before any: what a load ran with, which a config set since
 // does not change while a pair made before it is still shared
 // (cadenza-audio #889). Kept after that pair is freed, so it is read with
-// g_backend_inits, the backend_inits so far: a caller that noted the count
+// g_backend_inits, the ace_backend_init calls so far: a caller that noted the count
 // before its loads tells "none since" from a count left by earlier ones.
 // Under ace_backend_slots_mtx.
 // File-local: ace_backend_cpu_threads_loaded is their reader, under the lock.
@@ -281,7 +281,7 @@ BackendPair ace_backend_init(const char * label) {
 }
 
 // The CPU thread count the latest load's backend pair ran with, or 0 before
-// any load; `inits`, when given, gets the backend_inits so far (see
+// any load; `inits`, when given, gets the ace_backend_init calls so far (see
 // g_backend_last_threads). Both read under one lock.
 int ace_backend_cpu_threads_loaded(unsigned long long * inits) {
     std::lock_guard<std::recursive_mutex> lock(ace_backend_slots_mtx());
