@@ -17,7 +17,6 @@
 namespace ace_gpu {
 namespace {
 
-
 // Backends a test's injected failure has broken. Empty outside tests; `any`
 // spares the lock on every check.
 std::mutex & poisoned_mtx() {
@@ -83,6 +82,7 @@ struct proc_entry {
     ggml_backend_reg_t reg;
     void *             fn;
 };
+
 void * cached_proc(ggml_backend_t b, const char * name, std::atomic<const proc_entry *> & cached) {
     ggml_backend_dev_t d = ggml_backend_get_device(b);
     ggml_backend_reg_t r = d ? ggml_backend_dev_backend_reg(d) : nullptr;
@@ -100,6 +100,7 @@ void * cached_proc(ggml_backend_t b, const char * name, std::atomic<const proc_e
 
 // The backend's error-state reader (#405), or null.
 using has_error_t = bool (*)(ggml_backend_t);
+
 has_error_t has_error_of(ggml_backend_t b) {
     static std::atomic<const proc_entry *> cached{ nullptr };
     return (has_error_t) cached_proc(b, "ggml_backend_metal_has_error", cached);
@@ -107,6 +108,7 @@ has_error_t has_error_of(ggml_backend_t b) {
 
 // Whether the backend's error state is the system's refusal (#817), or null.
 using refused_t = bool (*)(ggml_backend_t);
+
 refused_t refused_of(ggml_backend_t b) {
     static std::atomic<const proc_entry *> cached{ nullptr };
     return (refused_t) cached_proc(b, "ggml_backend_metal_refused", cached);
@@ -118,10 +120,12 @@ std::atomic<bool> & injection_armed() {
     static std::atomic<bool> a{ false };
     return a;
 }
+
 std::string & injected_stage() {
     static std::string s;
     return s;
 }
+
 bool & injected_refusal() {
     static bool r = false;
     return r;
@@ -129,7 +133,6 @@ bool & injected_refusal() {
 
 }  // namespace
 }  // namespace ace_gpu
-
 
 // Whether GPU backend `b` can still run work (a CPU backend always can).
 bool ace_backend_healthy(ggml_backend_t b) {
@@ -188,8 +191,8 @@ void ace_backend_forget(ggml_backend_t b) {
 [[noreturn]] void ace_gpu_fail(const char * what, const char * why, bool refused) {
     char msg[256];
     if (refused) {
-        snprintf(msg, sizeof(msg), "[%s] FATAL: the system refused the GPU this step (%s); the app is in the background\n",
-                 what, why);
+        snprintf(msg, sizeof(msg),
+                 "[%s] FATAL: the system refused the GPU this step (%s); the app is in the background\n", what, why);
     } else {
         snprintf(msg, sizeof(msg), "[%s] FATAL: the GPU did not complete this step (%s); the device may have reset\n",
                  what, why);

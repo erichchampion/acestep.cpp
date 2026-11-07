@@ -72,8 +72,8 @@ namespace ace_gpu {
 
 // A function the backend's own registry exports by name -- the patched
 // ggml's ggml_backend_metal_has_error, ggml_backend_metal_set_n_cb -- or
-// null for a backend without it. Asked by the per-registry cache below and by
-// backend.cpp for the n_cb setter; backend.cpp also looks up the Metal ceiling
+// null for a backend without it. Asked by gpu-compute.cpp's per-registry
+// cache and by backend.cpp for the n_cb setter; backend.cpp also looks up the Metal ceiling
 // and the CPU thread setter on a registry directly, before a backend exists.
 inline void * backend_proc(ggml_backend_t b, const char * name) {
     ggml_backend_dev_t d = b ? ggml_backend_get_device(b) : nullptr;

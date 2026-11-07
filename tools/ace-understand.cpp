@@ -4,12 +4,12 @@
 //
 // Output: request JSON with metadata + lyrics, reusable as ace-lm or ace-synth input.
 
-#include "tool-main.h"
 #include "audio-io.h"
 #include "model-registry.h"
 #include "model-store.h"
 #include "pipeline-understand.h"
 #include "request.h"
+#include "tool-main.h"
 #include "version.h"
 
 #include <cstdio>

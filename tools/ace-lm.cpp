@@ -3,12 +3,12 @@
 // writes output files. The model to use comes from request.lm_model, the
 // registry resolves it to a GGUF path under --models <dir>.
 
-#include "tool-main.h"
 #include "model-registry.h"
 #include "model-store.h"
 #include "pipeline-lm.h"
 #include "request.h"
 #include "task-types.h"
+#include "tool-main.h"
 #include "version.h"
 
 #include <cstdio>

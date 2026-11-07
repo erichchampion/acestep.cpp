@@ -4,7 +4,6 @@
 // comes from the request JSON. The registry resolves names to GGUF paths
 // under --models <dir> and --adapters <dir>.
 
-#include "tool-main.h"
 #include "audio-io.h"
 #include "model-registry.h"
 #include "model-store.h"
@@ -12,6 +11,7 @@
 #include "request.h"
 #include "synth-batch-runner.h"
 #include "task-types.h"
+#include "tool-main.h"
 #include "version.h"
 
 #include <cstdio>

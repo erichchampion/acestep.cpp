@@ -4,18 +4,22 @@
 
 #include "backend.h"
 
+#include <mutex>
 #include <thread>
 #ifdef __APPLE__
 #    include <sys/sysctl.h>
 #endif
 
 // Everything below is file-local (cadenza-audio #1048): the functions in
-// backend.h are the only way to it, each under the lock.
+// backend.h are the only way to it, each under the lock. The slot type too,
+// in an anonymous namespace, so its vector's instantiations are this file's.
+namespace {
 struct BackendSlot {
     BackendPair bp;
     int         refs;
     int         n_threads;  // the CPU backend's thread count, as made
 };
+}  // namespace
 
 // Every live pair. Made on first use and leaked, as the mutex below is:
 // constructed before any load reaches it, whichever translation unit's static
@@ -24,6 +28,7 @@ static std::vector<BackendSlot> & backend_slots() {
     static auto * slots = new std::vector<BackendSlot>();
     return *slots;
 }
+
 // Guards the slots, the current index and the records below: a GPU failure's
 // sweep may run on one engine's thread while another engine loads (#613).
 // Recursive, as ace_backend_init invalidates; taken after a store's own
@@ -168,8 +173,9 @@ static void backend_split_command_buffers(ggml_backend_t backend) {
         // (#408): "MTL" today, "Metal" in the older ggml this warning is for.
         const char * reg_name = ggml_backend_reg_name(reg);
         if (strcmp(reg_name, "MTL") == 0 || strcmp(reg_name, "Metal") == 0) {
-            fprintf(stderr, "[Load] WARNING: this ggml does not export ggml_backend_metal_set_n_cb -- "
-                            "graphs stay in 2 command buffers, and iOS's GPU watchdog may reset long steps\n");
+            fprintf(stderr,
+                    "[Load] WARNING: this ggml does not export ggml_backend_metal_set_n_cb -- "
+                    "graphs stay in 2 command buffers, and iOS's GPU watchdog may reset long steps\n");
         }
 #endif
         return;
@@ -281,7 +287,7 @@ BackendPair ace_backend_init(const char * label) {
         ggml_backend_free(bp.cpu_backend);
         throw;
     }
-    g_backend_current  = (int) slots.size() - 1;
+    g_backend_current      = (int) slots.size() - 1;
     g_backend_last_threads = n_threads;
     g_backend_inits++;
     return bp;

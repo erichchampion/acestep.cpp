@@ -28,7 +28,6 @@
 //   /synth      DiT + Text-Enc + VAE
 //   /understand LM + DiT + VAE
 
-#include "tool-main.h"
 #include "audio-io.h"
 #include "model-registry.h"
 #include "model-store.h"
@@ -38,6 +37,7 @@
 #include "request.h"
 #include "synth-batch-runner.h"
 #include "task-types.h"
+#include "tool-main.h"
 #include "vae.h"
 #include "version.h"
 #include "yyjson.h"
@@ -169,7 +169,9 @@ static void worker_main() {
             fn = std::move(g_work_queue.front());
             g_work_queue.pop_front();
         }
-        fn();
+        // A fatal thrown by a job ends the server with its status, as it does
+        // in the exit()ing build (tool-main.h).
+        ace_tool_run(fn);
     }
 }
 

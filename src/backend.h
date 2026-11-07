@@ -16,10 +16,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <mutex>
 #include <string>
 #include <vector>
-
 
 struct BackendPair {
     ggml_backend_t backend;
@@ -48,6 +46,7 @@ struct AceBackendSharing {
     size_t live;
     int    current;
 };
+
 AceBackendSharing ace_backend_sharing(void);
 
 // GGML CPU thread count: an embedder override (ace_backend_configure),
@@ -113,9 +112,9 @@ inline int ace_backend_metal_n_cb(void) {
 // a backend, never as one, so it is not offered.
 static inline bool backend_device_selectable(ggml_backend_dev_t d) {
     const enum ggml_backend_dev_type t = ggml_backend_dev_type(d);
-    return t == GGML_BACKEND_DEVICE_TYPE_GPU || t == GGML_BACKEND_DEVICE_TYPE_IGPU ||
-           t == GGML_BACKEND_DEVICE_TYPE_CPU;
+    return t == GGML_BACKEND_DEVICE_TYPE_GPU || t == GGML_BACKEND_DEVICE_TYPE_IGPU || t == GGML_BACKEND_DEVICE_TYPE_CPU;
 }
+
 // The selectable devices' names ("MTL0", "CPU", ...), in registry order: one
 // walk, for a picker and for a refusal's "Available:" alike.
 static inline std::vector<const char *> ace_backend_device_list(void) {
@@ -129,9 +128,11 @@ static inline std::vector<const char *> ace_backend_device_list(void) {
     }
     return out;
 }
+
 static inline size_t ace_backend_device_count(void) {
     return ace_backend_device_list().size();
 }
+
 // The name of selectable device `i`, or null past the last.
 static inline const char * ace_backend_device_name(size_t i) {
     const auto names = ace_backend_device_list();

@@ -25,8 +25,8 @@
 //   neural-codec --vae model.gguf --encode --q4 -i song.wav -o song.nac4
 //   neural-codec --vae model.gguf --decode -i song.nac4 -o song.wav
 
-#include "tool-main.h"
 #include "audio-io.h"
+#include "tool-main.h"
 #include "vae-enc.h"
 #include "vae.h"
 #include "version.h"
