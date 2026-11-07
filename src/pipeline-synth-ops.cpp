@@ -1014,7 +1014,7 @@ int ops_vae_decode(const AceSynth * ctx, int batch_n, AceAudio * out, SynthState
     }
     ModelHandle vae_guard(ctx->store, vae);
 
-    bool have_region = s.is_repaint || s.is_lego_region;
+    bool have_region = splices_source_after_decode(s);
     if (have_region && s.have_cover && s.T_cover > 0) {
         for (int b = 0; b < batch_n; b++) {
             ops_vae_splice_track(s, b);

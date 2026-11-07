@@ -14,6 +14,7 @@
 #include "pipeline-synth-ops.h"
 #include "task-types.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdio>
@@ -655,17 +656,24 @@ static AceSynthJob * run_task(AceSynth *         ctx,
                               int                ref_T_latent,
                               int                batch_n,
                               AceProgress        progress) {
-    // Every task but text2music works from a source: refused before the job
-    // is made.
-    const std::string & task     = reqs[0].task_type;
-    const bool          have_src = (src_audio && src_len > 0) || (src_latents && src_T_latent > 0);
+    // An unknown task, and a task that works from a source given none (all
+    // but text2music), are refused before the job is made -- the name first,
+    // so a misspelt task is said as that.
+    const std::string & task    = reqs[0].task_type;
+    const char *        known[] = { TASK_TEXT2MUSIC, TASK_COVER,   TASK_COVER_NOFSQ, TASK_REPAINT,
+                                    TASK_LEGO,       TASK_EXTRACT, TASK_COMPLETE };
+    if (std::none_of(std::begin(known), std::end(known), [&](const char * k) { return task == k; })) {
+        fprintf(stderr, "[Synth-Run] ERROR: unknown task_type '%s'\n", task.c_str());
+        return NULL;
+    }
+    const bool have_src = (src_audio && src_len > 0) || (src_latents && src_T_latent > 0);
     if (task != TASK_TEXT2MUSIC && !have_src) {
         fprintf(stderr, "[Synth-Run] ERROR: task '%s' requires source audio or latents\n", task.c_str());
         return NULL;
     }
     // The one owner of the task's job (#1041): each task fills the job's
     // state and says whether it ran; the job is returned only if it did. A
-    // run that ends without it -- -1, an unknown task, or a throw (#403) --
+    // run that ends without it -- -1, or a throw (#403) --
     // frees it, handing out its encodes first (JobOwner).
     JobOwner            job_owner(ctx, alloc_job(ctx, reqs, batch_n));
     SynthState &        s    = job_owner.get()->state;
@@ -690,8 +698,6 @@ static AceSynthJob * run_task(AceSynth *         ctx,
     } else if (task == TASK_COMPLETE) {
         rc = run_complete(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
                           ref_T_latent, batch_n, s, progress);
-    } else {
-        fprintf(stderr, "[Synth-Run] ERROR: unknown task_type '%s'\n", task.c_str());
     }
     return rc == 0 ? job_owner.release() : NULL;
 }

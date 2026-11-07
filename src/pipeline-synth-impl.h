@@ -165,22 +165,20 @@ struct SynthState {
     Timer       timer;
 };
 
+// Whether the run splices its source back in after the decode -- a repaint,
+// or a lego region -- so its encode is not what a run again needs: one rule
+// for the splices (ops_vae_decode_track, ops_vae_decode) and the failed run's hand-out
+// (cadenza-audio #1041). The task sets both flags before it encodes.
+inline bool splices_source_after_decode(const SynthState & s) {
+    return s.is_repaint || s.is_lego_region;
+}
+
 // The source's clean VAE latents: fsq_clean_latents holds them once the FSQ
 // roundtrip has moved them there (its degraded latents in cover_latents, #1042),
 // cover_latents before (or without one). The noise blend and a failed run's
 // hand-out read the same (cadenza-audio #1035). A failed run's hand-out reads
 // it after run_tail, so it holds only while nothing there changes cover_latents
 // or timbre_feats in place.
-inline std::vector<float> & clean_src_latents(SynthState & s);
-
-// Whether the run splices its source back in after the decode -- a repaint,
-// or a lego region -- so its encode is not what a run again needs: one rule
-// for the splice (ops_vae_decode_track) and the failed run's hand-out
-// (cadenza-audio #1041). The task sets both flags before it encodes.
-inline bool splices_source_after_decode(const SynthState & s) {
-    return s.is_repaint || s.is_lego_region;
-}
-
 inline std::vector<float> & clean_src_latents(SynthState & s) {
     return s.fsq_clean_latents.empty() ? s.cover_latents : s.fsq_clean_latents;
 }
