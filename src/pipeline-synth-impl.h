@@ -62,14 +62,12 @@ struct AceSynth {
     ModelKey vae_enc_key;    // VAE encoder, from vae_path
     ModelKey vae_dec_key;    // VAE decoder, from vae_path
 
-    // The VAE encodes the last ace_synth_job_run_dit made from samples, each
-    // [T * 64] f32 time-major, copied as each finished: a run that failed
-    // after them -- a GPU refusal throws -- hands them out
-    // (ace_synth_take_encoded), and its run again passes them as latents and
-    // skips the encodes (cadenza-audio #875). Cleared as a run starts and when
-    // it succeeds. Like the run, not thread-safe.
-    std::vector<float> kept_src_latents;
-    std::vector<float> kept_ref_latents;
+    // Where the running ace_synth_job_run_dit copies the VAE encodes it makes
+    // from samples, as each finishes: its caller's AceSynthEncodes, or null
+    // when the caller asked for none. Set only for the call's duration
+    // (cadenza-audio #975): nothing outlives the run on the synth. Like the
+    // run, not thread-safe.
+    AceSynthEncodes * encode_sink = nullptr;
 };
 
 // Transient state for a single job, shared by reference across the primitive

@@ -283,6 +283,21 @@ static void warn_if_turbo_stem(const AceSynth * ctx, const char * task_name) {
     }
 }
 
+// Copies a finished encode into the running call's sink, when it has one
+// (cadenza-audio #875, #975). Only an aid to a run again, so a copy that cannot
+// be made is said and skipped, never a failure of a run that may yet succeed.
+static void keep_encode(AceSynth * ctx, const std::vector<float> & latents, std::vector<float> AceSynthEncodes::*side) {
+    if (!ctx->encode_sink) {
+        return;
+    }
+    try {
+        ctx->encode_sink->*side = latents;
+    } catch (const std::bad_alloc &) {
+        (ctx->encode_sink->*side).clear();
+        fprintf(stderr, "[Pipeline-Synth] WARNING: out of memory keeping an encode for a run again; not kept\n");
+    }
+}
+
 // Pin VAE-Enc across two back-to-back encodes (source then timbre) so STRICT
 // does not unload and reload the 160 MB weights between them. On return the
 // pin is released, VAE-Enc can be evicted by the next require. The pin is
@@ -327,14 +342,14 @@ static bool pinned_encode_src_and_timbre(AceSynth *    ctx,
         // repaint's and a lego region's padded_src, spliced after decode, and
         // encoded padded.
         if (have_src_audio && !have_src_latents && s.padded_src.empty()) {
-            ctx->kept_src_latents = s.cover_latents;
+            keep_encode(ctx, s.cover_latents, &AceSynthEncodes::src_latents);
         }
     }
     if (ops_encode_timbre(ctx, ref_audio, ref_len, ref_latents, ref_T_latent, s, progress) != 0) {
         return false;
     }
     if (s.timbre_encoded) {
-        ctx->kept_ref_latents = s.timbre_feats;
+        keep_encode(ctx, s.timbre_feats, &AceSynthEncodes::ref_latents);
     }
     return true;
 }
@@ -723,32 +738,32 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
                                     const float *      ref_latents,
                                     int                ref_T_latent,
                                     int                batch_n,
-                                    AceProgress        progress) {
+                                    AceProgress        progress,
+                                    AceSynthEncodes *  failed_encodes) {
+    if (failed_encodes) {
+        failed_encodes->src_latents.clear();
+        failed_encodes->ref_latents.clear();
+    }
     if (!ctx || !reqs || batch_n < 1 || batch_n > 9) {
         return NULL;
     }
-    // This run's encodes only, and only while it has not succeeded (#875).
-    ace_synth_take_encoded(ctx, NULL, NULL);
+    // The sink is this call's only (#975): unset however the call ends, a
+    // throw included, so the synth holds no pointer, and no encode, past it.
+    struct SinkScope {
+        AceSynth * ctx;
+        ~SinkScope() { ctx->encode_sink = nullptr; }
+    } scope{ ctx };
+    ctx->encode_sink  = failed_encodes;
     AceSynthJob * job = run_task(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len,
                                  ref_latents, ref_T_latent, batch_n, progress);
-    if (job) {
-        ace_synth_take_encoded(ctx, NULL, NULL);
+    if (job && failed_encodes) {
+        // Succeeded: nothing to run again.
+        failed_encodes->src_latents.clear();
+        failed_encodes->src_latents.shrink_to_fit();
+        failed_encodes->ref_latents.clear();
+        failed_encodes->ref_latents.shrink_to_fit();
     }
     return job;
-}
-
-void ace_synth_take_encoded(AceSynth * ctx, std::vector<float> * src_latents, std::vector<float> * ref_latents) {
-    std::vector<float> src, ref;
-    if (ctx) {
-        src.swap(ctx->kept_src_latents);
-        ref.swap(ctx->kept_ref_latents);
-    }
-    if (src_latents) {
-        src_latents->swap(src);
-    }
-    if (ref_latents) {
-        ref_latents->swap(ref);
-    }
 }
 
 // Pointer to the post-DiT latent for one track in s.output, time-major
