@@ -235,8 +235,18 @@ void ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
     if (ret < 0) {
         return;
     }
+    // The degraded latents condition the run from here; the clean ones move
+    // to noise_blend_latents, which clean_src_latents reads (#1042). Two
+    // moves, no copy of the source's latents: frames past what the
+    // roundtrip made keep their clean values, as the in-place copy left them.
     int copy_T = T_25Hz_rt < s.T_cover ? T_25Hz_rt : s.T_cover;
-    memcpy(s.cover_latents.data(), rt_latents.data(), (size_t) copy_T * 64 * sizeof(float));
+    rt_latents.resize((size_t) s.T_cover * 64);
+    if (copy_T < s.T_cover) {
+        memcpy(rt_latents.data() + (size_t) copy_T * 64, s.cover_latents.data() + (size_t) copy_T * 64,
+               (size_t) (s.T_cover - copy_T) * 64 * sizeof(float));
+    }
+    s.noise_blend_latents = std::move(s.cover_latents);
+    s.cover_latents       = std::move(rt_latents);
     fprintf(stderr, "[FSQ-Roundtrip] %d->%d->%d frames, %.1f ms\n", s.T_cover, T_5Hz_actual, copy_T, s.timer.ms());
 }
 

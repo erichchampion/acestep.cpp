@@ -283,8 +283,8 @@ static void warn_if_turbo_stem(const AceSynth * ctx, const char * task_name) {
     }
 }
 
-// Owns a task's job until the task returns it. A run that ends without it --
-// NULL, or a throw (#403) -- frees it, first moving the encodes it made from
+// Owns a task's job until run_task returns it. A run that ends without it --
+// a task that failed, or a throw (#403) -- frees it, first moving the encodes it made from
 // samples into the call's sink, when it has one, to be run again (cadenza-audio
 // #875, #975). Moved, never copied, and only on failure (#1035): a run that
 // succeeds hands out nothing and pays nothing.
@@ -359,9 +359,11 @@ static bool pinned_encode_src_and_timbre(AceSynth *    ctx,
             return false;
         }
         // Handed out by a failed run (#875, #1035) unless the run reads the
-        // source's samples again: repaint's and a lego region's padded_src,
-        // spliced after decode, and encoded padded.
-        s.src_encoded = have_src_audio && !have_src_latents && s.padded_src.empty();
+        // source's samples again: a repaint and a lego region splice the
+        // source back in after the decode, so their encode is not the run
+        // again's. Said by the task (#1041), not read from padded_src, which
+        // only the outpainting padding happens to leave.
+        s.src_encoded = have_src_audio && !have_src_latents && !s.is_repaint && !s.is_lego_region;
     }
     if (ops_encode_timbre(ctx, ref_audio, ref_len, ref_latents, ref_T_latent, s, progress) != 0) {
         return false;
@@ -396,19 +398,15 @@ static int run_tail(AceSynth * ctx, const AceRequest * reqs, int batch_n, SynthS
 
 // text2music: pure generation. No src audio. Optional timbre reference.
 // Audio codes from LM (or absent) condition the DiT context.
-static AceSynthJob * run_text2music(AceSynth *         ctx,
-                                    const AceRequest * reqs,
-                                    const float *      ref_audio,
-                                    int                ref_len,
-                                    const float *      ref_latents,
-                                    int                ref_T_latent,
-                                    int                batch_n,
-                                    AceProgress        progress) {
-    // Owned until it is returned: a GPU failure throws (#403), and a
-    // throw must not leak the job and its buffers.
-    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
-    AceSynthJob * job    = job_owner.get();
-    SynthState &  s      = job->state;
+static int run_text2music(AceSynth *         ctx,
+                          const AceRequest * reqs,
+                          const float *      ref_audio,
+                          int                ref_len,
+                          const float *      ref_latents,
+                          int                ref_T_latent,
+                          int                batch_n,
+                          SynthState &       s,
+                          AceProgress        progress) {
     // audio_codes from the LM produce a latent context; empty codes fall back
     // to silence (DiT-only). The DiT was trained with the cover instruction on
     // latent context, so the two flags cascade from the same condition.
@@ -417,122 +415,110 @@ static AceSynthJob * run_text2music(AceSynth *         ctx,
 
     if (!pinned_encode_src_and_timbre(ctx, NULL, 0, NULL, 0, ref_audio, ref_len, ref_latents, ref_T_latent, s,
                                       progress)) {
-        return NULL;
+        return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
-        return NULL;
+        return -1;
     }
-    return job_owner.release();
+    return 0;
 }
 
 // cover: src audio recomposed with FSQ roundtrip degrading the context, so
 // the DiT diverges from the original while staying thematically aligned.
-static AceSynthJob * run_cover(AceSynth *         ctx,
-                               const AceRequest * reqs,
-                               const float *      src_audio,
-                               int                src_len,
-                               const float *      src_latents,
-                               int                src_T_latent,
-                               const float *      ref_audio,
-                               int                ref_len,
-                               const float *      ref_latents,
-                               int                ref_T_latent,
-                               int                batch_n,
-                               AceProgress        progress) {
+static int run_cover(AceSynth *         ctx,
+                     const AceRequest * reqs,
+                     const float *      src_audio,
+                     int                src_len,
+                     const float *      src_latents,
+                     int                src_T_latent,
+                     const float *      ref_audio,
+                     int                ref_len,
+                     const float *      ref_latents,
+                     int                ref_T_latent,
+                     int                batch_n,
+                     SynthState &       s,
+                     AceProgress        progress) {
     bool have_src = (src_audio && src_len > 0) || (src_latents && src_T_latent > 0);
     if (!have_src) {
         fprintf(stderr, "[Synth-Run] ERROR: task 'cover' requires source audio or latents\n");
-        return NULL;
+        return -1;
     }
-    // Owned until it is returned: a GPU failure throws (#403), and a
-    // throw must not leak the job and its buffers.
-    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
-    AceSynthJob * job    = job_owner.get();
-    SynthState &  s      = job->state;
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_COVER;
 
     if (!pinned_encode_src_and_timbre(ctx, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len,
                                       ref_latents, ref_T_latent, s, progress)) {
-        return NULL;
+        return -1;
     }
 
-    // Snapshot clean VAE latents before the FSQ roundtrip degrades them.
-    // cover_noise_strength blending needs the clean copy.
-    s.noise_blend_latents = s.cover_latents;
+    // The FSQ roundtrip keeps the clean latents in noise_blend_latents, for
+    // cover_noise_strength's blend and a failed run's hand-out
+    // (clean_src_latents), and conditions on the degraded ones (#1042).
     ops_fsq_roundtrip(ctx, s);
 
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
-        return NULL;
+        return -1;
     }
-    return job_owner.release();
+    return 0;
 }
 
 // cover-nofsq: cover without the FSQ roundtrip. DiT works on clean 25Hz VAE
 // latents, output stays close to source structure and timbre. Pass
 // ref_audio = src_audio for best results.
-static AceSynthJob * run_cover_nofsq(AceSynth *         ctx,
-                                     const AceRequest * reqs,
-                                     const float *      src_audio,
-                                     int                src_len,
-                                     const float *      src_latents,
-                                     int                src_T_latent,
-                                     const float *      ref_audio,
-                                     int                ref_len,
-                                     const float *      ref_latents,
-                                     int                ref_T_latent,
-                                     int                batch_n,
-                                     AceProgress        progress) {
+static int run_cover_nofsq(AceSynth *         ctx,
+                           const AceRequest * reqs,
+                           const float *      src_audio,
+                           int                src_len,
+                           const float *      src_latents,
+                           int                src_T_latent,
+                           const float *      ref_audio,
+                           int                ref_len,
+                           const float *      ref_latents,
+                           int                ref_T_latent,
+                           int                batch_n,
+                           SynthState &       s,
+                           AceProgress        progress) {
     bool have_src = (src_audio && src_len > 0) || (src_latents && src_T_latent > 0);
     if (!have_src) {
         fprintf(stderr, "[Synth-Run] ERROR: task 'cover-nofsq' requires source audio or latents\n");
-        return NULL;
+        return -1;
     }
-    // Owned until it is returned: a GPU failure throws (#403), and a
-    // throw must not leak the job and its buffers.
-    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
-    AceSynthJob * job    = job_owner.get();
-    SynthState &  s      = job->state;
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_COVER;
 
     if (!pinned_encode_src_and_timbre(ctx, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len,
                                       ref_latents, ref_T_latent, s, progress)) {
-        return NULL;
+        return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
-        return NULL;
+        return -1;
     }
-    return job_owner.release();
+    return 0;
 }
 
 // repaint: region-bounded inpaint/outpaint. Source padded with silence at the
 // edges when the region extends beyond bounds, audio-side or latent-side
 // depending on what the caller provided. DiT regenerates inside the region,
 // phase 2 splices the result with the source latents and decodes once.
-static AceSynthJob * run_repaint(AceSynth *         ctx,
-                                 const AceRequest * reqs,
-                                 const float *      src_audio,
-                                 int                src_len,
-                                 const float *      src_latents,
-                                 int                src_T_latent,
-                                 const float *      ref_audio,
-                                 int                ref_len,
-                                 const float *      ref_latents,
-                                 int                ref_T_latent,
-                                 int                batch_n,
-                                 AceProgress        progress) {
+static int run_repaint(AceSynth *         ctx,
+                       const AceRequest * reqs,
+                       const float *      src_audio,
+                       int                src_len,
+                       const float *      src_latents,
+                       int                src_T_latent,
+                       const float *      ref_audio,
+                       int                ref_len,
+                       const float *      ref_latents,
+                       int                ref_T_latent,
+                       int                batch_n,
+                       SynthState &       s,
+                       AceProgress        progress) {
     bool have_audio   = src_audio && src_len > 0;
     bool have_latents = src_latents && src_T_latent > 0;
     if (!have_audio && !have_latents) {
         fprintf(stderr, "[Synth-Run] ERROR: task 'repaint' requires source audio or src_latents\n");
-        return NULL;
+        return -1;
     }
-    // Owned until it is returned: a GPU failure throws (#403), and a
-    // throw must not leak the job and its buffers.
-    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
-    AceSynthJob * job    = job_owner.get();
-    SynthState &  s      = job->state;
     s.is_repaint         = true;
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_REPAINT;
@@ -546,16 +532,16 @@ static AceSynthJob * run_repaint(AceSynth *         ctx,
 
     if (!pinned_encode_src_and_timbre(ctx, enc_audio, enc_len, enc_latents, enc_T_latent, ref_audio, ref_len,
                                       ref_latents, ref_T_latent, s, progress)) {
-        return NULL;
+        return -1;
     }
     float src_dur = have_latents ? (float) src_T_latent * 1920.0f / 48000.0f : (float) src_len / 48000.0f;
     if (!adjust_region_coords(s, src_dur)) {
-        return NULL;
+        return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
-        return NULL;
+        return -1;
     }
-    return job_owner.release();
+    return 0;
 }
 
 // lego: stem generation. With valid rs/re: region-constrained, DiT generates
@@ -563,29 +549,25 @@ static AceSynthJob * run_repaint(AceSynth *         ctx,
 // audio_cover_strength forced to 1.0 so all DiT steps hear the backing track.
 // Both src_audio and src_latents are accepted; in region mode the source is
 // padded with silence at the edges when the region extends beyond bounds.
-static AceSynthJob * run_lego(AceSynth *         ctx,
-                              const AceRequest * reqs,
-                              const float *      src_audio,
-                              int                src_len,
-                              const float *      src_latents,
-                              int                src_T_latent,
-                              const float *      ref_audio,
-                              int                ref_len,
-                              const float *      ref_latents,
-                              int                ref_T_latent,
-                              int                batch_n,
-                              AceProgress        progress) {
+static int run_lego(AceSynth *         ctx,
+                    const AceRequest * reqs,
+                    const float *      src_audio,
+                    int                src_len,
+                    const float *      src_latents,
+                    int                src_T_latent,
+                    const float *      ref_audio,
+                    int                ref_len,
+                    const float *      ref_latents,
+                    int                ref_T_latent,
+                    int                batch_n,
+                    SynthState &       s,
+                    AceProgress        progress) {
     bool have_audio   = src_audio && src_len > 0;
     bool have_latents = src_latents && src_T_latent > 0;
     if (!have_audio && !have_latents) {
         fprintf(stderr, "[Synth-Run] ERROR: task 'lego' requires source audio or src_latents\n");
-        return NULL;
+        return -1;
     }
-    // Owned until it is returned: a GPU failure throws (#403), and a
-    // throw must not leak the job and its buffers.
-    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
-    AceSynthJob * job       = job_owner.get();
-    SynthState &  s         = job->state;
     s.is_lego_region        = (s.rr.repainting_end > s.rr.repainting_start);
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Lego");
@@ -604,41 +586,37 @@ static AceSynthJob * run_lego(AceSynth *         ctx,
 
     if (!pinned_encode_src_and_timbre(ctx, enc_audio, enc_len, enc_latents, enc_T_latent, ref_audio, ref_len,
                                       ref_latents, ref_T_latent, s, progress)) {
-        return NULL;
+        return -1;
     }
     float src_dur = have_latents ? (float) src_T_latent * 1920.0f / 48000.0f : (float) src_len / 48000.0f;
     if (s.is_lego_region && !adjust_region_coords(s, src_dur)) {
-        return NULL;
+        return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
-        return NULL;
+        return -1;
     }
-    return job_owner.release();
+    return 0;
 }
 
 // extract: stem isolation from a full mix.
-static AceSynthJob * run_extract(AceSynth *         ctx,
-                                 const AceRequest * reqs,
-                                 const float *      src_audio,
-                                 int                src_len,
-                                 const float *      src_latents,
-                                 int                src_T_latent,
-                                 const float *      ref_audio,
-                                 int                ref_len,
-                                 const float *      ref_latents,
-                                 int                ref_T_latent,
-                                 int                batch_n,
-                                 AceProgress        progress) {
+static int run_extract(AceSynth *         ctx,
+                       const AceRequest * reqs,
+                       const float *      src_audio,
+                       int                src_len,
+                       const float *      src_latents,
+                       int                src_T_latent,
+                       const float *      ref_audio,
+                       int                ref_len,
+                       const float *      ref_latents,
+                       int                ref_T_latent,
+                       int                batch_n,
+                       SynthState &       s,
+                       AceProgress        progress) {
     bool have_src = (src_audio && src_len > 0) || (src_latents && src_T_latent > 0);
     if (!have_src) {
         fprintf(stderr, "[Synth-Run] ERROR: task 'extract' requires source audio or latents\n");
-        return NULL;
+        return -1;
     }
-    // Owned until it is returned: a GPU failure throws (#403), and a
-    // throw must not leak the job and its buffers.
-    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
-    AceSynthJob * job       = job_owner.get();
-    SynthState &  s         = job->state;
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Extract");
     s.instruction_str       = dit_instr_extract(track_upper);
@@ -647,37 +625,33 @@ static AceSynthJob * run_extract(AceSynth *         ctx,
 
     if (!pinned_encode_src_and_timbre(ctx, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len,
                                       ref_latents, ref_T_latent, s, progress)) {
-        return NULL;
+        return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
-        return NULL;
+        return -1;
     }
-    return job_owner.release();
+    return 0;
 }
 
 // complete: extend an isolated stem with more content.
-static AceSynthJob * run_complete(AceSynth *         ctx,
-                                  const AceRequest * reqs,
-                                  const float *      src_audio,
-                                  int                src_len,
-                                  const float *      src_latents,
-                                  int                src_T_latent,
-                                  const float *      ref_audio,
-                                  int                ref_len,
-                                  const float *      ref_latents,
-                                  int                ref_T_latent,
-                                  int                batch_n,
-                                  AceProgress        progress) {
+static int run_complete(AceSynth *         ctx,
+                        const AceRequest * reqs,
+                        const float *      src_audio,
+                        int                src_len,
+                        const float *      src_latents,
+                        int                src_T_latent,
+                        const float *      ref_audio,
+                        int                ref_len,
+                        const float *      ref_latents,
+                        int                ref_T_latent,
+                        int                batch_n,
+                        SynthState &       s,
+                        AceProgress        progress) {
     bool have_src = (src_audio && src_len > 0) || (src_latents && src_T_latent > 0);
     if (!have_src) {
         fprintf(stderr, "[Synth-Run] ERROR: task 'complete' requires source audio or latents\n");
-        return NULL;
+        return -1;
     }
-    // Owned until it is returned: a GPU failure throws (#403), and a
-    // throw must not leak the job and its buffers.
-    JobOwner      job_owner(ctx, alloc_job(ctx, reqs, batch_n));
-    AceSynthJob * job       = job_owner.get();
-    SynthState &  s         = job->state;
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Complete");
     s.instruction_str       = dit_instr_complete(track_upper);
@@ -686,12 +660,12 @@ static AceSynthJob * run_complete(AceSynth *         ctx,
 
     if (!pinned_encode_src_and_timbre(ctx, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len,
                                       ref_latents, ref_T_latent, s, progress)) {
-        return NULL;
+        return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
-        return NULL;
+        return -1;
     }
-    return job_owner.release();
+    return 0;
 }
 
 // Dispatches on reqs[0].task_type to the right task function. task_type is
@@ -709,36 +683,38 @@ static AceSynthJob * run_task(AceSynth *         ctx,
                               int                ref_T_latent,
                               int                batch_n,
                               AceProgress        progress) {
+    // The one owner of the task's job (#1041): each task fills the job's
+    // state and says whether it ran; the job is returned only if it did. A
+    // run that ends without it -- -1, an unknown task, or a throw (#403) --
+    // frees it, handing out its encodes first (JobOwner).
+    JobOwner            job_owner(ctx, alloc_job(ctx, reqs, batch_n));
+    SynthState &        s    = job_owner.get()->state;
     const std::string & task = reqs[0].task_type;
+    int                 rc   = -1;
     if (task == TASK_TEXT2MUSIC) {
-        return run_text2music(ctx, reqs, ref_audio, ref_len, ref_latents, ref_T_latent, batch_n, progress);
+        rc = run_text2music(ctx, reqs, ref_audio, ref_len, ref_latents, ref_T_latent, batch_n, s, progress);
+    } else if (task == TASK_COVER) {
+        rc = run_cover(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
+                       ref_T_latent, batch_n, s, progress);
+    } else if (task == TASK_COVER_NOFSQ) {
+        rc = run_cover_nofsq(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
+                             ref_T_latent, batch_n, s, progress);
+    } else if (task == TASK_REPAINT) {
+        rc = run_repaint(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
+                         ref_T_latent, batch_n, s, progress);
+    } else if (task == TASK_LEGO) {
+        rc = run_lego(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
+                      ref_T_latent, batch_n, s, progress);
+    } else if (task == TASK_EXTRACT) {
+        rc = run_extract(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
+                         ref_T_latent, batch_n, s, progress);
+    } else if (task == TASK_COMPLETE) {
+        rc = run_complete(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
+                          ref_T_latent, batch_n, s, progress);
+    } else {
+        fprintf(stderr, "[Synth-Run] ERROR: unknown task_type '%s'\n", task.c_str());
     }
-    if (task == TASK_COVER) {
-        return run_cover(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
-                         ref_T_latent, batch_n, progress);
-    }
-    if (task == TASK_COVER_NOFSQ) {
-        return run_cover_nofsq(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len,
-                               ref_latents, ref_T_latent, batch_n, progress);
-    }
-    if (task == TASK_REPAINT) {
-        return run_repaint(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
-                           ref_T_latent, batch_n, progress);
-    }
-    if (task == TASK_LEGO) {
-        return run_lego(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
-                        ref_T_latent, batch_n, progress);
-    }
-    if (task == TASK_EXTRACT) {
-        return run_extract(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
-                           ref_T_latent, batch_n, progress);
-    }
-    if (task == TASK_COMPLETE) {
-        return run_complete(ctx, reqs, src_audio, src_len, src_latents, src_T_latent, ref_audio, ref_len, ref_latents,
-                            ref_T_latent, batch_n, progress);
-    }
-    fprintf(stderr, "[Synth-Run] ERROR: unknown task_type '%s'\n", task.c_str());
-    return NULL;
+    return rc == 0 ? job_owner.release() : NULL;
 }
 
 // Phase 1 entry point.

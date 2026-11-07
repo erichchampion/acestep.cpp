@@ -80,7 +80,7 @@ struct SynthState {
     // src audio encoding
     bool               have_cover;
     std::vector<float> cover_latents;        // [T_cover * 64] time-major VAE latents
-    std::vector<float> noise_blend_latents;  // clean VAE latents for cover_noise_strength blending
+    std::vector<float> noise_blend_latents;  // clean VAE latents, once the FSQ roundtrip ran (clean_src_latents)
     // cover_latents came from encoding src audio that the run does not read
     // again, so a failed run hands out its clean_src_latents to be run again
     // (cadenza-audio #875, #1035).
@@ -165,9 +165,11 @@ struct SynthState {
 };
 
 // The source's clean VAE latents: noise_blend_latents holds them once the FSQ
-// roundtrip has degraded cover_latents in place, cover_latents before (or
-// without one). The noise blend and a failed run's hand-out read the same
-// (cadenza-audio #1035).
+// roundtrip has moved them there (its degraded latents in cover_latents, #1042),
+// cover_latents before (or without one). The noise blend and a failed run's
+// hand-out read the same (cadenza-audio #1035). A failed run's hand-out reads
+// it after run_tail, so it holds only while nothing there changes cover_latents
+// or timbre_feats in place.
 inline std::vector<float> & clean_src_latents(SynthState & s) {
     return s.noise_blend_latents.empty() ? s.cover_latents : s.noise_blend_latents;
 }

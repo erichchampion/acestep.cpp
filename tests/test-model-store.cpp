@@ -15,10 +15,12 @@
 #include "model-registry.h"
 #include "model-store.h"
 #include "pipeline-lm.h"
+#include "pipeline-synth.h"
 #include "pipeline-understand.h"
 #include "prompt.h"
 #include "version.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -619,6 +621,108 @@ static int scenario_loaded_threads(const char * vae_path) {
     return rc;
 }
 
+// Scenario 11 (cadenza-audio #1042): what a failed run hands out through its
+// sink, for a failure by NULL -- a run cancelled at the DiT's first poll --
+// not only by a throw (GPUFailureTests' refusal). A cover keeps its source's
+// clean encode, at the source's length, and no reference it was not given; a
+// text2music with a reference keeps the reference's only; a repaint, which
+// splices its source back in after the decode, keeps no source encode; and a
+// cover-nofsq keeps the same clean encode as the cover, whose FSQ roundtrip
+// moved the clean latents aside rather than copying them first.
+static bool cancel_at_dit(void *, AceStage stage, int, int) {
+    return stage == ACE_STAGE_DIT;
+}
+
+static int scenario_failed_encodes(const char * text_enc_path, const char * dit_path, const char * vae_path) {
+    fprintf(stderr, "[Test] scenario 11: a failed run's encodes, by NULL\n");
+    ModelStore *   s = store_create(EVICT_STRICT);
+    AceSynthParams p;
+    ace_synth_default_params(&p);
+    p.text_encoder_path = text_enc_path;
+    p.dit_path          = dit_path;
+    p.vae_path          = vae_path;
+    AceSynth * synth    = ace_synth_load(s, &p);
+    if (!synth) {
+        fprintf(stderr, "[Test] FAIL: ace_synth_load\n");
+        store_free(s);
+        return 1;
+    }
+    // Two seconds of two different tones, interleaved stereo at 48 kHz.
+    const int          seconds = 2, n = seconds * 48000;
+    std::vector<float> source((size_t) n * 2), reference((size_t) n * 2);
+    for (int i = 0; i < n; i++) {
+        source[(size_t) i * 2] = source[(size_t) i * 2 + 1] = 0.3f * sinf(2.0f * 3.14159265f * 220.0f * i / 48000.0f);
+        reference[(size_t) i * 2]                           = reference[(size_t) i * 2 + 1] =
+            0.3f * sinf(2.0f * 3.14159265f * 523.0f * i / 48000.0f);
+    }
+    AceProgress cancel;
+    cancel.fn = cancel_at_dit;
+    // run TASK [SOURCE] [REFERENCE]: the run, cancelled, and what it kept.
+    auto run  = [&](const char * task, const float * src, const float * ref, AceSynthEncodes & kept) {
+        AceRequest r;
+        request_init(&r);
+        r.caption   = "a short test";
+        r.duration  = (float) seconds;
+        r.seed      = 1;
+        r.task_type = task;
+        if (!strcmp(task, "repaint")) {
+            r.repainting_start = 0.5f;
+            r.repainting_end   = 1.5f;
+        }
+        AceSynthJob * job =
+            ace_synth_job_run_dit(synth, &r, src, src ? n : 0, NULL, 0, ref, ref ? n : 0, NULL, 0, 1, cancel, &kept);
+        if (job) {
+            ace_synth_job_free(job);
+            return false;
+        }
+        return true;
+    };
+    int             rc     = 0;
+    const size_t    frames = (size_t) seconds * 25;
+    AceSynthEncodes cover, text, repaint, nofsq;
+    if (!run("cover", source.data(), NULL, cover) || !run("text2music", NULL, reference.data(), text) ||
+        !run("repaint", source.data(), NULL, repaint) || !run("cover-nofsq", source.data(), NULL, nofsq)) {
+        fprintf(stderr, "[Test] FAIL: a run cancelled at its DiT returned a job\n");
+        rc = 1;
+    }
+    auto near = [&](const std::vector<float> & v) {
+        const size_t got = v.size() / 64;
+        return v.size() % 64 == 0 && got + 2 >= frames && got <= frames + 2;
+    };
+    if (!near(cover.src_latents) || !cover.ref_latents.empty()) {
+        fprintf(stderr,
+                "[Test] FAIL: a cancelled cover kept %zu source and %zu reference values, want ~%zu frames "
+                "of source and none of a reference it was not given\n",
+                cover.src_latents.size(), cover.ref_latents.size(), frames);
+        rc = 1;
+    }
+    if (!text.src_latents.empty() || !near(text.ref_latents)) {
+        fprintf(stderr,
+                "[Test] FAIL: a cancelled text2music with a reference kept %zu source and %zu reference "
+                "values, want the reference's only (~%zu frames)\n",
+                text.src_latents.size(), text.ref_latents.size(), frames);
+        rc = 1;
+    }
+    if (!repaint.src_latents.empty()) {
+        fprintf(stderr, "[Test] FAIL: a cancelled repaint kept %zu source values; it reads its source again\n",
+                repaint.src_latents.size());
+        rc = 1;
+    }
+    if (nofsq.src_latents != cover.src_latents) {
+        fprintf(stderr,
+                "[Test] FAIL: a cancelled cover kept another encode than a cover-nofsq: the FSQ roundtrip's "
+                "latents, not the clean ones?\n");
+        rc = 1;
+    }
+    ace_synth_free(synth);
+    store_free(s);
+    if (rc == 0) {
+        fprintf(stderr, "[Test] scenario 11 PASS: cover %zu frames, reference %zu, repaint none\n",
+                cover.src_latents.size() / 64, text.ref_latents.size() / 64);
+    }
+    return rc;
+}
+
 int main(int argc, char ** argv) {
     const char * models_dir = nullptr;
 
@@ -654,8 +758,8 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "[Test] FATAL: cannot scan --models %s\n", models_dir);
         return 1;
     }
-    if (registry.lm.empty() || registry.dit.empty() || registry.vae.empty()) {
-        fprintf(stderr, "[Test] FATAL: registry needs LM, DiT and VAE models under %s\n", models_dir);
+    if (registry.lm.empty() || registry.dit.empty() || registry.vae.empty() || registry.text_enc.empty()) {
+        fprintf(stderr, "[Test] FATAL: registry needs LM, DiT, VAE and text-encoder models under %s\n", models_dir);
         return 1;
     }
 
@@ -676,6 +780,7 @@ int main(int argc, char ** argv) {
     rc |= scenario_release_unheld(vae_path);
     rc |= scenario_vram_except(vae_path);
     rc |= scenario_loaded_threads(vae_path);
+    rc |= scenario_failed_encodes(registry.text_enc[0].path.c_str(), dit_path, vae_path);
 
     if (rc == 0) {
         fprintf(stderr, "[Test] ALL PASS\n");
