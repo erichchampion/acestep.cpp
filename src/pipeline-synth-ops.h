@@ -24,7 +24,9 @@ int ops_encode_src(const AceSynth * ctx,
                    AceProgress      progress = {});
 
 // FSQ roundtrip on cover_latents (cover mode only).
-void ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s);
+// 0, or -1 when it could not run: a cover is not run on clean latents in its
+// place, unsaid (cadenza-audio #1042).
+int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s);
 
 // Resolve shared DiT params (steps, guidance, shift) and scan audio_codes.
 int ops_resolve_params(const AceSynth * ctx, const AceRequest * reqs, int batch_n, SynthState & s);

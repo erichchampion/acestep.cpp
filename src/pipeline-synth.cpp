@@ -363,7 +363,7 @@ static bool pinned_encode_src_and_timbre(AceSynth *    ctx,
         // source back in after the decode, so their encode is not the run
         // again's. Said by the task (#1041), not read from padded_src, which
         // only the outpainting padding happens to leave.
-        s.src_encoded = have_src_audio && !have_src_latents && !s.is_repaint && !s.is_lego_region;
+        s.src_encoded = have_src_audio && !have_src_latents && !splices_source_after_decode(s);
     }
     if (ops_encode_timbre(ctx, ref_audio, ref_len, ref_latents, ref_T_latent, s, progress) != 0) {
         return false;
@@ -438,11 +438,6 @@ static int run_cover(AceSynth *         ctx,
                      int                batch_n,
                      SynthState &       s,
                      AceProgress        progress) {
-    bool have_src = (src_audio && src_len > 0) || (src_latents && src_T_latent > 0);
-    if (!have_src) {
-        fprintf(stderr, "[Synth-Run] ERROR: task 'cover' requires source audio or latents\n");
-        return -1;
-    }
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_COVER;
 
@@ -451,10 +446,12 @@ static int run_cover(AceSynth *         ctx,
         return -1;
     }
 
-    // The FSQ roundtrip keeps the clean latents in noise_blend_latents, for
+    // The FSQ roundtrip keeps the clean latents in fsq_clean_latents, for
     // cover_noise_strength's blend and a failed run's hand-out
     // (clean_src_latents), and conditions on the degraded ones (#1042).
-    ops_fsq_roundtrip(ctx, s);
+    if (ops_fsq_roundtrip(ctx, s) != 0) {
+        return -1;
+    }
 
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
         return -1;
@@ -478,11 +475,6 @@ static int run_cover_nofsq(AceSynth *         ctx,
                            int                batch_n,
                            SynthState &       s,
                            AceProgress        progress) {
-    bool have_src = (src_audio && src_len > 0) || (src_latents && src_T_latent > 0);
-    if (!have_src) {
-        fprintf(stderr, "[Synth-Run] ERROR: task 'cover-nofsq' requires source audio or latents\n");
-        return -1;
-    }
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_COVER;
 
@@ -513,12 +505,7 @@ static int run_repaint(AceSynth *         ctx,
                        int                batch_n,
                        SynthState &       s,
                        AceProgress        progress) {
-    bool have_audio   = src_audio && src_len > 0;
     bool have_latents = src_latents && src_T_latent > 0;
-    if (!have_audio && !have_latents) {
-        fprintf(stderr, "[Synth-Run] ERROR: task 'repaint' requires source audio or src_latents\n");
-        return -1;
-    }
     s.is_repaint         = true;
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_REPAINT;
@@ -562,12 +549,7 @@ static int run_lego(AceSynth *         ctx,
                     int                batch_n,
                     SynthState &       s,
                     AceProgress        progress) {
-    bool have_audio   = src_audio && src_len > 0;
     bool have_latents = src_latents && src_T_latent > 0;
-    if (!have_audio && !have_latents) {
-        fprintf(stderr, "[Synth-Run] ERROR: task 'lego' requires source audio or src_latents\n");
-        return -1;
-    }
     s.is_lego_region        = (s.rr.repainting_end > s.rr.repainting_start);
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Lego");
@@ -612,11 +594,6 @@ static int run_extract(AceSynth *         ctx,
                        int                batch_n,
                        SynthState &       s,
                        AceProgress        progress) {
-    bool have_src = (src_audio && src_len > 0) || (src_latents && src_T_latent > 0);
-    if (!have_src) {
-        fprintf(stderr, "[Synth-Run] ERROR: task 'extract' requires source audio or latents\n");
-        return -1;
-    }
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Extract");
     s.instruction_str       = dit_instr_extract(track_upper);
@@ -647,11 +624,6 @@ static int run_complete(AceSynth *         ctx,
                         int                batch_n,
                         SynthState &       s,
                         AceProgress        progress) {
-    bool have_src = (src_audio && src_len > 0) || (src_latents && src_T_latent > 0);
-    if (!have_src) {
-        fprintf(stderr, "[Synth-Run] ERROR: task 'complete' requires source audio or latents\n");
-        return -1;
-    }
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Complete");
     s.instruction_str       = dit_instr_complete(track_upper);
@@ -683,13 +655,20 @@ static AceSynthJob * run_task(AceSynth *         ctx,
                               int                ref_T_latent,
                               int                batch_n,
                               AceProgress        progress) {
+    // Every task but text2music works from a source: refused before the job
+    // is made.
+    const std::string & task     = reqs[0].task_type;
+    const bool          have_src = (src_audio && src_len > 0) || (src_latents && src_T_latent > 0);
+    if (task != TASK_TEXT2MUSIC && !have_src) {
+        fprintf(stderr, "[Synth-Run] ERROR: task '%s' requires source audio or latents\n", task.c_str());
+        return NULL;
+    }
     // The one owner of the task's job (#1041): each task fills the job's
     // state and says whether it ran; the job is returned only if it did. A
     // run that ends without it -- -1, an unknown task, or a throw (#403) --
     // frees it, handing out its encodes first (JobOwner).
     JobOwner            job_owner(ctx, alloc_job(ctx, reqs, batch_n));
     SynthState &        s    = job_owner.get()->state;
-    const std::string & task = reqs[0].task_type;
     int                 rc   = -1;
     if (task == TASK_TEXT2MUSIC) {
         rc = run_text2music(ctx, reqs, ref_audio, ref_len, ref_latents, ref_T_latent, batch_n, s, progress);

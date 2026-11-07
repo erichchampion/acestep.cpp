@@ -180,7 +180,7 @@ int ops_encode_src(const AceSynth * ctx,
     return 0;
 }
 
-void ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
+int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
     // FSQ roundtrip for cover: tokenize (25Hz->5Hz) + detokenize (5Hz->25Hz).
     // The lossy 5:1 temporal compression destroys micro-timings, ornaments and
     // transients. The DiT receives degraded latents and diverges from the source,
@@ -189,7 +189,7 @@ void ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
     // producing remixes that stay close to the source.
     // Other tasks (lego, extract, repaint, complete) also use clean latents.
     if (!s.have_cover) {
-        return;
+        return 0;
     }
     s.timer.reset();
     int              T_5Hz = (s.T_cover + 4) / 5;
@@ -201,7 +201,7 @@ void ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
         TokGGML * tok = store_require_fsq_tok(ctx->store, ctx->fsq_tok_key);
         if (!tok) {
             fprintf(stderr, "[FSQ-Roundtrip] FATAL: store_require_fsq_tok failed\n");
-            return;
+            return -1;
         }
         ModelHandle tok_guard(ctx->store, tok);
         if (!ctx->params.use_fa) {
@@ -212,18 +212,21 @@ void ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
             tok_ggml_encode(tok, s.cover_latents.data(), s.T_cover, codes.data(), ctx->meta->silence_full.data());
     }
     if (T_5Hz_actual <= 0) {
-        return;
+        fprintf(stderr, "[FSQ-Roundtrip] FATAL: the tokenizer made no codes\n");
+        return -1;
     }
 
     // Detokenizer scope: acquire, decode 5Hz codes back to 25Hz latents, release.
+    // Sized for the larger of what the roundtrip makes and the source, so
+    // fitting it to the source below never reallocates.
     int                T_25Hz_rt = T_5Hz_actual * 5;
-    std::vector<float> rt_latents(T_25Hz_rt * 64);
+    std::vector<float> rt_latents((size_t) (T_25Hz_rt > s.T_cover ? T_25Hz_rt : s.T_cover) * 64);
     int                ret;
     {
         DetokGGML * detok = store_require_fsq_detok(ctx->store, ctx->fsq_detok_key);
         if (!detok) {
             fprintf(stderr, "[FSQ-Roundtrip] FATAL: store_require_fsq_detok failed\n");
-            return;
+            return -1;
         }
         ModelHandle detok_guard(ctx->store, detok);
         if (!ctx->params.use_fa) {
@@ -233,10 +236,11 @@ void ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
         ret = detok_ggml_decode(detok, codes.data(), T_5Hz_actual, rt_latents.data());
     }
     if (ret < 0) {
-        return;
+        fprintf(stderr, "[FSQ-Roundtrip] FATAL: the detokenizer failed\n");
+        return -1;
     }
     // The degraded latents condition the run from here; the clean ones move
-    // to noise_blend_latents, which clean_src_latents reads (#1042). Two
+    // to fsq_clean_latents, which clean_src_latents reads (#1042). Two
     // moves, no copy of the source's latents: frames past what the
     // roundtrip made keep their clean values, as the in-place copy left them.
     int copy_T = T_25Hz_rt < s.T_cover ? T_25Hz_rt : s.T_cover;
@@ -245,9 +249,10 @@ void ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
         memcpy(rt_latents.data() + (size_t) copy_T * 64, s.cover_latents.data() + (size_t) copy_T * 64,
                (size_t) (s.T_cover - copy_T) * 64 * sizeof(float));
     }
-    s.noise_blend_latents = std::move(s.cover_latents);
+    s.fsq_clean_latents   = std::move(s.cover_latents);
     s.cover_latents       = std::move(rt_latents);
     fprintf(stderr, "[FSQ-Roundtrip] %d->%d->%d frames, %.1f ms\n", s.T_cover, T_5Hz_actual, copy_T, s.timer.ms());
+    return 0;
 }
 
 int ops_resolve_params(const AceSynth * ctx, const AceRequest * reqs, int batch_n, SynthState & s) {
@@ -814,9 +819,9 @@ void ops_init_noise(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
 
     // cover_noise_strength: blend initial noise with clean source latents.
     // xt = nearest_t * noise + (1 - nearest_t) * clean_latents, then truncate schedule.
-    // the FSQ roundtrip degrades cover_latents for context conditioning, but noise
-    // blending needs the original clean VAE latents. noise_blend_latents holds the
-    // clean copy when FSQ was applied; otherwise fall back to cover_latents (already clean).
+    // the FSQ roundtrip conditions on degraded latents, but noise blending needs
+    // the clean VAE latents: clean_src_latents reads them wherever they are (the
+    // roundtrip moves them to fsq_clean_latents; without one, cover_latents).
     if (s.use_source_context && s.have_cover && s.rr.cover_noise_strength > 0.0f) {
         const std::vector<float> & blend_src             = clean_src_latents(s);
         float                      effective_noise_level = 1.0f - s.rr.cover_noise_strength;
@@ -982,7 +987,7 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
     // restores bit-exact fidelity outside the region. Skipped on the
     // latent path (no original waveform available, single VAE decode is
     // already the cleanest output we can produce).
-    if ((s.is_repaint || s.is_lego_region) && !s.padded_src.empty()) {
+    if (splices_source_after_decode(s) && !s.padded_src.empty()) {
         int       T_src   = (int) (s.padded_src.size() / 2);
         const int start_s = (int) ((size_t) s.repaint_t0 * 1920);
         const int end_s   = (int) ((size_t) s.repaint_t1 * 1920);
@@ -1038,7 +1043,7 @@ int ops_vae_decode_one(const AceSynth * ctx, int track, AceAudio * out, SynthSta
     }
     ModelHandle vae_guard(ctx->store, vae);
 
-    if ((s.is_repaint || s.is_lego_region) && s.have_cover && s.T_cover > 0) {
+    if (splices_source_after_decode(s) && s.have_cover && s.T_cover > 0) {
         ops_vae_splice_track(s, track);
         fprintf(stderr, "[Latent-Splice] kept generated frames [%d, %d) / %d, source elsewhere\n", s.repaint_t0,
                 s.repaint_t1, s.T);

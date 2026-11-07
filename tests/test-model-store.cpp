@@ -629,13 +629,20 @@ static int scenario_loaded_threads(const char * vae_path) {
 // splices its source back in after the decode, keeps no source encode; and a
 // cover-nofsq keeps the same clean encode as the cover, whose FSQ roundtrip
 // moved the clean latents aside rather than copying them first.
-static bool cancel_at_dit(void *, AceStage stage, int, int) {
-    return stage == ACE_STAGE_DIT;
+// Cancels at the DiT's first poll, counting the polls it cancelled: a run
+// that failed before its DiT (an encode, a require) reached none.
+static bool cancel_at_dit(void * data, AceStage stage, int, int) {
+    if (stage != ACE_STAGE_DIT) {
+        return false;
+    }
+    ++*(int *) data;
+    return true;
 }
 
 static int scenario_failed_encodes(const char * text_enc_path, const char * dit_path, const char * vae_path) {
     fprintf(stderr, "[Test] scenario 11: a failed run's encodes, by NULL\n");
-    ModelStore *   s = store_create(EVICT_STRICT);
+    // NEVER: the four runs load each module once.
+    ModelStore *   s = store_create(EVICT_NEVER);
     AceSynthParams p;
     ace_synth_default_params(&p);
     p.text_encoder_path = text_enc_path;
@@ -656,7 +663,9 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             0.3f * sinf(2.0f * 3.14159265f * 523.0f * i / 48000.0f);
     }
     AceProgress cancel;
-    cancel.fn = cancel_at_dit;
+    int         dit_polls = 0;
+    cancel.fn             = cancel_at_dit;
+    cancel.data           = &dit_polls;
     // run TASK [SOURCE] [REFERENCE]: the run, cancelled, and what it kept.
     auto run  = [&](const char * task, const float * src, const float * ref, AceSynthEncodes & kept) {
         AceRequest r;
@@ -669,20 +678,22 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             r.repainting_start = 0.5f;
             r.repainting_end   = 1.5f;
         }
+        const int     polls = dit_polls;
         AceSynthJob * job =
             ace_synth_job_run_dit(synth, &r, src, src ? n : 0, NULL, 0, ref, ref ? n : 0, NULL, 0, 1, cancel, &kept);
         if (job) {
             ace_synth_job_free(job);
             return false;
         }
-        return true;
+        // Failed by the cancel, at its DiT, not before it.
+        return dit_polls == polls + 1;
     };
     int             rc     = 0;
     const size_t    frames = (size_t) seconds * 25;
     AceSynthEncodes cover, text, repaint, nofsq;
     if (!run("cover", source.data(), NULL, cover) || !run("text2music", NULL, reference.data(), text) ||
         !run("repaint", source.data(), NULL, repaint) || !run("cover-nofsq", source.data(), NULL, nofsq)) {
-        fprintf(stderr, "[Test] FAIL: a run cancelled at its DiT returned a job\n");
+        fprintf(stderr, "[Test] FAIL: a run returned a job, or failed before its DiT's first poll\n");
         rc = 1;
     }
     auto near = [&](const std::vector<float> & v) {
@@ -758,8 +769,8 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "[Test] FATAL: cannot scan --models %s\n", models_dir);
         return 1;
     }
-    if (registry.lm.empty() || registry.dit.empty() || registry.vae.empty() || registry.text_enc.empty()) {
-        fprintf(stderr, "[Test] FATAL: registry needs LM, DiT, VAE and text-encoder models under %s\n", models_dir);
+    if (registry.lm.empty() || registry.dit.empty() || registry.vae.empty()) {
+        fprintf(stderr, "[Test] FATAL: registry needs LM, DiT and VAE models under %s\n", models_dir);
         return 1;
     }
 
@@ -780,7 +791,14 @@ int main(int argc, char ** argv) {
     rc |= scenario_release_unheld(vae_path);
     rc |= scenario_vram_except(vae_path);
     rc |= scenario_loaded_threads(vae_path);
-    rc |= scenario_failed_encodes(registry.text_enc[0].path.c_str(), dit_path, vae_path);
+    // Scenario 11 runs the synth, which needs a text encoder too: without one
+    // it fails, after the others have run.
+    if (registry.text_enc.empty()) {
+        fprintf(stderr, "[Test] FAIL: scenario 11 needs a text-encoder model under %s\n", models_dir);
+        rc |= 1;
+    } else {
+        rc |= scenario_failed_encodes(registry.text_enc[0].path.c_str(), dit_path, vae_path);
+    }
 
     if (rc == 0) {
         fprintf(stderr, "[Test] ALL PASS\n");
