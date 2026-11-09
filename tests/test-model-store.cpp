@@ -527,7 +527,7 @@ static void usage(const char * prog) {
             "  --models <dir>          Directory of GGUF model files\n"
             "Optional:\n"
             "  --scenarios <which>     store: the store's policies (1-10); encodes: a\n"
-            "                          failed run's hand-out (11, 12); splice: the\n"
+            "                          failed run's hand-out (11); splice: the\n"
             "                          splice rule alone (12), no --models; all (default)\n",
             prog);
 }
@@ -780,9 +780,11 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     if (!run("lego", source.data(), NULL, whole)) {
         fprintf(stderr, "[Test] FAIL: a whole-song lego returned a job, or failed before its DiT's first poll\n");
         rc = 1;
-    } else if (!near(whole.src_latents)) {
-        fprintf(stderr, "[Test] FAIL: a cancelled whole-song lego kept %zu source values, want ~%zu frames\n",
-                whole.src_latents.size(), frames);
+    } else if (whole.src_latents != cover.src_latents) {
+        fprintf(stderr,
+                "[Test] FAIL: a cancelled whole-song lego kept %zu source values, not its clean encode (the "
+                "cover's, %zu)\n",
+                whole.src_latents.size(), cover.src_latents.size());
         rc = 1;
     }
     // A cover whose FSQ roundtrip cannot run fails before its DiT, and still
@@ -894,8 +896,12 @@ int main(int argc, char ** argv) {
         rc |= scenario_vram_except(vae_path);
         rc |= scenario_loaded_threads(vae_path);
     }
-    if (encodes) {
+    // Scenario 12 runs with these only in a full run: ctest runs it alone
+    // (--scenarios splice), so a failure of it is said once.
+    if (strcmp(which, "all") == 0) {
         rc |= scenario_splice_rule();
+    }
+    if (encodes) {
         // Scenario 11 runs the synth, which needs a text encoder too: without one
         // it fails, after the others have run.
         if (registry.text_enc.empty()) {
