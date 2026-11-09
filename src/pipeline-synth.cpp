@@ -201,13 +201,15 @@ struct SynthInputs {
     SynthInput ref;
 };
 
-// Outpainting: pad src_audio with silence when the region extends beyond
-// source bounds. Returns the (possibly padded) buffer and length via out
-// Pad source for outpainting when the region extends beyond the source bounds.
-// Audio path: zero-pads s.padded_src in samples, the VAE encoder will turn
-// silence audio into ~silence latents.
-// Latent path: pads s.cover_latents directly with the precomputed silence_full
-// latent (the canonical VAE encoding of audio silence). No VAE encode needed.
+// Outpainting: pads the source when the region extends beyond its bounds, and
+// returns the input to encode -- the source itself, or a SynthInput pointing
+// into s.padded_src or s.padded_latents, valid while those are not resized.
+// Audio path: always copies the source into s.padded_src (the post-decode
+// splice reads it), zero-padded in samples; the VAE encoder turns the silence
+// into ~silence latents.
+// Latent path: pads into s.padded_latents with the precomputed silence_full
+// latent (the canonical VAE encoding of audio silence), only when there is
+// padding to add. No VAE encode needed.
 // Sets s.left_pad_sec for adjust_region_coords.
 static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
                                             const AceRequest & r,
