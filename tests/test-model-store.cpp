@@ -521,13 +521,14 @@ static int scenario_vram_except(const char * vae_path) {
 static void usage(const char * prog) {
     fprintf(stderr, "acestep.cpp %s\n\n", ACE_VERSION);
     fprintf(stderr,
-            "Usage: %s --models <dir> [--scenarios all|store|encodes]\n"
+            "Usage: %s --models <dir> [--scenarios all|store|encodes] | --scenarios splice\n"
             "\n"
             "Required:\n"
             "  --models <dir>          Directory of GGUF model files\n"
             "Optional:\n"
             "  --scenarios <which>     store: the store's policies (1-10); encodes: a\n"
-            "                          failed run's hand-out (11, 12); all (default)\n",
+            "                          failed run's hand-out (11, 12); splice: the\n"
+            "                          splice rule alone (12), no --models; all (default)\n",
             prog);
 }
 
@@ -632,7 +633,11 @@ static int scenario_loaded_threads(const char * vae_path) {
 // text2music with a reference keeps the reference's only; a repaint, which
 // splices its source back in after the decode, keeps no source encode; and a
 // cover-nofsq keeps the same clean encode as the cover, whose FSQ roundtrip
-// moved the clean latents aside rather than copying them first.
+// moved the clean latents aside rather than copying them first. And
+// (cadenza-audio #1056) a lego region, which splices its source as a repaint
+// does, keeps none; a whole-song lego keeps its clean encode; and a cover
+// whose FSQ roundtrip fails -- by a test hook, no input reaching it -- fails
+// before its DiT and still keeps its clean encode.
 // Cancels at the DiT's first poll, counting the polls it cancelled: a run
 // that failed before its DiT (an encode, a require) reached none.
 static bool cancel_at_dit(void * data, AceStage stage, int, int) {
@@ -643,10 +648,11 @@ static bool cancel_at_dit(void * data, AceStage stage, int, int) {
     return true;
 }
 
-// Scenario 12: which tasks splice their source after the decode, read by the
-// one predicate the hand-out and the decode share (cadenza-audio #1056) --
-// the rule scenario 11's repaint can't tell from the padding it also leaves.
-// No model needed.
+// Scenario 12: what the one predicate the hand-out and the decode share,
+// splices_source_after_decode, says of a task's flags (cadenza-audio #1056)
+// -- the rule scenario 11's repaint can't tell from the padding it also
+// leaves. The flags a task sets are scenario 11's lego runs'. No model
+// needed: `--scenarios splice` runs it alone, with no --models.
 static int scenario_splice_rule() {
     fprintf(stderr, "[Test] scenario 12: the tasks that splice their source after the decode\n");
     int  rc   = 0;
@@ -671,7 +677,7 @@ static int scenario_splice_rule() {
 
 static int scenario_failed_encodes(const char * text_enc_path, const char * dit_path, const char * vae_path) {
     fprintf(stderr, "[Test] scenario 11: a failed run's encodes, by NULL\n");
-    // NEVER: the four runs load each module once.
+    // NEVER: the runs load each module once.
     ModelStore *   s = store_create(EVICT_NEVER);
     AceSynthParams p;
     ace_synth_default_params(&p);
@@ -696,16 +702,18 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     int         dit_polls = 0;
     cancel.fn             = cancel_at_dit;
     cancel.data           = &dit_polls;
-    // run TASK [SOURCE] [REFERENCE]: the run, cancelled, and what it kept.
-    auto run  = [&](const char * task, const float * src, const float * ref, AceSynthEncodes & kept) {
+    // run TASK [SOURCE] [REFERENCE] KEPT [REGION] [POLLS]: the run, failed,
+    // and what it kept -- by the cancel at its DiT's first poll (POLLS 1), or
+    // before its DiT (POLLS 0). REGION gives a repaint, or a lego, a region.
+    auto run = [&](const char * task, const float * src, const float * ref, AceSynthEncodes & kept, bool region = false,
+                   int want_polls = 1) {
         AceRequest r;
         request_init(&r);
         r.caption   = "a short test";
         r.duration  = (float) seconds;
         r.seed      = 1;
         r.task_type = task;
-        if (!strcmp(task, "repaint") || !strcmp(task, "lego")) {
-            // A region: a repaint's, and a lego region's (is_lego_region).
+        if (region) {
             r.repainting_start = 0.5f;
             r.repainting_end   = 1.5f;
         }
@@ -716,14 +724,13 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             ace_synth_job_free(job);
             return false;
         }
-        // Failed by the cancel, at its DiT, not before it.
-        return dit_polls == polls + 1;
+        return dit_polls == polls + want_polls;
     };
     int             rc     = 0;
     const size_t    frames = (size_t) seconds * 25;
     AceSynthEncodes cover, text, repaint, nofsq;
     if (!run("cover", source.data(), NULL, cover) || !run("text2music", NULL, reference.data(), text) ||
-        !run("repaint", source.data(), NULL, repaint) || !run("cover-nofsq", source.data(), NULL, nofsq)) {
+        !run("repaint", source.data(), NULL, repaint, true) || !run("cover-nofsq", source.data(), NULL, nofsq)) {
         fprintf(stderr, "[Test] FAIL: a run returned a job, or failed before its DiT's first poll\n");
         rc = 1;
     }
@@ -759,7 +766,7 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // A lego region splices its source after the decode, as a repaint does:
     // it hands out none (cadenza-audio #1056).
     AceSynthEncodes lego;
-    if (!run("lego", source.data(), NULL, lego)) {
+    if (!run("lego", source.data(), NULL, lego, true)) {
         fprintf(stderr, "[Test] FAIL: a lego region returned a job, or failed before its DiT's first poll\n");
         rc = 1;
     } else if (!lego.src_latents.empty()) {
@@ -767,41 +774,43 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 lego.src_latents.size());
         rc = 1;
     }
+    // A whole-song lego (no region) does not splice: it hands out its clean
+    // source encode, as a cover does.
+    AceSynthEncodes whole;
+    if (!run("lego", source.data(), NULL, whole)) {
+        fprintf(stderr, "[Test] FAIL: a whole-song lego returned a job, or failed before its DiT's first poll\n");
+        rc = 1;
+    } else if (!near(whole.src_latents)) {
+        fprintf(stderr, "[Test] FAIL: a cancelled whole-song lego kept %zu source values, want ~%zu frames\n",
+                whole.src_latents.size(), frames);
+        rc = 1;
+    }
     // A cover whose FSQ roundtrip cannot run fails before its DiT, and still
     // hands out its clean encode -- the one a cover-nofsq hands out (#1056).
-    {
-        AceSynthEncodes failed;
-        AceRequest      r;
-        request_init(&r);
-        r.caption   = "a short test";
-        r.duration  = (float) seconds;
-        r.seed      = 1;
-        r.task_type = "cover";
-        ace_test_fail_next_fsq_require();
-        const int     polls = dit_polls;
-        AceSynthJob * job =
-            ace_synth_job_run_dit(synth, &r, source.data(), n, NULL, 0, NULL, 0, NULL, 0, 1, cancel, &failed);
-        if (job) {
-            ace_synth_job_free(job);
-            fprintf(stderr, "[Test] FAIL: a cover whose FSQ roundtrip failed returned a job\n");
-            rc = 1;
-        } else if (dit_polls != polls) {
-            fprintf(stderr, "[Test] FAIL: a cover whose FSQ roundtrip failed reached its DiT\n");
-            rc = 1;
-        } else if (failed.src_latents != cover.src_latents) {
-            fprintf(stderr,
-                    "[Test] FAIL: a cover whose FSQ roundtrip failed kept %zu source values, want its clean "
-                    "encode (%zu)\n",
-                    failed.src_latents.size(), cover.src_latents.size());
-            rc = 1;
-        }
+    AceSynthEncodes failed;
+    const int       fired = ace_test_fsq_require_failures();
+    ace_test_fail_next_fsq_require(true);
+    const bool failed_early = run("cover", source.data(), NULL, failed, false, 0);
+    ace_test_fail_next_fsq_require(false);
+    if (ace_test_fsq_require_failures() != fired + 1) {
+        fprintf(stderr, "[Test] FAIL: the cover never reached the FSQ require the hook fails\n");
+        rc = 1;
+    } else if (!failed_early) {
+        fprintf(stderr, "[Test] FAIL: a cover whose FSQ roundtrip failed returned a job, or reached its DiT\n");
+        rc = 1;
+    } else if (failed.src_latents != cover.src_latents) {
+        fprintf(stderr,
+                "[Test] FAIL: a cover whose FSQ roundtrip failed kept %zu source values, want its clean encode "
+                "(%zu)\n",
+                failed.src_latents.size(), cover.src_latents.size());
+        rc = 1;
     }
     ace_synth_free(synth);
     store_free(s);
     if (rc == 0) {
         fprintf(stderr,
                 "[Test] scenario 11 PASS: cover %zu frames, reference %zu, repaint and lego region none, a "
-                "failed FSQ roundtrip its clean encode\n",
+                "whole-song lego and a failed FSQ roundtrip their clean encode\n",
                 cover.src_latents.size() / 64, text.ref_latents.size() / 64);
     }
     return rc;
@@ -821,8 +830,8 @@ int main(int argc, char ** argv) {
             models_dir = argv[++i];
         } else if (!strcmp(argv[i], "--scenarios") && i + 1 < argc) {
             which = argv[++i];
-            if (strcmp(which, "all") && strcmp(which, "store") && strcmp(which, "encodes")) {
-                fprintf(stderr, "[CLI] ERROR: --scenarios takes all, store or encodes, not %s\n", which);
+            if (strcmp(which, "all") && strcmp(which, "store") && strcmp(which, "encodes") && strcmp(which, "splice")) {
+                fprintf(stderr, "[CLI] ERROR: --scenarios takes all, store, encodes or splice, not %s\n", which);
                 return 1;
             }
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
@@ -833,6 +842,13 @@ int main(int argc, char ** argv) {
             usage(argv[0]);
             return 1;
         }
+    }
+
+    // Scenario 12 reads no model: run alone, it needs no --models.
+    if (!strcmp(which, "splice")) {
+        const int rc = scenario_splice_rule();
+        fprintf(stderr, rc == 0 ? "[Test] ALL PASS\n" : "[Test] FAIL\n");
+        return rc;
     }
 
     if (!models_dir) {
@@ -849,20 +865,23 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "[Test] FATAL: cannot scan --models %s\n", models_dir);
         return 1;
     }
-    if (registry.lm.empty() || registry.dit.empty() || registry.vae.empty()) {
-        fprintf(stderr, "[Test] FATAL: registry needs LM, DiT and VAE models under %s\n", models_dir);
+    const bool store   = strcmp(which, "encodes") != 0;
+    const bool encodes = strcmp(which, "store") != 0;
+    // The planner LM only the store's scenarios load; the hand-out's runs
+    // need the DiT, the VAE and (below) a text encoder.
+    if ((store && registry.lm.empty()) || registry.dit.empty() || registry.vae.empty()) {
+        fprintf(stderr, "[Test] FATAL: registry needs %sDiT and VAE models under %s\n", store ? "LM, " : "",
+                models_dir);
         return 1;
     }
 
-    const char * lm_path  = registry.lm[0].path.c_str();
+    const char * lm_path  = store ? registry.lm[0].path.c_str() : "";
     const char * dit_path = registry.dit[0].path.c_str();
     const char * vae_path = registry.vae[0].path.c_str();
 
     fprintf(stderr, "[Test] LM=%s DiT=%s VAE=%s\n", lm_path, dit_path, vae_path);
 
-    int        rc      = 0;
-    const bool store   = strcmp(which, "encodes") != 0;
-    const bool encodes = strcmp(which, "store") != 0;
+    int rc = 0;
     if (store) {
         rc |= scenario_strict(lm_path, dit_path, vae_path);
         rc |= scenario_never(lm_path, dit_path, vae_path);

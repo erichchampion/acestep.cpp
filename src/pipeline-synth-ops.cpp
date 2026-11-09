@@ -181,11 +181,27 @@ int ops_encode_src(const AceSynth * ctx,
     return 0;
 }
 
-// ace_test_fail_next_fsq_require's: the next roundtrip's require fails.
+// ace_test_fail_next_fsq_require's: the next roundtrip's require fails; and
+// the requires it has failed.
 static std::atomic<bool> g_test_fail_fsq_require{ false };
+static std::atomic<int>  g_test_fsq_require_failures{ 0 };
 
-void ace_test_fail_next_fsq_require() {
-    g_test_fail_fsq_require.store(true);
+void ace_test_fail_next_fsq_require(bool armed) {
+    g_test_fail_fsq_require.store(armed);
+}
+
+int ace_test_fsq_require_failures() {
+    return g_test_fsq_require_failures.load();
+}
+
+// Whether this require is the one the hook fails: a relaxed load first, so a
+// shipping run pays no read-modify-write (as ace_gpu_injected).
+static bool fsq_require_failed_by_test() {
+    if (!g_test_fail_fsq_require.load(std::memory_order_relaxed) || !g_test_fail_fsq_require.exchange(false)) {
+        return false;
+    }
+    g_test_fsq_require_failures.fetch_add(1);
+    return true;
 }
 
 int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
@@ -206,8 +222,7 @@ int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
     // Tokenizer scope: acquire, encode 25Hz latents to 5Hz codes, release.
     int T_5Hz_actual;
     {
-        TokGGML * tok =
-            g_test_fail_fsq_require.exchange(false) ? nullptr : store_require_fsq_tok(ctx->store, ctx->fsq_tok_key);
+        TokGGML * tok = fsq_require_failed_by_test() ? nullptr : store_require_fsq_tok(ctx->store, ctx->fsq_tok_key);
         if (!tok) {
             fprintf(stderr, "[FSQ-Roundtrip] FATAL: store_require_fsq_tok failed\n");
             return -1;

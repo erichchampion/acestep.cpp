@@ -80,6 +80,9 @@ set_tests_properties(test-page-release PROPERTIES SKIP_RETURN_CODE 77)
 # walk stops ending (cadenza-audio #857). Generous: it covers the whole binary,
 # Metal's init and a dozen backends, on a runner others load (#357).
 set_tests_properties(test-gpu-fail PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+# Scenario 12, the splice rule a failed run's hand-out reads, needs no model
+# (cadenza-audio #1056): run in every build, the weight-free ones too.
+add_test(NAME test-splice-rule COMMAND test-model-store --scenarios splice)
 set(ACESTEP_TEST_MODELS "" CACHE PATH "Directory of GGUFs for the tests that read them (empty: not run)")
 if(ACESTEP_TEST_MODELS)
     add_test(NAME test-audio-layout COMMAND test-audio-layout --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)
