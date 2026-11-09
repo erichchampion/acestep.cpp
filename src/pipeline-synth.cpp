@@ -15,6 +15,7 @@
 #include "task-types.h"
 
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -603,6 +604,13 @@ static const SynthTask kSynthTasks[] = {
     { TASK_COMPLETE,    run_complete,    true  },
 };
 
+// The runs run_task has refused for want of a source (ace_test_source_refusals).
+static std::atomic<int> g_test_source_refusals{ 0 };
+
+int ace_test_source_refusals() {
+    return g_test_source_refusals.load();
+}
+
 // Dispatches on reqs[0].task_type to the right task function. task_type is
 // always set: request_init defaults it to text2music, the JSON parser ignores
 // empty strings.
@@ -627,6 +635,7 @@ static AceSynthJob * run_task(AceSynth *          ctx,
         return NULL;
     }
     if (entry->needs_source && !in.src.given()) {
+        g_test_source_refusals.fetch_add(1);
         fprintf(stderr, "[Synth-Run] ERROR: task '%s' requires source audio or latents\n", task.c_str());
         return NULL;
     }

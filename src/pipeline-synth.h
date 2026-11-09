@@ -158,3 +158,8 @@ void ace_synth_free(AceSynth * ctx);
 // requires it has failed, so a test can see it fired.
 void ace_test_fail_next_fsq_require(bool armed);
 int  ace_test_fsq_require_failures();
+
+// Tests only: how many runs the task table has refused for a task that needs
+// a source given none -- so a test can tell that refusal from a failure
+// further in, which a sourceless task also reaches (cadenza-audio #1057).
+int ace_test_source_refusals();

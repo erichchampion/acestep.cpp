@@ -638,7 +638,8 @@ static int scenario_loaded_threads(const char * vae_path) {
 // does, keeps none; a whole-song lego keeps its clean encode; and a cover
 // whose FSQ roundtrip fails -- by a test hook, no input reaching it -- fails
 // before its DiT and still keeps its clean encode. And (cadenza-audio #1057)
-// an extract and a complete keep their clean encode, as a cover does.
+// an extract and a complete keep their clean encode, as a cover does, and
+// every task that needs a source refuses a run given none.
 // Cancels at the DiT's first poll, counting the polls it cancelled: a run
 // that failed before its DiT (an encode, a require) reached none.
 static bool cancel_at_dit(void * data, AceStage stage, int, int) {
@@ -803,6 +804,19 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             rc = 1;
         }
     }
+    // Every task the table says needs a source refuses a run given none,
+    // by the table's refusal -- not by a failure further in, which a
+    // sourceless task also reaches -- with nothing handed out: the table's
+    // needs_source column, row by row (#1057).
+    for (const char * task : { "cover", "cover-nofsq", "repaint", "lego", "extract", "complete" }) {
+        AceSynthEncodes none;
+        const int       refused = ace_test_source_refusals();
+        if (!run(task, NULL, NULL, none, false, 0) || ace_test_source_refusals() != refused + 1 ||
+            !none.src_latents.empty() || !none.ref_latents.empty()) {
+            fprintf(stderr, "[Test] FAIL: a %s given no source was not refused by the task table\n", task);
+            rc = 1;
+        }
+    }
     // A cover whose FSQ roundtrip cannot run fails before its DiT, and still
     // hands out its clean encode -- the one a cover-nofsq hands out (#1056).
     AceSynthEncodes failed;
@@ -828,7 +842,8 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     if (rc == 0) {
         fprintf(stderr,
                 "[Test] scenario 11 PASS: cover %zu frames, reference %zu, repaint and lego region none, a "
-                "whole-song lego, an extract, a complete and a failed FSQ roundtrip their clean encode\n",
+                "whole-song lego, an extract, a complete and a failed FSQ roundtrip their clean encode, and every "
+                "run given no source refused\n",
                 cover.src_latents.size() / 64, text.ref_latents.size() / 64);
     }
     return rc;
