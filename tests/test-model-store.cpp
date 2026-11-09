@@ -637,7 +637,8 @@ static int scenario_loaded_threads(const char * vae_path) {
 // (cadenza-audio #1056) a lego region, which splices its source as a repaint
 // does, keeps none; a whole-song lego keeps its clean encode; and a cover
 // whose FSQ roundtrip fails -- by a test hook, no input reaching it -- fails
-// before its DiT and still keeps its clean encode.
+// before its DiT and still keeps its clean encode. And (cadenza-audio #1057)
+// an extract and a complete keep their clean encode, as a cover does.
 // Cancels at the DiT's first poll, counting the polls it cancelled: a run
 // that failed before its DiT (an encode, a require) reached none.
 static bool cancel_at_dit(void * data, AceStage stage, int, int) {
@@ -787,6 +788,21 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 whole.src_latents.size(), cover.src_latents.size());
         rc = 1;
     }
+    // An extract and a complete, which work from their source but do not
+    // splice it, hand out their clean encode too -- the two tasks only this
+    // scenario sends through the dispatch table (#1057).
+    for (const char * task : { "extract", "complete" }) {
+        AceSynthEncodes stem;
+        if (!run(task, source.data(), NULL, stem)) {
+            fprintf(stderr, "[Test] FAIL: a %s returned a job, or failed before its DiT's first poll\n", task);
+            rc = 1;
+        } else if (stem.src_latents != cover.src_latents) {
+            fprintf(stderr,
+                    "[Test] FAIL: a cancelled %s kept %zu source values, not its clean encode (the cover's, %zu)\n",
+                    task, stem.src_latents.size(), cover.src_latents.size());
+            rc = 1;
+        }
+    }
     // A cover whose FSQ roundtrip cannot run fails before its DiT, and still
     // hands out its clean encode -- the one a cover-nofsq hands out (#1056).
     AceSynthEncodes failed;
@@ -812,7 +828,7 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     if (rc == 0) {
         fprintf(stderr,
                 "[Test] scenario 11 PASS: cover %zu frames, reference %zu, repaint and lego region none, a "
-                "whole-song lego and a failed FSQ roundtrip their clean encode\n",
+                "whole-song lego, an extract, a complete and a failed FSQ roundtrip their clean encode\n",
                 cover.src_latents.size() / 64, text.ref_latents.size() / 64);
     }
     return rc;

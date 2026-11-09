@@ -14,7 +14,6 @@
 #include "pipeline-synth-ops.h"
 #include "task-types.h"
 
-#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdio>
@@ -175,6 +174,32 @@ static AceSynthJob * alloc_job(AceSynth * ctx, const AceRequest * reqs, int batc
     return job;
 }
 
+// One of a run's inputs as its caller gave it: audio (len samples a channel)
+// or latents (T_latent frames), either, both or neither (#1057).
+struct SynthInput {
+    const float * audio    = nullptr;
+    int           len      = 0;
+    const float * latents  = nullptr;
+    int           T_latent = 0;
+
+    bool has_audio() const { return audio && len > 0; }
+
+    bool has_latents() const { return latents && T_latent > 0; }
+
+    bool given() const { return has_audio() || has_latents(); }
+
+    // Its length in seconds: the latents' when given (25 Hz), else the audio's.
+    float duration_sec() const {
+        return has_latents() ? (float) T_latent * 1920.0f / 48000.0f : (float) len / 48000.0f;
+    }
+};
+
+// A run's source and reference, one argument for every task.
+struct SynthInputs {
+    SynthInput src;
+    SynthInput ref;
+};
+
 // Outpainting: pad src_audio with silence when the region extends beyond
 // source bounds. Returns the (possibly padded) buffer and length via out
 // Pad source for outpainting when the region extends beyond the source bounds.
@@ -183,24 +208,13 @@ static AceSynthJob * alloc_job(AceSynth * ctx, const AceRequest * reqs, int batc
 // Latent path: pads s.cover_latents directly with the precomputed silence_full
 // latent (the canonical VAE encoding of audio silence). No VAE encode needed.
 // Sets s.left_pad_sec for adjust_region_coords.
-static void apply_outpainting_padding(const AceSynth *   ctx,
-                                      const AceRequest & r,
-                                      const float *      src_audio,
-                                      int                src_len,
-                                      const float *      src_latents,
-                                      int                src_T_latent,
-                                      SynthState &       s,
-                                      const float *&     enc_audio,
-                                      int &              enc_len,
-                                      const float *&     enc_latents,
-                                      int &              enc_T_latent) {
-    enc_audio    = src_audio;
-    enc_len      = src_len;
-    enc_latents  = src_latents;
-    enc_T_latent = src_T_latent;
+static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
+                                            const AceRequest & r,
+                                            const SynthInput & src,
+                                            SynthState &       s) {
+    SynthInput enc = src;
 
-    float src_dur =
-        (src_latents && src_T_latent > 0) ? (float) src_T_latent * 1920.0f / 48000.0f : (float) src_len / 48000.0f;
+    float src_dur  = src.duration_sec();
     float rs_raw   = r.repainting_start;
     float re_raw   = r.repainting_end;
     float end_time = (re_raw < 0.0f) ? src_dur : re_raw;
@@ -208,43 +222,44 @@ static void apply_outpainting_padding(const AceSynth *   ctx,
     float rpad     = (end_time > src_dur) ? end_time - src_dur : 0.0f;
     s.left_pad_sec = lpad;
 
-    if (src_latents && src_T_latent > 0) {
+    if (src.has_latents()) {
         if (lpad <= 0.0f && rpad <= 0.0f) {
-            return;
+            return enc;
         }
         // Latent pad: round to 25Hz frames, splice silence_full at the edges.
         int           lpad_T  = (int) (lpad * 25.0f + 0.5f);
         int           rpad_T  = (int) (rpad * 25.0f + 0.5f);
-        int           total_T = lpad_T + src_T_latent + rpad_T;
+        int           total_T = lpad_T + src.T_latent + rpad_T;
         const float * sil     = ctx->meta->silence_full.data();
         s.padded_latents.resize((size_t) total_T * 64);
         memcpy(s.padded_latents.data(), sil, (size_t) lpad_T * 64 * sizeof(float));
-        memcpy(s.padded_latents.data() + (size_t) lpad_T * 64, src_latents, (size_t) src_T_latent * 64 * sizeof(float));
-        memcpy(s.padded_latents.data() + (size_t) (lpad_T + src_T_latent) * 64, sil,
+        memcpy(s.padded_latents.data() + (size_t) lpad_T * 64, src.latents, (size_t) src.T_latent * 64 * sizeof(float));
+        memcpy(s.padded_latents.data() + (size_t) (lpad_T + src.T_latent) * 64, sil,
                (size_t) rpad_T * 64 * sizeof(float));
-        enc_latents  = s.padded_latents.data();
-        enc_T_latent = total_T;
+        enc.latents  = s.padded_latents.data();
+        enc.T_latent = total_T;
         fprintf(stderr, "[Outpaint] latent pad left=%.1fs (%d) right=%.1fs (%d) total=%.1fs\n", lpad, lpad_T, rpad,
                 rpad_T, (float) total_T * 1920.0f / 48000.0f);
-        return;
+        return enc;
     }
 
     // Audio path: always populate s.padded_src so the post-decode waveform
     // splice always has the source PCM to read from, with or without outpaint.
     int lpad_s       = (int) (lpad * 48000.0f);
     int rpad_s       = (int) (rpad * 48000.0f);
-    int padded_total = src_len + lpad_s + rpad_s;
+    int padded_total = src.len + lpad_s + rpad_s;
     s.padded_src.resize((size_t) padded_total * 2);
     if (lpad_s > 0 || rpad_s > 0) {
         memset(s.padded_src.data(), 0, s.padded_src.size() * sizeof(float));
     }
-    memcpy(s.padded_src.data() + (size_t) lpad_s * 2, src_audio, (size_t) src_len * 2 * sizeof(float));
-    enc_audio = s.padded_src.data();
-    enc_len   = padded_total;
+    memcpy(s.padded_src.data() + (size_t) lpad_s * 2, src.audio, (size_t) src.len * 2 * sizeof(float));
+    enc.audio = s.padded_src.data();
+    enc.len   = padded_total;
     if (lpad > 0.0f || rpad > 0.0f) {
         fprintf(stderr, "[Outpaint] audio pad left=%.1fs right=%.1fs total=%.1fs\n", lpad, rpad,
                 (float) padded_total / 48000.0f);
     }
+    return enc;
 }
 
 // Shift region coords into the padded reference frame, resolve sentinel end
@@ -320,45 +335,21 @@ class JobOwner {
 };
 }  // namespace
 
-// One of a run's inputs as its caller gave it: audio (len samples a channel)
-// or latents (T_latent frames), either, both or neither (#1057).
-struct SynthInput {
-    const float * audio    = nullptr;
-    int           len      = 0;
-    const float * latents  = nullptr;
-    int           T_latent = 0;
-
-    bool given() const { return (audio && len > 0) || (latents && T_latent > 0); }
-};
-
-// A run's source and reference, one argument for every task.
-struct SynthInputs {
-    SynthInput src;
-    SynthInput ref;
-};
-
 // Pin VAE-Enc across two back-to-back encodes (source then timbre) so STRICT
 // does not unload and reload the 160 MB weights between them. On return the
 // pin is released, VAE-Enc can be evicted by the next require. The pin is
 // only justified when at least one side actually goes through the encoder:
 // when both src and ref arrive as pre-encoded latents, no pin is needed.
-static bool pinned_encode_src_and_timbre(AceSynth *    ctx,
-                                         const float * src_audio,
-                                         int           src_len,
-                                         const float * src_latents,
-                                         int           src_T_latent,
-                                         const float * ref_audio,
-                                         int           ref_len,
-                                         const float * ref_latents,
-                                         int           ref_T_latent,
-                                         SynthState &  s,
-                                         AceProgress   progress) {
-    bool have_src_audio   = src_audio && src_len > 0;
-    bool have_src_latents = src_latents && src_T_latent > 0;
-    bool have_src         = have_src_audio || have_src_latents;
-    bool have_ref_audio   = ref_audio && ref_len > 0;
-    bool have_ref_latents = ref_latents && ref_T_latent > 0;
-    bool have_ref         = have_ref_audio || have_ref_latents;
+static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
+                                         const SynthInput & src,
+                                         const SynthInput & ref,
+                                         SynthState &       s,
+                                         AceProgress        progress) {
+    const bool have_src_audio   = src.has_audio();
+    const bool have_src_latents = src.has_latents();
+    const bool have_src         = src.given();
+    const bool have_ref_audio   = ref.has_audio();
+    const bool have_ref         = ref.given();
     if (!have_src && !have_ref) {
         // Neither encode touches the GPU: timbre takes the silence path.
         if (ops_encode_timbre(ctx, NULL, 0, NULL, 0, s, progress) != 0) {
@@ -373,7 +364,7 @@ static bool pinned_encode_src_and_timbre(AceSynth *    ctx,
         return false;
     }
     if (have_src) {
-        if (ops_encode_src(ctx, src_audio, src_len, src_latents, src_T_latent, s, progress) != 0) {
+        if (ops_encode_src(ctx, src.audio, src.len, src.latents, src.T_latent, s, progress) != 0) {
             return false;
         }
         // Handed out by a failed run (#875, #1035) unless the run reads the
@@ -383,7 +374,7 @@ static bool pinned_encode_src_and_timbre(AceSynth *    ctx,
         // only the outpainting padding happens to leave.
         s.src_encoded = have_src_audio && !have_src_latents && !splices_source_after_decode(s);
     }
-    if (ops_encode_timbre(ctx, ref_audio, ref_len, ref_latents, ref_T_latent, s, progress) != 0) {
+    if (ops_encode_timbre(ctx, ref.audio, ref.len, ref.latents, ref.T_latent, s, progress) != 0) {
         return false;
     }
     return true;
@@ -428,8 +419,7 @@ static int run_text2music(AceSynth *          ctx,
     s.use_source_context = !reqs[0].audio_codes.empty();
     s.instruction_str    = s.use_source_context ? DIT_INSTR_COVER : DIT_INSTR_TEXT2MUSIC;
 
-    if (!pinned_encode_src_and_timbre(ctx, NULL, 0, NULL, 0, in.ref.audio, in.ref.len, in.ref.latents, in.ref.T_latent,
-                                      s, progress)) {
+    if (!pinned_encode_src_and_timbre(ctx, SynthInput{}, in.ref, s, progress)) {
         return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
@@ -449,8 +439,7 @@ static int run_cover(AceSynth *          ctx,
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_COVER;
 
-    if (!pinned_encode_src_and_timbre(ctx, in.src.audio, in.src.len, in.src.latents, in.src.T_latent, in.ref.audio,
-                                      in.ref.len, in.ref.latents, in.ref.T_latent, s, progress)) {
+    if (!pinned_encode_src_and_timbre(ctx, in.src, in.ref, s, progress)) {
         return -1;
     }
 
@@ -469,7 +458,7 @@ static int run_cover(AceSynth *          ctx,
 
 // cover-nofsq: cover without the FSQ roundtrip. DiT works on clean 25Hz VAE
 // latents, output stays close to source structure and timbre. Pass
-// in.ref.audio = in.src.audio for best results.
+// ref_audio = src_audio for best results.
 static int run_cover_nofsq(AceSynth *          ctx,
                            const AceRequest *  reqs,
                            const SynthInputs & in,
@@ -479,8 +468,7 @@ static int run_cover_nofsq(AceSynth *          ctx,
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_COVER;
 
-    if (!pinned_encode_src_and_timbre(ctx, in.src.audio, in.src.len, in.src.latents, in.src.T_latent, in.ref.audio,
-                                      in.ref.len, in.ref.latents, in.ref.T_latent, s, progress)) {
+    if (!pinned_encode_src_and_timbre(ctx, in.src, in.ref, s, progress)) {
         return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
@@ -499,24 +487,16 @@ static int run_repaint(AceSynth *          ctx,
                        int                 batch_n,
                        SynthState &        s,
                        AceProgress         progress) {
-    bool have_latents    = in.src.latents && in.src.T_latent > 0;
     s.is_repaint         = true;
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_REPAINT;
 
-    const float * enc_audio    = NULL;
-    int           enc_len      = 0;
-    const float * enc_latents  = NULL;
-    int           enc_T_latent = 0;
-    apply_outpainting_padding(ctx, reqs[0], in.src.audio, in.src.len, in.src.latents, in.src.T_latent, s, enc_audio,
-                              enc_len, enc_latents, enc_T_latent);
+    const SynthInput enc = apply_outpainting_padding(ctx, reqs[0], in.src, s);
 
-    if (!pinned_encode_src_and_timbre(ctx, enc_audio, enc_len, enc_latents, enc_T_latent, in.ref.audio, in.ref.len,
-                                      in.ref.latents, in.ref.T_latent, s, progress)) {
+    if (!pinned_encode_src_and_timbre(ctx, enc, in.ref, s, progress)) {
         return -1;
     }
-    float src_dur = have_latents ? (float) in.src.T_latent * 1920.0f / 48000.0f : (float) in.src.len / 48000.0f;
-    if (!adjust_region_coords(s, src_dur)) {
+    if (!adjust_region_coords(s, in.src.duration_sec())) {
         return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
@@ -536,7 +516,6 @@ static int run_lego(AceSynth *          ctx,
                     int                 batch_n,
                     SynthState &        s,
                     AceProgress         progress) {
-    bool have_latents       = in.src.latents && in.src.T_latent > 0;
     s.is_lego_region        = (s.rr.repainting_end > s.rr.repainting_start);
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Lego");
@@ -544,21 +523,13 @@ static int run_lego(AceSynth *          ctx,
     fprintf(stderr, "[Synth-Run] task=%s\n", reqs[0].task_type.c_str());
     warn_if_turbo_stem(ctx, "lego");
 
-    const float * enc_audio    = in.src.audio;
-    int           enc_len      = in.src.len;
-    const float * enc_latents  = in.src.latents;
-    int           enc_T_latent = in.src.T_latent;
-    if (s.is_lego_region) {
-        apply_outpainting_padding(ctx, reqs[0], in.src.audio, in.src.len, in.src.latents, in.src.T_latent, s, enc_audio,
-                                  enc_len, enc_latents, enc_T_latent);
-    }
+    // In region mode, padded at the edges the region passes; else as given.
+    const SynthInput enc = s.is_lego_region ? apply_outpainting_padding(ctx, reqs[0], in.src, s) : in.src;
 
-    if (!pinned_encode_src_and_timbre(ctx, enc_audio, enc_len, enc_latents, enc_T_latent, in.ref.audio, in.ref.len,
-                                      in.ref.latents, in.ref.T_latent, s, progress)) {
+    if (!pinned_encode_src_and_timbre(ctx, enc, in.ref, s, progress)) {
         return -1;
     }
-    float src_dur = have_latents ? (float) in.src.T_latent * 1920.0f / 48000.0f : (float) in.src.len / 48000.0f;
-    if (s.is_lego_region && !adjust_region_coords(s, src_dur)) {
+    if (s.is_lego_region && !adjust_region_coords(s, in.src.duration_sec())) {
         return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
@@ -580,8 +551,7 @@ static int run_extract(AceSynth *          ctx,
     fprintf(stderr, "[Synth-Run] task=%s\n", reqs[0].task_type.c_str());
     warn_if_turbo_stem(ctx, "extract");
 
-    if (!pinned_encode_src_and_timbre(ctx, in.src.audio, in.src.len, in.src.latents, in.src.T_latent, in.ref.audio,
-                                      in.ref.len, in.ref.latents, in.ref.T_latent, s, progress)) {
+    if (!pinned_encode_src_and_timbre(ctx, in.src, in.ref, s, progress)) {
         return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
@@ -603,8 +573,7 @@ static int run_complete(AceSynth *          ctx,
     fprintf(stderr, "[Synth-Run] task=%s\n", reqs[0].task_type.c_str());
     warn_if_turbo_stem(ctx, "complete");
 
-    if (!pinned_encode_src_and_timbre(ctx, in.src.audio, in.src.len, in.src.latents, in.src.T_latent, in.ref.audio,
-                                      in.ref.len, in.ref.latents, in.ref.T_latent, s, progress)) {
+    if (!pinned_encode_src_and_timbre(ctx, in.src, in.ref, s, progress)) {
         return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
@@ -642,9 +611,9 @@ static AceSynthJob * run_task(AceSynth *          ctx,
                               const SynthInputs & in,
                               int                 batch_n,
                               AceProgress         progress) {
-    // An unknown task, and a task that works from a source given none (all
-    // but text2music), are refused before the job is made -- the name first,
-    // so a misspelt task is said as that.
+    // An unknown task, and a task that works from a source given none (the
+    // table's needs_source), are refused before the job is made -- the name
+    // first, so a misspelt task is said as that.
     const std::string & task  = reqs[0].task_type;
     const SynthTask *   entry = nullptr;
     for (const SynthTask & t : kSynthTasks) {
