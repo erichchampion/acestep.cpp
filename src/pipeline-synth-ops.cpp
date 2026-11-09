@@ -12,6 +12,7 @@
 #include "task-types.h"
 #include "vae-enc.h"
 
+#include <atomic>
 #include <charconv>
 #include <cstdio>
 #include <cstdlib>
@@ -180,6 +181,13 @@ int ops_encode_src(const AceSynth * ctx,
     return 0;
 }
 
+// ace_test_fail_next_fsq_require's: the next roundtrip's require fails.
+static std::atomic<bool> g_test_fail_fsq_require{ false };
+
+void ace_test_fail_next_fsq_require() {
+    g_test_fail_fsq_require.store(true);
+}
+
 int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
     // FSQ roundtrip for cover: tokenize (25Hz->5Hz) + detokenize (5Hz->25Hz).
     // The lossy 5:1 temporal compression destroys micro-timings, ornaments and
@@ -198,7 +206,8 @@ int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
     // Tokenizer scope: acquire, encode 25Hz latents to 5Hz codes, release.
     int T_5Hz_actual;
     {
-        TokGGML * tok = store_require_fsq_tok(ctx->store, ctx->fsq_tok_key);
+        TokGGML * tok =
+            g_test_fail_fsq_require.exchange(false) ? nullptr : store_require_fsq_tok(ctx->store, ctx->fsq_tok_key);
         if (!tok) {
             fprintf(stderr, "[FSQ-Roundtrip] FATAL: store_require_fsq_tok failed\n");
             return -1;

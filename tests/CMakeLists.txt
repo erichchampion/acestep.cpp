@@ -85,5 +85,8 @@ if(ACESTEP_TEST_MODELS)
     add_test(NAME test-audio-layout COMMAND test-audio-layout --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)
     add_test(NAME test-vae-tiling COMMAND test-vae-tiling --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)
     add_test(NAME test-lm-prompt COMMAND test-lm-prompt --models ${ACESTEP_TEST_MODELS})
-    add_test(NAME test-model-store COMMAND test-model-store --models ${ACESTEP_TEST_MODELS})
+    # The store's policies, and apart from them a failed run's hand-out, which
+    # runs the synth (cadenza-audio #1056): each fails, and is timed, alone.
+    add_test(NAME test-model-store COMMAND test-model-store --models ${ACESTEP_TEST_MODELS} --scenarios store)
+    add_test(NAME test-failed-encodes COMMAND test-model-store --models ${ACESTEP_TEST_MODELS} --scenarios encodes)
 endif()

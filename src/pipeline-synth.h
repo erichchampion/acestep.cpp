@@ -149,3 +149,9 @@ void ace_synth_retain(AceSynth * ctx);
 void ace_synth_release(AceSynth * ctx);
 // The owner's free: its keys go at once, the context with its last job.
 void ace_synth_free(AceSynth * ctx);
+
+// Tests only: the next Cover's FSQ roundtrip fails as its tokenizer could not
+// be had (store_require_fsq_tok returning NULL), once -- a path no input
+// reaches, which a test drives to see the Cover fail and still hand out its
+// clean encode (cadenza-audio #1056).
+void ace_test_fail_next_fsq_require();

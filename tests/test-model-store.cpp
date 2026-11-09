@@ -15,6 +15,7 @@
 #include "model-registry.h"
 #include "model-store.h"
 #include "pipeline-lm.h"
+#include "pipeline-synth-impl.h"
 #include "pipeline-synth.h"
 #include "pipeline-understand.h"
 #include "prompt.h"
@@ -520,10 +521,13 @@ static int scenario_vram_except(const char * vae_path) {
 static void usage(const char * prog) {
     fprintf(stderr, "acestep.cpp %s\n\n", ACE_VERSION);
     fprintf(stderr,
-            "Usage: %s --models <dir>\n"
+            "Usage: %s --models <dir> [--scenarios all|store|encodes]\n"
             "\n"
             "Required:\n"
-            "  --models <dir>          Directory of GGUF model files\n",
+            "  --models <dir>          Directory of GGUF model files\n"
+            "Optional:\n"
+            "  --scenarios <which>     store: the store's policies (1-10); encodes: a\n"
+            "                          failed run's hand-out (11, 12); all (default)\n",
             prog);
 }
 
@@ -639,6 +643,32 @@ static bool cancel_at_dit(void * data, AceStage stage, int, int) {
     return true;
 }
 
+// Scenario 12: which tasks splice their source after the decode, read by the
+// one predicate the hand-out and the decode share (cadenza-audio #1056) --
+// the rule scenario 11's repaint can't tell from the padding it also leaves.
+// No model needed.
+static int scenario_splice_rule() {
+    fprintf(stderr, "[Test] scenario 12: the tasks that splice their source after the decode\n");
+    int  rc   = 0;
+    auto want = [&](const char * what, bool repaint, bool lego_region, bool splices) {
+        SynthState st{};
+        st.is_repaint     = repaint;
+        st.is_lego_region = lego_region;
+        if (splices_source_after_decode(st) != splices) {
+            fprintf(stderr, "[Test] FAIL: %s %s its source after the decode\n", what,
+                    splices ? "does not splice" : "splices");
+            rc = 1;
+        }
+    };
+    want("a repaint", true, false, true);
+    want("a lego region", false, true, true);
+    want("a cover, or any other task", false, false, false);
+    if (rc == 0) {
+        fprintf(stderr, "[Test] scenario 12 PASS\n");
+    }
+    return rc;
+}
+
 static int scenario_failed_encodes(const char * text_enc_path, const char * dit_path, const char * vae_path) {
     fprintf(stderr, "[Test] scenario 11: a failed run's encodes, by NULL\n");
     // NEVER: the four runs load each module once.
@@ -674,7 +704,8 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         r.duration  = (float) seconds;
         r.seed      = 1;
         r.task_type = task;
-        if (!strcmp(task, "repaint")) {
+        if (!strcmp(task, "repaint") || !strcmp(task, "lego")) {
+            // A region: a repaint's, and a lego region's (is_lego_region).
             r.repainting_start = 0.5f;
             r.repainting_end   = 1.5f;
         }
@@ -725,10 +756,52 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 "latents, not the clean ones?\n");
         rc = 1;
     }
+    // A lego region splices its source after the decode, as a repaint does:
+    // it hands out none (cadenza-audio #1056).
+    AceSynthEncodes lego;
+    if (!run("lego", source.data(), NULL, lego)) {
+        fprintf(stderr, "[Test] FAIL: a lego region returned a job, or failed before its DiT's first poll\n");
+        rc = 1;
+    } else if (!lego.src_latents.empty()) {
+        fprintf(stderr, "[Test] FAIL: a cancelled lego region kept %zu source values; it reads its source again\n",
+                lego.src_latents.size());
+        rc = 1;
+    }
+    // A cover whose FSQ roundtrip cannot run fails before its DiT, and still
+    // hands out its clean encode -- the one a cover-nofsq hands out (#1056).
+    {
+        AceSynthEncodes failed;
+        AceRequest      r;
+        request_init(&r);
+        r.caption   = "a short test";
+        r.duration  = (float) seconds;
+        r.seed      = 1;
+        r.task_type = "cover";
+        ace_test_fail_next_fsq_require();
+        const int     polls = dit_polls;
+        AceSynthJob * job =
+            ace_synth_job_run_dit(synth, &r, source.data(), n, NULL, 0, NULL, 0, NULL, 0, 1, cancel, &failed);
+        if (job) {
+            ace_synth_job_free(job);
+            fprintf(stderr, "[Test] FAIL: a cover whose FSQ roundtrip failed returned a job\n");
+            rc = 1;
+        } else if (dit_polls != polls) {
+            fprintf(stderr, "[Test] FAIL: a cover whose FSQ roundtrip failed reached its DiT\n");
+            rc = 1;
+        } else if (failed.src_latents != cover.src_latents) {
+            fprintf(stderr,
+                    "[Test] FAIL: a cover whose FSQ roundtrip failed kept %zu source values, want its clean "
+                    "encode (%zu)\n",
+                    failed.src_latents.size(), cover.src_latents.size());
+            rc = 1;
+        }
+    }
     ace_synth_free(synth);
     store_free(s);
     if (rc == 0) {
-        fprintf(stderr, "[Test] scenario 11 PASS: cover %zu frames, reference %zu, repaint none\n",
+        fprintf(stderr,
+                "[Test] scenario 11 PASS: cover %zu frames, reference %zu, repaint and lego region none, a "
+                "failed FSQ roundtrip its clean encode\n",
                 cover.src_latents.size() / 64, text.ref_latents.size() / 64);
     }
     return rc;
@@ -736,6 +809,7 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
 
 int main(int argc, char ** argv) {
     const char * models_dir = nullptr;
+    const char * which      = "all";
 
     if (argc < 2) {
         usage(argv[0]);
@@ -745,6 +819,12 @@ int main(int argc, char ** argv) {
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--models") && i + 1 < argc) {
             models_dir = argv[++i];
+        } else if (!strcmp(argv[i], "--scenarios") && i + 1 < argc) {
+            which = argv[++i];
+            if (strcmp(which, "all") && strcmp(which, "store") && strcmp(which, "encodes")) {
+                fprintf(stderr, "[CLI] ERROR: --scenarios takes all, store or encodes, not %s\n", which);
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             usage(argv[0]);
             return 0;
@@ -780,24 +860,31 @@ int main(int argc, char ** argv) {
 
     fprintf(stderr, "[Test] LM=%s DiT=%s VAE=%s\n", lm_path, dit_path, vae_path);
 
-    int rc = 0;
-    rc |= scenario_strict(lm_path, dit_path, vae_path);
-    rc |= scenario_never(lm_path, dit_path, vae_path);
-    rc |= scenario_cpu(lm_path, dit_path);
-    rc |= scenario_lm_sharing(lm_path);
-    rc |= scenario_kind_split(vae_path);
-    rc |= scenario_refcount(vae_path);
-    rc |= scenario_integration(lm_path, dit_path, vae_path);
-    rc |= scenario_release_unheld(vae_path);
-    rc |= scenario_vram_except(vae_path);
-    rc |= scenario_loaded_threads(vae_path);
-    // Scenario 11 runs the synth, which needs a text encoder too: without one
-    // it fails, after the others have run.
-    if (registry.text_enc.empty()) {
-        fprintf(stderr, "[Test] FAIL: scenario 11 needs a text-encoder model under %s\n", models_dir);
-        rc |= 1;
-    } else {
-        rc |= scenario_failed_encodes(registry.text_enc[0].path.c_str(), dit_path, vae_path);
+    int        rc      = 0;
+    const bool store   = strcmp(which, "encodes") != 0;
+    const bool encodes = strcmp(which, "store") != 0;
+    if (store) {
+        rc |= scenario_strict(lm_path, dit_path, vae_path);
+        rc |= scenario_never(lm_path, dit_path, vae_path);
+        rc |= scenario_cpu(lm_path, dit_path);
+        rc |= scenario_lm_sharing(lm_path);
+        rc |= scenario_kind_split(vae_path);
+        rc |= scenario_refcount(vae_path);
+        rc |= scenario_integration(lm_path, dit_path, vae_path);
+        rc |= scenario_release_unheld(vae_path);
+        rc |= scenario_vram_except(vae_path);
+        rc |= scenario_loaded_threads(vae_path);
+    }
+    if (encodes) {
+        rc |= scenario_splice_rule();
+        // Scenario 11 runs the synth, which needs a text encoder too: without one
+        // it fails, after the others have run.
+        if (registry.text_enc.empty()) {
+            fprintf(stderr, "[Test] FAIL: scenario 11 needs a text-encoder model under %s\n", models_dir);
+            rc |= 1;
+        } else {
+            rc |= scenario_failed_encodes(registry.text_enc[0].path.c_str(), dit_path, vae_path);
+        }
     }
 
     if (rc == 0) {
