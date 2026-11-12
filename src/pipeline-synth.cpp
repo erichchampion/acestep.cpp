@@ -193,6 +193,14 @@ struct SynthInputs {
 // latent (the canonical VAE encoding of audio silence), only when there is
 // padding to add. No VAE encode needed.
 // Sets s.left_pad_sec for adjust_region_coords.
+// Where a region asked for ends, in the source's own seconds (before any pad):
+// its repainting_end, or for the -1 sentinel the left pad's end (an outpaint
+// before the source) or the source's end. The one reading of the sentinel, for
+// the pads and for adjust_region_coords (#1138).
+static float asked_region_end(float rs_raw, float re_raw, float src_dur) {
+    return re_raw >= 0.0f ? re_raw : (rs_raw < 0.0f ? 0.0f : src_dur);
+}
+
 static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
                                             const AceRequest & r,
                                             const SynthInput & src,
@@ -206,15 +214,23 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
     float lpad     = (rs_raw < 0.0f) ? -rs_raw : 0.0f;
     float rpad     = (end_time > src_dur) ? end_time - src_dur : 0.0f;
     s.left_pad_sec = lpad;
+    // A bound that is no number pads nothing: adjust_region_coords refuses
+    // it, and an infinite pad would be allocated first (#1129, #1138).
+    if (!std::isfinite(rs_raw) || !std::isfinite(re_raw)) {
+        s.left_pad_sec = 0.0f;
+        return enc;
+    }
 
     if (src.has_latents()) {
         if (lpad <= 0.0f && rpad <= 0.0f) {
             return enc;
         }
-        // Latent pad: whole 25Hz frames, rounded up -- a region reaching into
-        // a pad by less than a frame has that frame, not none (#1138) --
-        // silence_full spliced at the edges.
-        int lpad_T = sec_latent_frame_end(lpad);
+        // Latent pad: whole 25Hz frames, silence_full spliced at the edges.
+        // The left one the nearest, placing the source as near as a frame can
+        // to where it was asked -- but a frame, not none, for a pad past the
+        // slack. The right one rounded up, so a region reaching into it by
+        // less than a frame has that frame (#1138).
+        int lpad_T = std::max(sec_latent_frames_nearest(lpad), sec_latent_frame_end(lpad) > 0 ? 1 : 0);
         int rpad_T = sec_latent_frame_end(rpad);
         // Pads within the frame slack of none pad nothing: the source as
         // given, the region not shifted (#1129).
@@ -243,19 +259,21 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
     // splice always has the source PCM to read from, with or without outpaint.
     // In whole samples, nearest; the region shifted by the pad as padded,
     // as the latent path's is (#1129).
-    int lpad_s             = sec_samples_nearest(lpad);
-    int rpad_s             = sec_samples_nearest(rpad);
-    int padded_total       = src.len + lpad_s + rpad_s;
-    s.left_pad_sec         = samples_sec(lpad_s);
+    int lpad_s              = sec_samples_nearest(lpad);
+    int rpad_s              = sec_samples_nearest(rpad);
+    int padded_total        = src.len + lpad_s + rpad_s;
+    s.left_pad_sec          = samples_sec(lpad_s);
     // The encoder keeps whole frames only, so a region reaching past the last
     // whole frame -- to a source's end that falls inside one, or into a pad of
     // less than a frame -- would have no frame there, and be refused as
     // covering none (#1138). Then the pad runs on to the next frame's end;
     // else the source is padded as asked, its frames as before.
-    const float region_end = (re_raw >= 0.0f) ? re_raw : (rs_raw < 0.0f ? 0.0f : src_dur);
-    const int   whole_end  = (padded_total / ACE_LATENT_HOP) * ACE_LATENT_HOP;
-    if (sec_samples_nearest(region_end) + lpad_s > whole_end) {
-        const int frame_end = ((padded_total + ACE_LATENT_HOP - 1) / ACE_LATENT_HOP) * ACE_LATENT_HOP;
+    // By the rule the region's frames are read with (resolve_region_frames:
+    // its end rounded up, with the frame slack), so a pad is added only when
+    // the region gets the frame it adds.
+    const int region_frames = sec_latent_frame_end(asked_region_end(rs_raw, re_raw, src_dur) + s.left_pad_sec);
+    if (region_frames > samples_frames_floor(padded_total)) {
+        const int frame_end = samples_frames_ceil(padded_total) * ACE_LATENT_HOP;
         rpad_s += frame_end - padded_total;
         padded_total = frame_end;
     }
@@ -285,11 +303,7 @@ static bool adjust_region_coords(SynthState & s, float src_dur) {
         return false;
     }
     s.rs += s.left_pad_sec;
-    if (s.re < 0.0f) {
-        s.re = (s.rr.repainting_start < 0.0f) ? s.left_pad_sec : src_dur + s.left_pad_sec;
-    } else {
-        s.re += s.left_pad_sec;
-    }
+    s.re = asked_region_end(s.rr.repainting_start, s.re, src_dur) + s.left_pad_sec;
     if (s.re <= s.rs) {
         fprintf(stderr, "[Region] ERROR: end (%.1f) <= start (%.1f)\n", s.re, s.rs);
         return false;

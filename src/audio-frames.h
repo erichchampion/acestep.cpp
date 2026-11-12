@@ -84,7 +84,17 @@ inline constexpr int sec_samples_nearest(float sec) {
     return floor_index((double) sec * ACE_SAMPLE_RATE + 0.5);
 }
 
-// The whole number of latent frames nearest a span in seconds: a pad's length.
+// Samples rounded down, and up, to a whole number of latent frames.
+inline constexpr int samples_frames_floor(int samples) {
+    return samples / ACE_LATENT_HOP;
+}
+
+inline constexpr int samples_frames_ceil(int samples) {
+    return (samples + ACE_LATENT_HOP - 1) / ACE_LATENT_HOP;
+}
+
+// The whole number of latent frames nearest a span in seconds: a left pad's
+// length, which places the source as near as a frame can to where it was asked.
 inline constexpr int sec_latent_frames_nearest(float sec) {
     return floor_index((double) sec * ACE_LATENT_FPS + 0.5);
 }
@@ -108,6 +118,8 @@ static_assert(sec_latent_frame(-0.5f) == -13 && sec_latent_frame(-0.04f) == -1, 
 static_assert(sec_samples_nearest(0.01f) == 480 && sec_samples_nearest(2.12f) == 101760 &&
                   sec_samples_nearest(-0.01f) == -480,
               "seconds to the nearest sample");
+static_assert(samples_frames_floor(97440) == 50 && samples_frames_ceil(97440) == 51 && samples_frames_ceil(96000) == 50,
+              "samples to whole frames");
 static_assert(frame_index(1e12) == 1000000000 && frame_index(-1e12) == -1000000000 &&
                   frame_index(std::numeric_limits<double>::quiet_NaN()) == 0,
               "a frame count held to an int");

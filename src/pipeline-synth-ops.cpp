@@ -662,7 +662,7 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
     resolve_region_frames(s);
     if (region) {
         fprintf(stderr, "[Build-Context] Latent frames: [%d, %d) / %d\n", s.repaint_t0, s.repaint_t1, s.T);
-        // A region with no frame -- wholly in a pad rounded to none, or past
+        // A region with no frame -- within the frame slack of none, or past
         // the run's end -- would mask nothing and give back the source, unsaid
         // (#1129): refused, as adjust_region_coords refuses an empty one.
         if (s.repaint_t1 <= s.repaint_t0) {

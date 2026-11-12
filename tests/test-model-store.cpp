@@ -836,7 +836,7 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // a lego, a region; SOURCE LATENTS gives the source as latents.
     auto run = [&](const char * task, const float * src, const float * ref, AceSynthEncodes & kept, bool region = false,
                    int want_polls = 1, const std::vector<float> * src_latents = nullptr, float region_start = 0.5f,
-                   float region_end = 1.5f) {
+                   float region_end = 1.5f, int src_len = 0) {
         AceRequest r;
         request_init(&r);
         r.caption   = "a short test";
@@ -848,9 +848,9 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             r.repainting_end   = region_end;
         }
         const int     polls = dit_polls;
-        AceSynthJob * job = ace_synth_job_run_dit(synth, &r, src, src ? n : 0, src_latents ? src_latents->data() : NULL,
-                                                  src_latents ? (int) (src_latents->size() / 64) : 0, ref, ref ? n : 0,
-                                                  NULL, 0, 1, cancel, &kept);
+        AceSynthJob * job   = ace_synth_job_run_dit(
+            synth, &r, src, src ? (src_len ? src_len : n) : 0, src_latents ? src_latents->data() : NULL,
+            src_latents ? (int) (src_latents->size() / 64) : 0, ref, ref ? n : 0, NULL, 0, 1, cancel, &kept);
         if (job) {
             ace_synth_job_free(job);
             return false;
@@ -960,6 +960,16 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         }
         if (!run("repaint", source.data(), NULL, past_audio, true, 1, nullptr, 2.0f, 2.03f)) {
             fprintf(stderr, "[Test] FAIL: an audio repaint 2.00..2.03s, past a 2 s source, did not reach its DiT\n");
+            rc = 1;
+        }
+        // A source whose end falls inside a frame -- 1.53 s, 38.25 frames, the
+        // tone cut short; 38 whole frames, already patch-aligned -- repainted
+        // from 1.52 s to its end has its last frame, the pad run on to it,
+        // not a region of none refused.
+        AceSynthEncodes to_end;
+        if (!run("repaint", source.data(), NULL, to_end, true, 1, nullptr, 1.52f, -1.0f, 73440)) {
+            fprintf(stderr,
+                    "[Test] FAIL: an audio repaint 1.52s to the end of a 1.53 s source did not reach its DiT\n");
             rc = 1;
         }
     }
