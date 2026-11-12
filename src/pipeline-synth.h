@@ -163,3 +163,7 @@ int  ace_test_fsq_require_failures();
 // a source given none -- so a test can tell that refusal from a failure
 // further in, which a sourceless task also reaches (cadenza-audio #1057).
 int ace_test_source_refusals();
+
+// Tests only: how many runs the task table has warned of a source given to
+// a task that takes none, run without it (cadenza-audio #1095).
+int ace_test_source_ignores();

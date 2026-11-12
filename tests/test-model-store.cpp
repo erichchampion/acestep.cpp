@@ -728,12 +728,19 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         }
         return dit_polls == polls + want_polls;
     };
-    int             rc     = 0;
-    const size_t    frames = (size_t) seconds * 25;
+    int             rc      = 0;
+    const size_t    frames  = (size_t) seconds * 25;
+    const int       ignores = ace_test_source_ignores();
     AceSynthEncodes cover, text, repaint, nofsq;
     if (!run("cover", source.data(), NULL, cover) || !run("text2music", NULL, reference.data(), text) ||
         !run("repaint", source.data(), NULL, repaint, true) || !run("cover-nofsq", source.data(), NULL, nofsq)) {
         fprintf(stderr, "[Test] FAIL: a run returned a job, or failed before its DiT's first poll\n");
+        rc = 1;
+    }
+    // A reference is no source: a text2music given one is not warned of a
+    // source it ignores, nor is a task given the source it works from (#1095).
+    if (ace_test_source_ignores() != ignores) {
+        fprintf(stderr, "[Test] FAIL: a run given no source its task ignores was warned of one\n");
         rc = 1;
     }
     auto near = [&](const std::vector<float> & v) {
@@ -817,6 +824,27 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             rc = 1;
         }
     }
+    // A text2music given a source runs as asked, without it: warned of the
+    // source it ignores, not refused, and handing out no encode of it --
+    // only its reference's (cadenza-audio #1095).
+    {
+        AceSynthEncodes given;
+        const int       refused = ace_test_source_refusals(), ignored = ace_test_source_ignores();
+        if (!run("text2music", source.data(), reference.data(), given)) {
+            fprintf(stderr, "[Test] FAIL: a text2music given a source returned a job, or failed before its DiT\n");
+            rc = 1;
+        } else if (ace_test_source_ignores() != ignored + 1 || ace_test_source_refusals() != refused) {
+            fprintf(stderr, "[Test] FAIL: a text2music given a source was %s\n",
+                    ace_test_source_refusals() != refused ? "refused" : "not warned of it");
+            rc = 1;
+        } else if (!given.src_latents.empty() || given.ref_latents != text.ref_latents) {
+            fprintf(stderr,
+                    "[Test] FAIL: a text2music given a source kept %zu source and %zu reference values, want none "
+                    "of the source and the reference's (%zu)\n",
+                    given.src_latents.size(), given.ref_latents.size(), text.ref_latents.size());
+            rc = 1;
+        }
+    }
     // A cover whose FSQ roundtrip cannot run fails before its DiT, and still
     // hands out its clean encode -- the one a cover-nofsq hands out (#1056).
     AceSynthEncodes failed;
@@ -842,8 +870,8 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     if (rc == 0) {
         fprintf(stderr,
                 "[Test] scenario 11 PASS: cover %zu frames, reference %zu, repaint and lego region none, a "
-                "whole-song lego, an extract, a complete and a failed FSQ roundtrip their clean encode, and every "
-                "run given no source refused\n",
+                "whole-song lego, an extract, a complete and a failed FSQ roundtrip their clean encode, every "
+                "run given no source refused, and a text2music's ignored source warned of\n",
                 cover.src_latents.size() / 64, text.ref_latents.size() / 64);
     }
     return rc;

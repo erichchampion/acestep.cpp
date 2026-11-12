@@ -587,7 +587,8 @@ static int run_complete(AceSynth *          ctx,
 
 // The tasks, by name: what run_task dispatches on, and the list of the ones
 // it knows (#1057). needs_source: a task that works from a source refuses a
-// run given none.
+// run given none; a task that takes none runs without one it is given, and
+// says so (cadenza-audio #1095).
 using SynthTaskFn = int (*)(AceSynth *, const AceRequest *, const SynthInputs &, int, SynthState &, AceProgress);
 
 struct SynthTask {
@@ -613,6 +614,14 @@ int ace_test_source_refusals() {
     return g_test_source_refusals.load();
 }
 
+// The runs run_task has warned of a source their task ignores
+// (ace_test_source_ignores).
+static std::atomic<int> g_test_source_ignores{ 0 };
+
+int ace_test_source_ignores() {
+    return g_test_source_ignores.load();
+}
+
 // Dispatches on reqs[0].task_type to the right task function. task_type is
 // always set: request_init defaults it to text2music, the JSON parser ignores
 // empty strings.
@@ -623,7 +632,8 @@ static AceSynthJob * run_task(AceSynth *          ctx,
                               AceProgress         progress) {
     // An unknown task, and a task that works from a source given none (the
     // table's needs_source), are refused before the job is made -- the name
-    // first, so a misspelt task is said as that.
+    // first, so a misspelt task is said as that. A task that takes no source
+    // given one is warned of.
     const std::string & task  = reqs[0].task_type;
     const SynthTask *   entry = nullptr;
     for (const SynthTask & t : kSynthTasks) {
@@ -640,6 +650,13 @@ static AceSynthJob * run_task(AceSynth *          ctx,
         g_test_source_refusals.fetch_add(1);
         fprintf(stderr, "[Synth-Run] ERROR: task '%s' requires source audio or latents\n", task.c_str());
         return NULL;
+    }
+    // A task that takes no source given one runs as asked, without it: a
+    // warning, not a refusal, so a caller that sends one along still gets
+    // its run -- but not silently, as a cover it may have meant (#1095).
+    if (!entry->needs_source && in.src.given()) {
+        g_test_source_ignores.fetch_add(1);
+        fprintf(stderr, "[Synth-Run] WARNING: task '%s' ignores the given source\n", task.c_str());
     }
     // The one owner of the task's job (#1041): each task fills the job's
     // state and says whether it ran; the job is returned only if it did. A
