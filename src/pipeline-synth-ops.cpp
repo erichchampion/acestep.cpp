@@ -21,8 +21,6 @@
 #include <system_error>
 #include <vector>
 
-static const int FRAMES_PER_SECOND = 25;
-
 // Locale immune scalar reader. std::from_chars handles ints on every stdlib.
 // Floats: Apple's libc++ annotates them unavailable below macOS 26 regardless
 // of the header version -- availability follows the deployment target, not
@@ -125,7 +123,7 @@ template <typename T> static std::vector<T> parse_csv(const std::string & s) {
 
 int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s, AceProgress progress) {
     // Cover mode: ingest source either as pre-encoded latents (zero VAE work)
-    // or by acquiring the VAE encoder and running it on src_audio. When both
+    // or by acquiring the VAE encoder and running it on src.audio. When both
     // are provided latents win: they were either produced by a previous run
     // or supplied verbatim by the client and need no further processing.
     s.have_cover = false;
@@ -360,7 +358,7 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s) {
     if (s.use_source_context && s.have_cover) {
         s.T        = s.T_cover;
         // s.duration in metas must match actual source length, not JSON default
-        s.duration = (float) s.T_cover / (float) FRAMES_PER_SECOND;
+        s.duration = (float) s.T_cover / ACE_LATENT_FPS;
     } else if (s.have_codes) {
         s.T = s.max_codes_len * 5;
     } else if (s.use_source_context) {
@@ -369,7 +367,7 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s) {
         fprintf(stderr, "[Resolve-T] FATAL: use_source_context but no cover_latents and no audio_codes\n");
         return -1;
     } else {
-        s.T = (int) (s.duration * FRAMES_PER_SECOND);
+        s.T = (int) (s.duration * ACE_LATENT_FPS);
     }
     s.T     = ((s.T + ctx->meta->cfg.patch_size - 1) / ctx->meta->cfg.patch_size) * ctx->meta->cfg.patch_size;
     s.S     = s.T / ctx->meta->cfg.patch_size;
@@ -391,7 +389,7 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s) {
 // encode *fails*), -1 if the run was cancelled during the ref encode -- so the
 // caller aborts rather than silently generating with silence timbre.
 int ops_encode_timbre(const AceSynth * ctx, const SynthInput & ref, SynthState & s, AceProgress progress) {
-    // Timbre features from ref_audio or ref_latents (independent of src).
+    // Timbre features from ref.audio or ref.latents (independent of src).
     // Two paths converge into s.timbre_feats: pre-encoded latents skip the
     // VAE encoder entirely, raw audio takes the encoder path. Latents win
     // when both are set. Without either input the timbre falls back to a
