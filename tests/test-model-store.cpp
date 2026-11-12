@@ -698,6 +698,8 @@ static int scenario_splice_rule() {
     frames("a lego region past the end", false, true, 20.0f, 40.0f, 750, 500, 750);
     frames("a lego region before the start", false, true, -1.0f, 2.0f, 750, 0, 50);
     frames("a lego region wholly past the end", false, true, 40.0f, 50.0f, 750, 750, 750);
+    frames("a repaint wholly before the start", true, false, -2.0f, -1.0f, 750, 0, 0);
+    frames("an inverted repaint", true, false, 20.0f, 10.0f, 750, 500, 500);
     frames("a cover", false, false, 10.0f, 20.0f, 750, 0, 0);
     if (rc == 0) {
         fprintf(stderr, "[Test] scenario 12 PASS\n");

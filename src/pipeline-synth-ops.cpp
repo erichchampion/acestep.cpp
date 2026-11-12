@@ -488,7 +488,7 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
         return -1;
     }
 
-    s.need_enc_switch = s.use_source_context && !s.is_repaint && !s.is_lego_region && s.rr.audio_cover_strength < 1.0f;
+    s.need_enc_switch = s.use_source_context && !splices_source_after_decode(s) && s.rr.audio_cover_strength < 1.0f;
 
     BPETokenizer * bpe = store_bpe(ctx->store, ctx->params.text_encoder_path, ctx->text_enc_key.file_id);
     if (!bpe) {
@@ -668,8 +668,10 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
     if (s.use_source_context && s.have_cover) {
         // Cover/Lego/Repaint: build once, replicate (s.cover_latents are shared)
         std::vector<float> context_single(s.T * s.ctx_ch);
+        const bool         region = splices_source_after_decode(s);
         for (int t = 0; t < s.T; t++) {
-            bool          in_region = (s.is_repaint || s.is_lego_region) && t >= s.repaint_t0 && t < s.repaint_t1;
+            // resolve_region_frames gave any other task [0, 0): out of it.
+            bool          in_region = t >= s.repaint_t0 && t < s.repaint_t1;
             // repaint silences the zone (DiT generates fresh there).
             // lego keeps full cover everywhere (DiT hears the whole backing track).
             const float * src;
@@ -680,7 +682,7 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
             }
             // region tasks: explicit 0/1 mask. all others: 1.0 (training distribution).
             float mask_val;
-            if (s.is_repaint || s.is_lego_region) {
+            if (region) {
                 mask_val = in_region ? 1.0f : 0.0f;
             } else {
                 mask_val = 1.0f;  // training distribution: only 0/1 seen during training
@@ -777,7 +779,7 @@ void ops_build_context_silence(const AceSynth * ctx, int batch_n, SynthState & s
     // When step >= s.cover_steps, DiT switches from cover s.context to silence s.context
     // Repaint/lego_region: mask handles region; s.context switch never applies
     s.cover_steps = -1;
-    if (s.use_source_context && !s.is_repaint && !s.is_lego_region) {
+    if (s.use_source_context && !splices_source_after_decode(s)) {
         float cover_strength = s.rr.audio_cover_strength;
         if (cover_strength < 1.0f) {
             // Build silence s.context: all frames use silence_latent

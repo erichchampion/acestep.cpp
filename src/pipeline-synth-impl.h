@@ -16,6 +16,7 @@
 #include "request.h"
 #include "timer.h"
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -187,13 +188,16 @@ struct SynthState {
 
 // Whether the run splices its source back in after the decode -- a repaint,
 // or a lego region -- so its encode is not what a run again needs: one rule
-// for the splices (ops_vae_decode_track, ops_vae_decode) and the failed run's hand-out
-// (cadenza-audio #1041). The task sets both flags before it encodes.
+// for the splices (ops_vae_decode_track, ops_vae_decode), the failed run's
+// hand-out (cadenza-audio #1041), and the region's frames, mask and context
+// (#1130). The task sets both flags before it encodes.
 inline bool splices_source_after_decode(const SynthState & s) {
     return s.is_repaint || s.is_lego_region;
 }
 
-// The region's latent frames, [repaint_t0, repaint_t1) clamped to [0, T], for
+// The region's latent frames, [repaint_t0, repaint_t1) with
+// 0 <= repaint_t0 <= repaint_t1 <= T -- an inverted or wholly-outside region is
+// empty, never a negative or reversed range -- for
 // a run that splices its source after the decode -- a repaint or a lego region,
 // by the one rule above -- and none for any other. A lego region once got none
 // (only a repaint was asked), so it masked no frame and gave back its source
@@ -205,17 +209,8 @@ inline void resolve_region_frames(SynthState & s) {
     if (!splices_source_after_decode(s)) {
         return;
     }
-    s.repaint_t0 = sec_latent_frame(s.rs);
-    s.repaint_t1 = sec_latent_frame(s.re);
-    if (s.repaint_t0 < 0) {
-        s.repaint_t0 = 0;
-    }
-    if (s.repaint_t1 > s.T) {
-        s.repaint_t1 = s.T;
-    }
-    if (s.repaint_t0 > s.T) {
-        s.repaint_t0 = s.T;
-    }
+    s.repaint_t0 = std::clamp(sec_latent_frame(s.rs), 0, s.T);
+    s.repaint_t1 = std::clamp(sec_latent_frame(s.re), s.repaint_t0, s.T);
 }
 
 // The source's clean VAE latents: fsq_clean_latents holds them once the FSQ
