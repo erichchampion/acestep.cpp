@@ -867,7 +867,8 @@ static const void * silence_latent_data(const GGUFModel & gf, const char * dit_p
         fprintf(stderr, "[Store] FATAL: silence_latent not found in %s\n", dit_path);
         return nullptr;
     }
-    if (t->type != GGML_TYPE_F32 || ggml_nbytes(t) < (size_t) ACE_MAX_LATENT_FRAMES * 64 * sizeof(float)) {
+    if (t->type != GGML_TYPE_F32 || t->ne[0] != 64 || t->ne[1] != ACE_MAX_LATENT_FRAMES || t->ne[2] != 1 ||
+        t->ne[3] != 1) {
         fprintf(stderr, "[Store] FATAL: silence_latent in %s is not [%d, 64] f32\n", dit_path, ACE_MAX_LATENT_FRAMES);
         return nullptr;
     }

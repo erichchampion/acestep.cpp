@@ -246,7 +246,7 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
         if (frames <= ACE_MAX_LATENT_FRAMES) {
             return false;
         }
-        fprintf(stderr, "[Outpaint] ERROR: the padded source, %lld frames, is past a run's most, %d\n",
+        fprintf(stderr, "[Outpaint] ERROR: the source with its pads (if any), %lld frames, is past a run's most, %d\n",
                 (long long) frames, ACE_MAX_LATENT_FRAMES);
         return true;
     };

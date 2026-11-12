@@ -28,6 +28,7 @@
 //   /synth      DiT + Text-Enc + VAE
 //   /understand LM + DiT + VAE
 
+#include "audio-frames.h"
 #include "audio-io.h"
 #include "model-registry.h"
 #include "model-store.h"
@@ -244,7 +245,7 @@ static const int                                             MAX_JOBS = 32;
 // GGUF, which is fixed at [15000, 64] f32. The pipeline indexes into it
 // directly when padding context, so any T_latent above 15000 would walk
 // past the buffer. Same hard limit ops_resolve_T enforces on s.T.
-static const int MAX_T_LATENT = 15000;
+static const int MAX_T_LATENT = ACE_MAX_LATENT_FRAMES;  // the run's most (cadenza-audio #1139)
 
 // Latent payload format: raw f32 [T * 64] little-endian, no header. Same
 // layout neural-codec emits in --encode -f f32 mode and what /synth,
