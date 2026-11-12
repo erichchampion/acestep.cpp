@@ -1003,6 +1003,14 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 rc = 1;
             }
         }
+        // And at the most: a latent outpaint to 600.04 s on the 2 s source pads
+        // to 15001 frames, one past a run's most, and is refused (#1139).
+        AceSynthEncodes past_most;
+        if (cover.src_latents.empty() ||
+            !run("repaint", NULL, NULL, past_most, true, 0, &cover.src_latents, 1.0f, 600.04f)) {
+            fprintf(stderr, "[Test] FAIL: a latent outpaint to 15001 frames returned a job, or reached its DiT\n");
+            rc = 1;
+        }
         // Nor a region whose bound is no number: refused, not read as 0 s.
         AceSynthEncodes nan_bound;
         if (!run("repaint", source.data(), NULL, nan_bound, true, 0, nullptr, std::nanf(""), 1.0f) ||

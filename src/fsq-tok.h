@@ -126,7 +126,7 @@ static bool tok_ggml_load(TokGGML * m, const char * gguf_path) {
 // Tokenize VAE latents to FSQ codes
 // latents: [T_25Hz, 64] time-major (from VAE encoder)
 // codes_out: caller-allocated, at least (T_25Hz + 4) / 5 ints
-// silence_latent: [15000, 64] time-major (for padding to multiple of 5)
+// silence_latent: [ACE_MAX_LATENT_FRAMES, 64] time-major (for padding to multiple of 5)
 // Returns T_5Hz (number of codes) or -1 on error
 static int tok_ggml_encode(TokGGML *     m,
                            const float * latents,

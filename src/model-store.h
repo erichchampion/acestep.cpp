@@ -112,7 +112,7 @@ enum EvictPolicy {
 // before the DiT itself is loaded on the GPU.
 struct DiTMeta {
     DiTGGMLConfig      cfg;
-    std::vector<float> silence_full;   // [15000, 64] f32, from silence_latent tensor
+    std::vector<float> silence_full;   // [ACE_MAX_LATENT_FRAMES, 64] f32, from silence_latent tensor
     std::vector<float> null_cond_cpu;  // [hidden_size] f32, empty when the model has none
     bool               is_turbo;
 };

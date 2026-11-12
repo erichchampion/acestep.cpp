@@ -858,6 +858,22 @@ BPETokenizer * store_bpe(ModelStore * s, const char * lm_path, const std::string
     return bpe;
 }
 
+// The DiT's silence latent, as the store reads it: [ACE_MAX_LATENT_FRAMES, 64]
+// f32, checked so -- the pads and every context read up to that many frames of
+// it (#1139). NULL, said, for a file without one, or with another shape.
+static const void * silence_latent_data(const GGUFModel & gf, const char * dit_path) {
+    const struct ggml_tensor * t = ggml_get_tensor(gf.meta, "silence_latent");
+    if (!t) {
+        fprintf(stderr, "[Store] FATAL: silence_latent not found in %s\n", dit_path);
+        return nullptr;
+    }
+    if (t->type != GGML_TYPE_F32 || ggml_nbytes(t) < (size_t) ACE_MAX_LATENT_FRAMES * 64 * sizeof(float)) {
+        fprintf(stderr, "[Store] FATAL: silence_latent in %s is not [%d, 64] f32\n", dit_path, ACE_MAX_LATENT_FRAMES);
+        return nullptr;
+    }
+    return gf_get_data(gf, "silence_latent");
+}
+
 const float * store_silence(ModelStore * s, const char * dit_path, const std::string & file_id) {
     std::lock_guard<std::mutex> lock(s->mtx);
     std::string                 key = dit_path ? dit_path : "";
@@ -873,9 +889,8 @@ const float * store_silence(ModelStore * s, const char * dit_path, const std::st
         fprintf(stderr, "[Store] FATAL: silence cannot open %s\n", dit_path);
         return nullptr;
     }
-    const void * sl = gf_get_data(gf, "silence_latent");
+    const void * sl = silence_latent_data(gf, dit_path);
     if (!sl) {
-        fprintf(stderr, "[Store] FATAL: silence_latent not found in %s\n", dit_path);
         gf_close(&gf);
         return nullptr;
     }
@@ -955,9 +970,8 @@ std::shared_ptr<const DiTMeta> store_dit_meta_shared(ModelStore *        s,
     // silence_latent: [ACE_MAX_LATENT_FRAMES, 64] f32, also accessible via store_silence for
     // callers that only need the pointer. Cached here too so DiTMeta is
     // self-contained.
-    const void * sl = gf_get_data(gf, "silence_latent");
+    const void * sl = silence_latent_data(gf, dit_path);
     if (!sl) {
-        fprintf(stderr, "[Store] FATAL: silence_latent not found in %s\n", dit_path);
         gf_close(&gf);
         return nullptr;
     }

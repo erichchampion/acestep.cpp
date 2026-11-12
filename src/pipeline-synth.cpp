@@ -264,15 +264,15 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
         // A region wholly past the frames padded has the frames it reaches.
         const RegionFrames region = asked_region_frames(rs_raw, re_raw, src_dur, latent_frames_sec(lpad_T));
         const int64_t      held   = (int64_t) lpad_T + src.T_latent + rpad_T;
-        // The pads' frames in 64 bits against the run's most, before any is
-        // added to or allocated: each pad is held to 1e9 frames, and two can
-        // pass an int.
-        if (too_long(std::max<int64_t>(held, region.first >= held ? (int64_t) region.end : held))) {
+        // The frames the run will hold, in 64 bits -- the region's end for one
+        // lying wholly past the padded frames -- against the run's most,
+        // before any is added or allocated: each pad is held to 1e9 frames,
+        // and two can pass an int.
+        const int64_t      total  = (region.first >= held && region.end > held) ? (int64_t) region.end : held;
+        if (too_long(total)) {
             return false;
         }
-        if (region.first >= held && region.end > held) {
-            rpad_T += (int) (region.end - held);
-        }
+        rpad_T += (int) (total - held);
         // Pads within the frame slack of none pad nothing: the source as
         // given, the region not shifted (#1129).
         if (lpad_T == 0 && rpad_T == 0) {
@@ -300,21 +300,25 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
     // splice always has the source PCM to read from, with or without outpaint.
     // Pads in whole samples, the nearest; the region shifted by the pad as
     // padded, as the latent path's is (#1129).
-    int lpad_s = sec_samples_nearest(lpad);
-    int rpad_s = sec_samples_nearest(rpad);
-    // The padded source's frames, rounded up -- the most its pad runs on to.
-    if (too_long(padded_samples_frames(lpad_s, src.len, rpad_s))) {
-        return false;
-    }
-    int padded_total          = src.len + lpad_s + rpad_s;
+    int lpad_s                = sec_samples_nearest(lpad);
+    int rpad_s                = sec_samples_nearest(rpad);
     s.left_pad_sec            = samples_sec(lpad_s);
     // The encoder keeps whole frames only, so a region wholly past the last
     // whole frame -- to a source's end inside one, or into a pad of less
     // than a frame -- would have no frame, and be refused as covering none.
     // Then the pad runs on to the next frame's end (#1138).
+    const int64_t      padded = (int64_t) lpad_s + src.len + rpad_s;
+    const int64_t      whole  = padded / ACE_LATENT_HOP;
     const RegionFrames region = asked_region_frames(rs_raw, re_raw, src_dur, s.left_pad_sec);
-    const int          whole  = samples_frames_floor(padded_total);
-    if (region.first >= whole && region.end > whole) {
+    const bool         run_on = region.first >= whole && region.end > whole;
+    // The frames the encoder will keep -- whole ones, or the one the pad runs
+    // on to -- against the run's most, before any is allocated: a 600 s
+    // take is the most, though a float pad lands a sample past it (#1139).
+    if (too_long(run_on ? padded_samples_frames(lpad_s, src.len, rpad_s) : whole)) {
+        return false;
+    }
+    int padded_total = (int) padded;
+    if (run_on) {
         const int frame_end = samples_frames_ceil(padded_total) * ACE_LATENT_HOP;
         rpad_s += frame_end - padded_total;
         padded_total = frame_end;
