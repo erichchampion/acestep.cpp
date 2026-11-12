@@ -377,8 +377,9 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s) {
     fprintf(stderr, "[Resolve-T] seed=%lld, steps=%d, guidance=%.1f, shift=%.1f, duration=%.1fs\n",
             (long long) s.rr.seed, s.num_steps, s.guidance_scale, s.shift, s.duration);
 
-    if (s.T > 15000) {
-        fprintf(stderr, "[Resolve-T] ERROR: T=%d exceeds silence_latent max 15000, skipping\n", s.T);
+    if (s.T > ACE_MAX_LATENT_FRAMES) {
+        fprintf(stderr, "[Resolve-T] ERROR: T=%d exceeds silence_latent max %d, skipping\n", s.T,
+                ACE_MAX_LATENT_FRAMES);
         return -1;
     }
 

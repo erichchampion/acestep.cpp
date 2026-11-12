@@ -12,6 +12,10 @@ inline constexpr int ACE_SAMPLE_RATE = 48000;
 // Samples per latent frame: the VAE's down- and upsampling (2x4x4x6x10).
 inline constexpr int ACE_LATENT_HOP = 1920;
 
+// The most latent frames a run holds: the length of the DiT's silence latent
+// (silence_full), which pads and backs every context -- 600 s (#1139).
+inline constexpr int ACE_MAX_LATENT_FRAMES = 15000;
+
 // Latent frames per second (25, exactly).
 inline constexpr float ACE_LATENT_FPS = (float) ACE_SAMPLE_RATE / ACE_LATENT_HOP;
 

@@ -991,6 +991,17 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             fprintf(stderr, "[Test] FAIL: a repaint whose region covers no frame returned a job, or reached its DiT\n");
             rc = 1;
         }
+        // Nor a region whose end is far past what a run holds: refused before
+        // its pad is allocated -- gigabytes of one, for 1e10 s (#1139).
+        for (const bool as_latents : { true, false }) {
+            AceSynthEncodes far;
+            if (!run("repaint", as_latents ? NULL : source.data(), NULL, far, true, 0,
+                     as_latents ? &cover.src_latents : nullptr, 0.5f, 1e10f)) {
+                fprintf(stderr, "[Test] FAIL: a %s repaint to 1e10 s returned a job, or reached its DiT\n",
+                        as_latents ? "latent" : "audio");
+                rc = 1;
+            }
+        }
         // Nor a region whose bound is no number: refused, not read as 0 s.
         AceSynthEncodes nan_bound;
         if (!run("repaint", source.data(), NULL, nan_bound, true, 0, nullptr, std::nanf(""), 1.0f) ||
