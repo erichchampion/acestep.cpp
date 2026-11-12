@@ -704,11 +704,12 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     int         dit_polls = 0;
     cancel.fn             = cancel_at_dit;
     cancel.data           = &dit_polls;
-    // run TASK [SOURCE] [REFERENCE] KEPT [REGION] [POLLS]: the run, failed,
-    // and what it kept -- by the cancel at its DiT's first poll (POLLS 1), or
-    // before its DiT (POLLS 0). REGION gives a repaint, or a lego, a region.
+    // run TASK [SOURCE] [REFERENCE] KEPT [REGION] [POLLS] [SOURCE LATENTS]:
+    // the run, failed, and what it kept -- by the cancel at its DiT's first
+    // poll (POLLS 1), or before its DiT (POLLS 0). REGION gives a repaint, or
+    // a lego, a region; SOURCE LATENTS gives the source as latents.
     auto run = [&](const char * task, const float * src, const float * ref, AceSynthEncodes & kept, bool region = false,
-                   int want_polls = 1) {
+                   int want_polls = 1, const std::vector<float> * src_latents = nullptr) {
         AceRequest r;
         request_init(&r);
         r.caption   = "a short test";
@@ -720,8 +721,9 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             r.repainting_end   = 1.5f;
         }
         const int     polls = dit_polls;
-        AceSynthJob * job =
-            ace_synth_job_run_dit(synth, &r, src, src ? n : 0, NULL, 0, ref, ref ? n : 0, NULL, 0, 1, cancel, &kept);
+        AceSynthJob * job = ace_synth_job_run_dit(synth, &r, src, src ? n : 0, src_latents ? src_latents->data() : NULL,
+                                                  src_latents ? (int) (src_latents->size() / 64) : 0, ref, ref ? n : 0,
+                                                  NULL, 0, 1, cancel, &kept);
         if (job) {
             ace_synth_job_free(job);
             return false;
@@ -818,54 +820,6 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             rc = 1;
         }
     }
-    // A reference is no source: no run so far -- a text2music given only a
-    // reference, every task given the source it works from, every one given
-    // none -- was warned of a source it ignores (cadenza-audio #1095).
-    if (ace_test_source_ignores() != ignores) {
-        fprintf(stderr, "[Test] FAIL: %d runs given no source their task ignores were warned of one\n",
-                ace_test_source_ignores() - ignores);
-        rc = 1;
-    }
-    // A text2music given a source -- as audio, or as latents -- runs as asked,
-    // without it: warned of the source it ignores, not refused, and handing
-    // out no encode of it, only its reference's (cadenza-audio #1095).
-    for (const bool as_latents : { false, true }) {
-        const char *    form = as_latents ? "source latents" : "source audio";
-        AceRequest      r;
-        AceSynthEncodes given;
-        request_init(&r);
-        r.caption             = "a short test";
-        r.duration            = (float) seconds;
-        r.seed                = 1;
-        r.task_type           = "text2music";
-        const int     refused = ace_test_source_refusals(), ignored = ace_test_source_ignores();
-        const int     polls = dit_polls;
-        AceSynthJob * job   = ace_synth_job_run_dit(synth, &r, as_latents ? NULL : source.data(), as_latents ? 0 : n,
-                                                    as_latents ? cover.src_latents.data() : NULL,
-                                                    as_latents ? (int) (cover.src_latents.size() / 64) : 0,
-                                                    reference.data(), n, NULL, 0, 1, cancel, &given);
-        if (job) {
-            ace_synth_job_free(job);
-        }
-        // The counters first: a refusal stops the run before its DiT, which
-        // is said as that, not as a failure further in.
-        if (ace_test_source_refusals() != refused) {
-            fprintf(stderr, "[Test] FAIL: a text2music given %s was refused\n", form);
-            rc = 1;
-        } else if (ace_test_source_ignores() != ignored + 1) {
-            fprintf(stderr, "[Test] FAIL: a text2music given %s was not warned of it\n", form);
-            rc = 1;
-        } else if (job || dit_polls != polls + 1) {
-            fprintf(stderr, "[Test] FAIL: a text2music given %s returned a job, or failed before its DiT\n", form);
-            rc = 1;
-        } else if (!given.src_latents.empty() || given.ref_latents != text.ref_latents) {
-            fprintf(stderr,
-                    "[Test] FAIL: a text2music given %s kept %zu source and %zu reference values, want "
-                    "none of the source and the reference's (%zu)\n",
-                    form, given.src_latents.size(), given.ref_latents.size(), text.ref_latents.size());
-            rc = 1;
-        }
-    }
     // A cover whose FSQ roundtrip cannot run fails before its DiT, and still
     // hands out its clean encode -- the one a cover-nofsq hands out (#1056).
     AceSynthEncodes failed;
@@ -885,6 +839,49 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 "(%zu)\n",
                 failed.src_latents.size(), cover.src_latents.size());
         rc = 1;
+    }
+    // A reference is no source: no run so far -- a text2music given only a
+    // reference, every task given the source it works from, every one given
+    // none, a cover whose FSQ roundtrip failed -- was warned of a source it
+    // ignores (cadenza-audio #1095).
+    if (ace_test_source_ignores() != ignores) {
+        fprintf(stderr, "[Test] FAIL: %d runs given no source their task ignores were warned of one\n",
+                ace_test_source_ignores() - ignores);
+        rc = 1;
+    }
+    // A text2music given a source -- as audio, or as latents (the cover's
+    // clean encode) -- runs as asked, without it: warned of the source it
+    // ignores, not refused, and handing out no encode of it, only its
+    // reference's (cadenza-audio #1095).
+    for (const bool as_latents : { false, true }) {
+        const char * form = as_latents ? "source latents" : "source audio";
+        if (as_latents && cover.src_latents.empty()) {
+            fprintf(stderr, "[Test] FAIL: no cover encode to give a text2music as source latents\n");
+            rc = 1;
+            continue;
+        }
+        AceSynthEncodes given;
+        const int       refused = ace_test_source_refusals(), ignored = ace_test_source_ignores();
+        const bool ran = as_latents ? run("text2music", NULL, reference.data(), given, false, 1, &cover.src_latents) :
+                                      run("text2music", source.data(), reference.data(), given);
+        // The counters first: a refusal stops the run before its DiT, which
+        // is said as that, not as a failure further in.
+        if (ace_test_source_refusals() != refused) {
+            fprintf(stderr, "[Test] FAIL: a text2music given %s was refused\n", form);
+            rc = 1;
+        } else if (ace_test_source_ignores() != ignored + 1) {
+            fprintf(stderr, "[Test] FAIL: a text2music given %s was not warned of it\n", form);
+            rc = 1;
+        } else if (!ran) {
+            fprintf(stderr, "[Test] FAIL: a text2music given %s returned a job, or failed before its DiT\n", form);
+            rc = 1;
+        } else if (!given.src_latents.empty() || given.ref_latents != text.ref_latents) {
+            fprintf(stderr,
+                    "[Test] FAIL: a text2music given %s kept %zu source and %zu reference values, want none of the "
+                    "source and the reference's (%zu)\n",
+                    form, given.src_latents.size(), given.ref_latents.size(), text.ref_latents.size());
+            rc = 1;
+        }
     }
     ace_synth_free(synth);
     store_free(s);
