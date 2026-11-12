@@ -329,19 +329,13 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
                                          const SynthInput & ref,
                                          SynthState &       s,
                                          AceProgress        progress) {
-    const bool have_src_audio   = src.has_audio();
-    const bool have_src_latents = src.has_latents();
-    const bool have_src         = src.given();
-    const bool have_ref_audio   = ref.has_audio();
-    const bool have_ref         = ref.given();
-    if (!have_src && !have_ref) {
-        // Neither encode touches the GPU: timbre takes the silence path.
-        if (ops_encode_timbre(ctx, SynthInput{}, s, progress) != 0) {
-            return false;
-        }
-        return true;
-    }
-    bool        need_vae_pin = (have_src_audio || have_ref_audio);
+    // Neither input given needs no pin either: the timbre takes its silence
+    // path, the source no encode.
+    const bool  have_src_audio   = src.has_audio();
+    const bool  have_src_latents = src.has_latents();
+    const bool  have_src         = src.given();
+    const bool  have_ref_audio   = ref.has_audio();
+    bool        need_vae_pin     = (have_src_audio || have_ref_audio);
     ModelHandle vae_pin(ctx->store, need_vae_pin ? store_require_vae_enc(ctx->store, ctx->vae_enc_key) : NULL);
     if (need_vae_pin && !vae_pin.ptr) {
         fprintf(stderr, "[Pipeline-Synth] FATAL: store_require_vae_enc (pin) failed\n");

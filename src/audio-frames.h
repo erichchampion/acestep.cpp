@@ -25,13 +25,16 @@ inline constexpr float samples_sec(int samples) {
     return (float) samples / ACE_SAMPLE_RATE;
 }
 
-// The latent frame a time in seconds falls in, truncated.
+// The latent frame a time in seconds falls in, truncated -- at some frame
+// starts a frame early (#1129).
 inline constexpr int sec_latent_frame(float sec) {
     return (int) (sec * ACE_SAMPLE_RATE / ACE_LATENT_HOP);
 }
 
 // The conversions, held at compile time: a second is 25 frames and 48000
-// samples, and a frame's start is the frame.
+// samples. sec_latent_frame truncates a float product, so at some frame
+// starts it lands a frame early (2.12 s is frame 52, not 53); kept as the
+// code it replaced was, and #1129's to fix -- 0.04 s is one start it holds at.
 static_assert(ACE_LATENT_FPS == 25.0f, "25 latent frames a second");
 static_assert(latent_frames_sec(25) == 1.0f && latent_frames_sec(50) == 2.0f, "frames to seconds");
 static_assert(samples_sec(ACE_SAMPLE_RATE) == 1.0f, "samples to seconds");
