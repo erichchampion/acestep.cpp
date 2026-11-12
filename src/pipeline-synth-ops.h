@@ -10,18 +10,14 @@
 #include "progress.h"
 
 struct AceSynth;
+struct SynthInput;
 struct SynthState;
 
 // Phase 1 primitives.
 
-// Encode src_audio into cover_latents. Sets s.have_cover, s.cover_latents, s.T_cover.
-int ops_encode_src(const AceSynth * ctx,
-                   const float *    src_audio,
-                   int              src_len,
-                   const float *    src_latents,
-                   int              src_T_latent,
-                   SynthState &     s,
-                   AceProgress      progress = {});
+// Encode the source into cover_latents: its latents when given, else its
+// audio. Sets s.have_cover, s.cover_latents, s.T_cover.
+int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s, AceProgress progress = {});
 
 // FSQ roundtrip on cover_latents (cover mode only).
 // 0, or -1 when it could not run: a cover is not run on clean latents in its
@@ -37,14 +33,9 @@ void ops_build_schedule(SynthState & s);
 // Resolve T (latent frame count) and S (patch count).
 int ops_resolve_T(const AceSynth * ctx, SynthState & s);
 
-// Encode timbre from ref_audio via VAE. Sets s.timbre_feats and s.S_ref_timbre.
-int ops_encode_timbre(const AceSynth * ctx,
-                      const float *    ref_audio,
-                      int              ref_len,
-                      const float *    ref_latents,
-                      int              ref_T_latent,
-                      SynthState &     s,
-                      AceProgress      progress = {});
+// Encode timbre from the reference: its latents when given, else its audio
+// via VAE, else silence. Sets s.timbre_feats and s.S_ref_timbre.
+int ops_encode_timbre(const AceSynth * ctx, const SynthInput & ref, SynthState & s, AceProgress progress = {});
 
 // Per-batch text + lyric encoding (main pass + optional non-cover pass).
 // Stacks results into s.enc_hidden / s.enc_hidden_nc.

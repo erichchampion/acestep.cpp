@@ -5,6 +5,7 @@
 
 #include "pipeline-understand.h"
 
+#include "audio-frames.h"
 #include "backend.h"
 #include "bpe.h"
 #include "debug.h"
@@ -211,13 +212,13 @@ int ace_understand_generate(AceUnderstand *      ctx,
         latents.assign(src_latents, src_latents + (size_t) src_T_latent * 64);
         T_25Hz = src_T_latent;
         fprintf(stderr, "[Understand-VAE] Latents in: %d frames (%.2fs), VAE encode skipped\n", T_25Hz,
-                (float) T_25Hz * 1920.0f / 48000.0f);
+                latent_frames_sec(T_25Hz));
     } else {
         // VAE encode: audio -> latents [T_25Hz, 64]. VAE-Enc lives only for
         // this step: acquire, encode, release so the store can free it before
         // the tokenizer comes in (STRICT) or keep it resident (NEVER).
         Timer t_vae;
-        int   max_T_lat = (src_len / 1920) + 64;
+        int   max_T_lat = (src_len / ACE_LATENT_HOP) + 64;
         latents.assign((size_t) max_T_lat * 64, 0.0f);
 
         VAEEncoder * vae_enc = store_require_vae_enc(ctx->store, ctx->vae_enc_key);
@@ -239,7 +240,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
             return -1;
         }
         fprintf(stderr, "[Understand-VAE] Encoded: %d latent frames (%.2fs), %.0fms\n", T_25Hz,
-                (float) T_25Hz * 1920.0f / 48000.0f, t_vae.ms());
+                latent_frames_sec(T_25Hz), t_vae.ms());
     }
 
     // Expose freshly encoded latents to the caller. When the client supplied

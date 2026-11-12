@@ -123,30 +123,24 @@ template <typename T> static std::vector<T> parse_csv(const std::string & s) {
     return out;
 }
 
-int ops_encode_src(const AceSynth * ctx,
-                   const float *    src_audio,
-                   int              src_len,
-                   const float *    src_latents,
-                   int              src_T_latent,
-                   SynthState &     s,
-                   AceProgress      progress) {
+int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s, AceProgress progress) {
     // Cover mode: ingest source either as pre-encoded latents (zero VAE work)
     // or by acquiring the VAE encoder and running it on src_audio. When both
     // are provided latents win: they were either produced by a previous run
     // or supplied verbatim by the client and need no further processing.
     s.have_cover = false;
     s.T_cover    = 0;
-    if (src_latents && src_T_latent > 0) {
-        s.cover_latents.assign(src_latents, src_latents + (size_t) src_T_latent * 64);
-        s.T_cover    = src_T_latent;
+    if (src.has_latents()) {
+        s.cover_latents.assign(src.latents, src.latents + (size_t) src.T_latent * 64);
+        s.T_cover    = src.T_latent;
         s.have_cover = true;
         fprintf(stderr, "[Encode-Src] Latents in: T_cover=%d (%.2fs), VAE encode skipped\n", s.T_cover,
-                (float) s.T_cover * 1920.0f / 48000.0f);
+                latent_frames_sec(s.T_cover));
         return 0;
     }
-    if (src_audio && src_len > 0) {
+    if (src.has_audio()) {
         s.timer.reset();
-        int T_audio = src_len;
+        int T_audio = src.len;
 
         VAEEncoder * vae_enc = store_require_vae_enc(ctx->store, ctx->vae_enc_key);
         if (!vae_enc) {
@@ -155,10 +149,10 @@ int ops_encode_src(const AceSynth * ctx,
         }
         ModelHandle vae_enc_guard(ctx->store, vae_enc);
 
-        int max_T_lat = (T_audio / 1920) + 64;
+        int max_T_lat = (T_audio / ACE_LATENT_HOP) + 64;
         s.cover_latents.resize(max_T_lat * 64);
 
-        s.T_cover = vae_enc_encode_tiled(vae_enc, src_audio, T_audio, s.cover_latents.data(), max_T_lat,
+        s.T_cover = vae_enc_encode_tiled(vae_enc, src.audio, T_audio, s.cover_latents.data(), max_T_lat,
                                          ctx->params.vae_chunk, ctx->params.vae_overlap, progress);
         if (s.T_cover < 0) {
             // -1 is both cancel and failure; both abort here (unlike the timbre
@@ -172,8 +166,8 @@ int ops_encode_src(const AceSynth * ctx,
             return -1;
         }
         s.cover_latents.resize(s.T_cover * 64);
-        fprintf(stderr, "[Encode-Src] Encoded: T_cover=%d (%.2fs), %.1f ms\n", s.T_cover,
-                (float) s.T_cover * 1920.0f / 48000.0f, s.timer.ms());
+        fprintf(stderr, "[Encode-Src] Encoded: T_cover=%d (%.2fs), %.1f ms\n", s.T_cover, latent_frames_sec(s.T_cover),
+                s.timer.ms());
 
         s.have_cover = true;
     }
@@ -396,26 +390,20 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s) {
 // 0 on success (including the deliberate fall-back to silence when a ref_audio
 // encode *fails*), -1 if the run was cancelled during the ref encode -- so the
 // caller aborts rather than silently generating with silence timbre.
-int ops_encode_timbre(const AceSynth * ctx,
-                      const float *    ref_audio,
-                      int              ref_len,
-                      const float *    ref_latents,
-                      int              ref_T_latent,
-                      SynthState &     s,
-                      AceProgress      progress) {
+int ops_encode_timbre(const AceSynth * ctx, const SynthInput & ref, SynthState & s, AceProgress progress) {
     // Timbre features from ref_audio or ref_latents (independent of src).
     // Two paths converge into s.timbre_feats: pre-encoded latents skip the
     // VAE encoder entirely, raw audio takes the encoder path. Latents win
     // when both are set. Without either input the timbre falls back to a
     // single silence frame, disabling timbre conditioning.
-    if (ref_latents && ref_T_latent > 0) {
-        s.S_ref_timbre = ref_T_latent;
-        s.timbre_feats.assign(ref_latents, ref_latents + (size_t) ref_T_latent * 64);
-        fprintf(stderr, "[Encode-Timbre] Latents in: %d frames (%.1fs), VAE encode skipped\n", ref_T_latent,
-                (float) ref_T_latent / 25.0f);
+    if (ref.has_latents()) {
+        s.S_ref_timbre = ref.T_latent;
+        s.timbre_feats.assign(ref.latents, ref.latents + (size_t) ref.T_latent * 64);
+        fprintf(stderr, "[Encode-Timbre] Latents in: %d frames (%.1fs), VAE encode skipped\n", ref.T_latent,
+                latent_frames_sec(ref.T_latent));
         return 0;
     }
-    if (ref_audio && ref_len > 0) {
+    if (ref.has_audio()) {
         s.timer.reset();
         VAEEncoder * ref_vae = store_require_vae_enc(ctx->store, ctx->vae_enc_key);
         if (!ref_vae) {
@@ -426,9 +414,9 @@ int ops_encode_timbre(const AceSynth * ctx,
         }
         ModelHandle ref_vae_guard(ctx->store, ref_vae);
 
-        int                max_T_ref = (ref_len / 1920) + 64;
+        int                max_T_ref = (ref.len / ACE_LATENT_HOP) + 64;
         std::vector<float> ref_lat_buf(max_T_ref * 64);
-        int                T_ref = vae_enc_encode_tiled(ref_vae, ref_audio, ref_len, ref_lat_buf.data(), max_T_ref,
+        int                T_ref = vae_enc_encode_tiled(ref_vae, ref.audio, ref.len, ref_lat_buf.data(), max_T_ref,
                                                         ctx->params.vae_chunk, ctx->params.vae_overlap, progress);
         if (T_ref < 0) {
             // vae_enc_encode_tiled returns -1 for both a cancel and a real encode
@@ -445,7 +433,7 @@ int ops_encode_timbre(const AceSynth * ctx,
             s.S_ref_timbre   = T_ref;
             s.timbre_feats.assign(ref_lat_buf.data(), ref_lat_buf.data() + (size_t) T_ref * 64);
             s.timbre_encoded = true;
-            fprintf(stderr, "[Encode-Timbre] ref_audio: %d frames (%.1fs), %.1f ms\n", T_ref, (float) T_ref / 25.0f,
+            fprintf(stderr, "[Encode-Timbre] ref_audio: %d frames (%.1fs), %.1f ms\n", T_ref, latent_frames_sec(T_ref),
                     s.timer.ms());
         }
     } else {
@@ -674,8 +662,8 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
     // Text2music: silence only, mask = 1.0.
     s.repaint_t0 = 0, s.repaint_t1 = 0;
     if (s.is_repaint) {
-        s.repaint_t0 = (int) (s.rs * 48000.0f / 1920.0f);
-        s.repaint_t1 = (int) (s.re * 48000.0f / 1920.0f);
+        s.repaint_t0 = sec_latent_frame(s.rs);
+        s.repaint_t1 = sec_latent_frame(s.re);
         if (s.repaint_t0 < 0) {
             s.repaint_t0 = 0;
         }
@@ -962,7 +950,7 @@ static void ops_vae_splice_track(SynthState & s, int b) {
 static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceAudio * out, SynthState & s,
                                 AceProgress progress) {
     int T_latent    = s.T;
-    int T_audio_max = T_latent * 1920;
+    int T_audio_max = T_latent * ACE_LATENT_HOP;
 
     float * dit_out = s.output.data() + (size_t) b * s.Oc * s.T;
 
@@ -972,7 +960,7 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
     // a 4 GB phone is closest to its page limit (erichchampion/cadenza-audio#752).
     out->samples     = NULL;
     out->n_samples   = 0;
-    out->sample_rate = 48000;
+    out->sample_rate = ACE_SAMPLE_RATE;
     float * audio    = (float *) malloc((size_t) 2 * T_audio_max * sizeof(float));
     if (!audio) {
         fprintf(stderr, "[VAE-Decode Batch%d] ERROR: OOM allocating output (%d samples)\n", b, 2 * T_audio_max);
@@ -1013,8 +1001,8 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
     // already the cleanest output we can produce).
     if (splices_source_after_decode(s) && !s.padded_src.empty()) {
         int       T_src   = (int) (s.padded_src.size() / 2);
-        const int start_s = (int) ((size_t) s.repaint_t0 * 1920);
-        const int end_s   = (int) ((size_t) s.repaint_t1 * 1920);
+        const int start_s = (int) ((size_t) s.repaint_t0 * ACE_LATENT_HOP);
+        const int end_s   = (int) ((size_t) s.repaint_t1 * ACE_LATENT_HOP);
         const int T_clip  = T_audio < T_src ? T_audio : T_src;
         for (int ch = 0; ch < 2; ch++) {
             float * pred = out->samples + (size_t) ch * T_audio;

@@ -176,26 +176,6 @@ static AceSynthJob * alloc_job(AceSynth * ctx, const AceRequest * reqs, int batc
     return job;
 }
 
-// One of a run's inputs as its caller gave it: audio (len samples a channel)
-// or latents (T_latent frames), either, both or neither (#1057).
-struct SynthInput {
-    const float * audio    = nullptr;
-    int           len      = 0;
-    const float * latents  = nullptr;
-    int           T_latent = 0;
-
-    bool has_audio() const { return audio && len > 0; }
-
-    bool has_latents() const { return latents && T_latent > 0; }
-
-    bool given() const { return has_audio() || has_latents(); }
-
-    // Its length in seconds: the latents' when given (25 Hz), else the audio's.
-    float duration_sec() const {
-        return has_latents() ? (float) T_latent * 1920.0f / 48000.0f : (float) len / 48000.0f;
-    }
-};
-
 // A run's source and reference, one argument for every task.
 struct SynthInputs {
     SynthInput src;
@@ -231,8 +211,8 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
             return enc;
         }
         // Latent pad: round to 25Hz frames, splice silence_full at the edges.
-        int           lpad_T  = (int) (lpad * 25.0f + 0.5f);
-        int           rpad_T  = (int) (rpad * 25.0f + 0.5f);
+        int           lpad_T  = (int) (lpad * ACE_LATENT_FPS + 0.5f);
+        int           rpad_T  = (int) (rpad * ACE_LATENT_FPS + 0.5f);
         int           total_T = lpad_T + src.T_latent + rpad_T;
         const float * sil     = ctx->meta->silence_full.data();
         s.padded_latents.resize((size_t) total_T * 64);
@@ -243,14 +223,14 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
         enc.latents  = s.padded_latents.data();
         enc.T_latent = total_T;
         fprintf(stderr, "[Outpaint] latent pad left=%.1fs (%d) right=%.1fs (%d) total=%.1fs\n", lpad, lpad_T, rpad,
-                rpad_T, (float) total_T * 1920.0f / 48000.0f);
+                rpad_T, latent_frames_sec(total_T));
         return enc;
     }
 
     // Audio path: always populate s.padded_src so the post-decode waveform
     // splice always has the source PCM to read from, with or without outpaint.
-    int lpad_s       = (int) (lpad * 48000.0f);
-    int rpad_s       = (int) (rpad * 48000.0f);
+    int lpad_s       = (int) (lpad * ACE_SAMPLE_RATE);
+    int rpad_s       = (int) (rpad * ACE_SAMPLE_RATE);
     int padded_total = src.len + lpad_s + rpad_s;
     s.padded_src.resize((size_t) padded_total * 2);
     if (lpad_s > 0 || rpad_s > 0) {
@@ -261,7 +241,7 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
     enc.len   = padded_total;
     if (lpad > 0.0f || rpad > 0.0f) {
         fprintf(stderr, "[Outpaint] audio pad left=%.1fs right=%.1fs total=%.1fs\n", lpad, rpad,
-                (float) padded_total / 48000.0f);
+                samples_sec(padded_total));
     }
     return enc;
 }
@@ -281,7 +261,7 @@ static bool adjust_region_coords(SynthState & s, float src_dur) {
         fprintf(stderr, "[Region] ERROR: end (%.1f) <= start (%.1f)\n", s.re, s.rs);
         return false;
     }
-    fprintf(stderr, "[Region] %.1fs..%.1fs (canvas=%.1fs)\n", s.rs, s.re, (float) s.T_cover * 1920.0f / 48000.0f);
+    fprintf(stderr, "[Region] %.1fs..%.1fs (canvas=%.1fs)\n", s.rs, s.re, latent_frames_sec(s.T_cover));
     return true;
 }
 
@@ -356,7 +336,7 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
     const bool have_ref         = ref.given();
     if (!have_src && !have_ref) {
         // Neither encode touches the GPU: timbre takes the silence path.
-        if (ops_encode_timbre(ctx, NULL, 0, NULL, 0, s, progress) != 0) {
+        if (ops_encode_timbre(ctx, SynthInput{}, s, progress) != 0) {
             return false;
         }
         return true;
@@ -368,7 +348,7 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
         return false;
     }
     if (have_src) {
-        if (ops_encode_src(ctx, src.audio, src.len, src.latents, src.T_latent, s, progress) != 0) {
+        if (ops_encode_src(ctx, src, s, progress) != 0) {
             return false;
         }
         // Handed out by a failed run (#875, #1035) unless the run reads the
@@ -378,7 +358,7 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
         // only the outpainting padding happens to leave.
         s.src_encoded = have_src_audio && !have_src_latents && !splices_source_after_decode(s);
     }
-    if (ops_encode_timbre(ctx, ref.audio, ref.len, ref.latents, ref.T_latent, s, progress) != 0) {
+    if (ops_encode_timbre(ctx, ref, s, progress) != 0) {
         return false;
     }
     return true;

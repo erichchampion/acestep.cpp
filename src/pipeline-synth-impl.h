@@ -9,6 +9,7 @@
 //   pipeline-synth.cpp      orchestrator: load, phases, free
 //   pipeline-synth-ops.cpp  primitives:   encode, context, noise, dit, vae
 
+#include "audio-frames.h"
 #include "debug.h"
 #include "model-store.h"
 #include "pipeline-synth.h"
@@ -68,6 +69,25 @@ struct AceSynth {
     // (cadenza-audio #975): nothing outlives the run on the synth. Like the
     // run, not thread-safe.
     AceSynthEncodes * encode_sink = nullptr;
+};
+
+// One of a run's inputs as its caller gave it: audio (len samples a channel)
+// or latents (T_latent frames), either, both or neither (#1057). The ops
+// that encode a source or a reference take it whole (#1093).
+struct SynthInput {
+    const float * audio    = nullptr;
+    int           len      = 0;
+    const float * latents  = nullptr;
+    int           T_latent = 0;
+
+    bool has_audio() const { return audio && len > 0; }
+
+    bool has_latents() const { return latents && T_latent > 0; }
+
+    bool given() const { return has_audio() || has_latents(); }
+
+    // Its length in seconds: the latents' when given, else the audio's.
+    float duration_sec() const { return has_latents() ? latent_frames_sec(T_latent) : samples_sec(len); }
 };
 
 // Transient state for a single job, shared by reference across the primitive
