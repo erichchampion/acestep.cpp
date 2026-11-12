@@ -211,10 +211,14 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
             return enc;
         }
         // Latent pad: round to 25Hz frames, splice silence_full at the edges.
-        int           lpad_T  = (int) (lpad * ACE_LATENT_FPS + 0.5f);
-        int           rpad_T  = (int) (rpad * ACE_LATENT_FPS + 0.5f);
+        int           lpad_T  = sec_latent_frames_nearest(lpad);
+        int           rpad_T  = sec_latent_frames_nearest(rpad);
         int           total_T = lpad_T + src.T_latent + rpad_T;
         const float * sil     = ctx->meta->silence_full.data();
+        // The region is shifted by the pad as padded, not as asked: a 0.03 s
+        // pad is one frame, 0.04 s, and a region left at 0.03 s would end
+        // inside that frame and cover none (cadenza-audio #1129).
+        s.left_pad_sec        = latent_frames_sec(lpad_T);
         s.padded_latents.resize((size_t) total_T * 64);
         memcpy(s.padded_latents.data(), sil, (size_t) lpad_T * 64 * sizeof(float));
         memcpy(s.padded_latents.data() + (size_t) lpad_T * 64, src.latents, (size_t) src.T_latent * 64 * sizeof(float));

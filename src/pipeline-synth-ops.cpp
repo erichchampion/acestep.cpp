@@ -367,7 +367,7 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s) {
         fprintf(stderr, "[Resolve-T] FATAL: use_source_context but no cover_latents and no audio_codes\n");
         return -1;
     } else {
-        s.T = (int) (s.duration * ACE_LATENT_FPS);
+        s.T = sec_latent_frame(s.duration);
     }
     s.T     = ((s.T + ctx->meta->cfg.patch_size - 1) / ctx->meta->cfg.patch_size) * ctx->meta->cfg.patch_size;
     s.S     = s.T / ctx->meta->cfg.patch_size;

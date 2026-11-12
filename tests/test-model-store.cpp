@@ -701,6 +701,25 @@ static int scenario_splice_rule() {
     frames("a repaint wholly before the start", true, false, -2.0f, -1.0f, 750, 0, 0);
     frames("an inverted repaint", true, false, 20.0f, 10.0f, 750, 500, 500);
     frames("a cover", false, false, 10.0f, 20.0f, 750, 0, 0);
+    // A region on frame starts gets those frames -- every start to 1440 s
+    // its own frame, none a frame early, as 2991 once were (#1129).
+    for (int k = 0; k <= 36000; k++) {
+        const float sec = (float) k / ACE_LATENT_FPS;
+        if (sec_latent_frame(sec) != k) {
+            fprintf(stderr, "[Test] FAIL: %.4fs, frame %d's start, is frame %d\n", sec, k, sec_latent_frame(sec));
+            rc = 1;
+            break;
+        }
+    }
+    frames("a repaint from 2.12s", true, false, 2.12f, 2.6f, 750, 53, 65);
+    // A latent outpaint of 0.03 s before the source, to the pad's end: one
+    // frame padded, the region shifted by it as padded (0.04 s), so the
+    // region is that frame -- not [0, 0), a region that repaints nothing.
+    {
+        const int   lpad_T = sec_latent_frames_nearest(0.03f);
+        const float pad    = latent_frames_sec(lpad_T);
+        frames("a latent outpaint 0.03s before", true, false, -0.03f + pad, pad, 750, 0, 1);
+    }
     if (rc == 0) {
         fprintf(stderr, "[Test] scenario 12 PASS\n");
     }
