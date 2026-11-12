@@ -226,8 +226,8 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
                (size_t) rpad_T * 64 * sizeof(float));
         enc.latents  = s.padded_latents.data();
         enc.T_latent = total_T;
-        fprintf(stderr, "[Outpaint] latent pad left=%.1fs (%d) right=%.1fs (%d) total=%.1fs\n", lpad, lpad_T, rpad,
-                rpad_T, latent_frames_sec(total_T));
+        fprintf(stderr, "[Outpaint] latent pad left=%.2fs (%d) right=%.2fs (%d) total=%.1fs\n",
+                latent_frames_sec(lpad_T), lpad_T, latent_frames_sec(rpad_T), rpad_T, latent_frames_sec(total_T));
         return enc;
     }
 

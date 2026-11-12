@@ -712,6 +712,13 @@ static int scenario_splice_rule() {
         }
     }
     frames("a repaint from 2.12s", true, false, 2.12f, 2.6f, 750, 53, 65);
+    // A region's end rounds up to the frame it reaches into: a sub-frame
+    // region is a frame, a region into a pad rounded up holds that pad's
+    // frame, and an audio outpaint's sub-frame pad its one frame (#1129).
+    frames("a sub-frame repaint", true, false, 5.01f, 5.03f, 750, 125, 126);
+    frames("a region into a pad rounded up", true, false, 0.0f, 10.03f, 251, 0, 251);
+    frames("an audio outpaint 0.03s before", true, false, 0.0f, 0.03f, 750, 0, 1);
+    frames("a region ending far out", true, false, 10.0f, 1e10f, 750, 250, 750);
     // A latent outpaint of 0.03 s before the source, to the pad's end: one
     // frame padded, the region shifted by it as padded (0.04 s), so the
     // region is that frame -- not [0, 0), a region that repaints nothing.
@@ -828,7 +835,8 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // poll (POLLS 1), or before its DiT (POLLS 0). REGION gives a repaint, or
     // a lego, a region; SOURCE LATENTS gives the source as latents.
     auto run = [&](const char * task, const float * src, const float * ref, AceSynthEncodes & kept, bool region = false,
-                   int want_polls = 1, const std::vector<float> * src_latents = nullptr) {
+                   int want_polls = 1, const std::vector<float> * src_latents = nullptr, float region_start = 0.5f,
+                   float region_end = 1.5f) {
         AceRequest r;
         request_init(&r);
         r.caption   = "a short test";
@@ -836,8 +844,8 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         r.seed      = 1;
         r.task_type = task;
         if (region) {
-            r.repainting_start = 0.5f;
-            r.repainting_end   = 1.5f;
+            r.repainting_start = region_start;
+            r.repainting_end   = region_end;
         }
         const int     polls = dit_polls;
         AceSynthJob * job = ace_synth_job_run_dit(synth, &r, src, src ? n : 0, src_latents ? src_latents->data() : NULL,
@@ -936,6 +944,17 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         if (!run(task, NULL, NULL, none, false, 0) || ace_test_source_refusals() != refused + 1 ||
             !none.src_latents.empty() || !none.ref_latents.empty()) {
             fprintf(stderr, "[Test] FAIL: a %s given no source was not refused by the task table\n", task);
+            rc = 1;
+        }
+    }
+    // A repaint whose region covers no latent frame -- a 0.01 s outpaint of
+    // latents, a pad rounded to none -- is refused before its DiT, not run to
+    // give back its source unsaid (cadenza-audio #1129).
+    {
+        AceSynthEncodes none;
+        if (cover.src_latents.empty() ||
+            !run("repaint", NULL, NULL, none, true, 0, &cover.src_latents, -0.01f, -1.0f)) {
+            fprintf(stderr, "[Test] FAIL: a repaint whose region covers no frame returned a job, or reached its DiT\n");
             rc = 1;
         }
     }
