@@ -162,9 +162,9 @@ struct AceSynthTaskInfo {
 
 bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
 
-// Whether a request is short of the caption its task needs: by the table, and
-// for a task the engine does not know, which run_task refuses by name, as if
-// it needed one -- the tools' check before a run (#1094).
+// Whether a request (non-NULL) is short of the caption its task needs: by
+// the table, and for a task the engine does not know, which run_task refuses
+// by name, as if it needed one -- the tools' check before a run (#1094).
 bool ace_synth_request_missing_caption(const AceRequest * req);
 
 // Tests only: with `armed`, the next Cover's FSQ roundtrip fails as its

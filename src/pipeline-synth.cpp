@@ -22,6 +22,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 void ace_synth_default_params(AceSynthParams * p) {
@@ -611,7 +612,7 @@ static const SynthTask kSynthTasks[] = {
 };
 
 // The table's row for a task, by name; NULL for one it does not hold.
-static const SynthTask * find_synth_task(const std::string & task) {
+static const SynthTask * find_synth_task(std::string_view task) {
     for (const SynthTask & t : kSynthTasks) {
         if (task == t.name) {
             return &t;
@@ -633,8 +634,8 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
 }
 
 bool ace_synth_request_missing_caption(const AceRequest * req) {
-    AceSynthTaskInfo info;
-    return req->caption.empty() && (!ace_synth_task_info(req->task_type.c_str(), &info) || info.needs_caption);
+    const SynthTask * entry = find_synth_task(req->task_type);
+    return req->caption.empty() && (!entry || entry->needs_caption);
 }
 
 // The runs run_task has refused for want of a source (ace_test_source_refusals).
