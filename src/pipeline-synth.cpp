@@ -17,6 +17,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -253,8 +254,8 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
     enc.audio = s.padded_src.data();
     enc.len   = padded_total;
     if (lpad > 0.0f || rpad > 0.0f) {
-        fprintf(stderr, "[Outpaint] audio pad left=%.1fs right=%.1fs total=%.1fs\n", lpad, rpad,
-                samples_sec(padded_total));
+        fprintf(stderr, "[Outpaint] audio pad left=%.3fs (%d) right=%.3fs (%d) total=%.1fs\n", samples_sec(lpad_s),
+                lpad_s, samples_sec(rpad_s), rpad_s, samples_sec(padded_total));
     }
     return enc;
 }
@@ -264,6 +265,12 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
 // src_dur is the unpadded source duration in seconds, agnostic of audio vs
 // latent input. Returns false when the resolved range is empty or inverted.
 static bool adjust_region_coords(SynthState & s, float src_dur) {
+    // A bound that is no number -- a NaN through the C API, an infinity --
+    // would read as frame 0 and repaint from the start, unsaid (#1129).
+    if (!std::isfinite(s.rs) || !std::isfinite(s.re)) {
+        fprintf(stderr, "[Region] ERROR: a region bound is not a finite number\n");
+        return false;
+    }
     s.rs += s.left_pad_sec;
     if (s.re < 0.0f) {
         s.re = (s.rr.repainting_start < 0.0f) ? s.left_pad_sec : src_dur + s.left_pad_sec;

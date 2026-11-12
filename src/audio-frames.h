@@ -50,12 +50,22 @@ inline constexpr int frame_index(double frames) {
     return (int) frames;
 }
 
+// A count in double rounded down to an int, held as frame_index holds it.
+inline constexpr int floor_index(double v) {
+    const int whole = frame_index(v);
+    return v < whole ? whole - 1 : whole;
+}
+
+// A count in double rounded up to an int, held as frame_index holds it.
+inline constexpr int ceil_index(double v) {
+    const int whole = frame_index(v);
+    return v > whole ? whole + 1 : whole;
+}
+
 // The latent frame a time in seconds falls in: rounded down, a frame start
 // counted as its own frame. A run's length, and a region's first frame (#1129).
 inline constexpr int sec_latent_frame(float sec) {
-    const double frames = (double) sec * ACE_LATENT_FPS + ACE_FRAME_SLACK;
-    const int    whole  = frame_index(frames);
-    return frames < whole ? whole - 1 : whole;
+    return floor_index((double) sec * ACE_LATENT_FPS + ACE_FRAME_SLACK);
 }
 
 // The frame a span ending at a time in seconds ends before: rounded up, so a
@@ -64,23 +74,19 @@ inline constexpr int sec_latent_frame(float sec) {
 // cover it whole: a sub-frame region, or one ending inside a pad rounded up to
 // a frame, is not left short of its last frame (#1129).
 inline constexpr int sec_latent_frame_end(float sec) {
-    const double frames = (double) sec * ACE_LATENT_FPS - ACE_FRAME_SLACK;
-    const int    whole  = frame_index(frames);
-    return frames > whole ? whole + 1 : whole;
+    return ceil_index((double) sec * ACE_LATENT_FPS - ACE_FRAME_SLACK);
 }
 
 // The sample nearest a time in seconds, per channel: a pad's length in samples,
 // and where a waveform splice cuts. Nearest, not truncated: a float time is
 // off by up to ~3 samples at 1440 s, either way (#1129).
 inline constexpr int sec_samples_nearest(float sec) {
-    const double samples = (double) sec * ACE_SAMPLE_RATE + 0.5;
-    const int    whole   = frame_index(samples);
-    return samples < whole ? whole - 1 : whole;
+    return floor_index((double) sec * ACE_SAMPLE_RATE + 0.5);
 }
 
 // The whole number of latent frames nearest a span in seconds: a pad's length.
 inline constexpr int sec_latent_frames_nearest(float sec) {
-    return frame_index((double) sec * ACE_LATENT_FPS + 0.5);
+    return floor_index((double) sec * ACE_LATENT_FPS + 0.5);
 }
 
 // The conversions, held at compile time: a second is 25 frames and 48000
@@ -95,7 +101,9 @@ static_assert(sec_latent_frame_end(20.0f) == 500 && sec_latent_frame_end(10.03f)
                   sec_latent_frame_end(0.03f) == 1 && sec_latent_frame_end(0.0f) == 0 &&
                   sec_latent_frame_end(-0.5f) == -12,
               "a span's end, rounded up to the frame it reaches into");
-static_assert(sec_latent_frames_nearest(0.03f) == 1 && sec_latent_frames_nearest(0.01f) == 0, "a pad's frames");
+static_assert(sec_latent_frames_nearest(0.03f) == 1 && sec_latent_frames_nearest(0.01f) == 0 &&
+                  sec_latent_frames_nearest(-0.05f) == -1,
+              "a pad's frames, nearest either side of 0");
 static_assert(sec_latent_frame(-0.5f) == -13 && sec_latent_frame(-0.04f) == -1, "a time before 0 rounds down too");
 static_assert(sec_samples_nearest(0.01f) == 480 && sec_samples_nearest(2.12f) == 101760 &&
                   sec_samples_nearest(-0.01f) == -480,

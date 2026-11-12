@@ -958,6 +958,13 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             fprintf(stderr, "[Test] FAIL: a repaint whose region covers no frame returned a job, or reached its DiT\n");
             rc = 1;
         }
+        // Nor a region whose bound is no number: refused, not read as 0 s.
+        AceSynthEncodes nan_bound;
+        if (!run("repaint", source.data(), NULL, nan_bound, true, 0, nullptr, std::nanf(""), 1.0f) ||
+            !nan_bound.src_latents.empty()) {
+            fprintf(stderr, "[Test] FAIL: a repaint from a NaN start returned a job, or reached its DiT\n");
+            rc = 1;
+        }
     }
     // A cover whose FSQ roundtrip cannot run fails before its DiT, and still
     // hands out its clean encode -- the one a cover-nofsq hands out (#1056).

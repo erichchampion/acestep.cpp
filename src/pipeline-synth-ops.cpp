@@ -1000,11 +1000,14 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
         // At the region's own samples, not its frames': the frames round out
         // to cover every frame the region touches, and cutting there would
         // put up to a frame (40 ms) of generated audio over the source past
-        // the region asked for (#1129). The DiT generated all of [start_s,
-        // end_s), its frames holding them.
+        // the region asked for (#1129). Held inside the frames the DiT
+        // generated, which the frame slack can leave a few samples short of
+        // the region's own bounds.
         const int T_clip  = T_audio < T_src ? T_audio : T_src;
-        const int start_s = std::clamp(sec_samples_nearest(s.rs), 0, T_clip);
-        const int end_s   = std::clamp(sec_samples_nearest(s.re), start_s, T_clip);
+        const int gen_s   = std::min(s.repaint_t0 * ACE_LATENT_HOP, T_clip);
+        const int gen_e   = std::clamp(s.repaint_t1 * ACE_LATENT_HOP, gen_s, T_clip);
+        const int start_s = std::clamp(sec_samples_nearest(s.rs), gen_s, gen_e);
+        const int end_s   = std::clamp(sec_samples_nearest(s.re), start_s, gen_e);
         for (int ch = 0; ch < 2; ch++) {
             float * pred = out->samples + (size_t) ch * T_audio;
             for (int si = 0; si < start_s && si < T_clip; si++) {
