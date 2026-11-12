@@ -737,12 +737,6 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         fprintf(stderr, "[Test] FAIL: a run returned a job, or failed before its DiT's first poll\n");
         rc = 1;
     }
-    // A reference is no source: a text2music given one is not warned of a
-    // source it ignores, nor is a task given the source it works from (#1095).
-    if (ace_test_source_ignores() != ignores) {
-        fprintf(stderr, "[Test] FAIL: a run given no source its task ignores was warned of one\n");
-        rc = 1;
-    }
     auto near = [&](const std::vector<float> & v) {
         const size_t got = v.size() / 64;
         return v.size() % 64 == 0 && got + 2 >= frames && got <= frames + 2;
@@ -824,24 +818,51 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             rc = 1;
         }
     }
-    // A text2music given a source runs as asked, without it: warned of the
-    // source it ignores, not refused, and handing out no encode of it --
-    // only its reference's (cadenza-audio #1095).
-    {
+    // A reference is no source: no run so far -- a text2music given only a
+    // reference, every task given the source it works from, every one given
+    // none -- was warned of a source it ignores (cadenza-audio #1095).
+    if (ace_test_source_ignores() != ignores) {
+        fprintf(stderr, "[Test] FAIL: %d runs given no source their task ignores were warned of one\n",
+                ace_test_source_ignores() - ignores);
+        rc = 1;
+    }
+    // A text2music given a source -- as audio, or as latents -- runs as asked,
+    // without it: warned of the source it ignores, not refused, and handing
+    // out no encode of it, only its reference's (cadenza-audio #1095).
+    for (const bool as_latents : { false, true }) {
+        const char *    form = as_latents ? "source latents" : "source audio";
+        AceRequest      r;
         AceSynthEncodes given;
-        const int       refused = ace_test_source_refusals(), ignored = ace_test_source_ignores();
-        if (!run("text2music", source.data(), reference.data(), given)) {
-            fprintf(stderr, "[Test] FAIL: a text2music given a source returned a job, or failed before its DiT\n");
+        request_init(&r);
+        r.caption             = "a short test";
+        r.duration            = (float) seconds;
+        r.seed                = 1;
+        r.task_type           = "text2music";
+        const int     refused = ace_test_source_refusals(), ignored = ace_test_source_ignores();
+        const int     polls = dit_polls;
+        AceSynthJob * job   = ace_synth_job_run_dit(synth, &r, as_latents ? NULL : source.data(), as_latents ? 0 : n,
+                                                    as_latents ? cover.src_latents.data() : NULL,
+                                                    as_latents ? (int) (cover.src_latents.size() / 64) : 0,
+                                                    reference.data(), n, NULL, 0, 1, cancel, &given);
+        if (job) {
+            ace_synth_job_free(job);
+        }
+        // The counters first: a refusal stops the run before its DiT, which
+        // is said as that, not as a failure further in.
+        if (ace_test_source_refusals() != refused) {
+            fprintf(stderr, "[Test] FAIL: a text2music given %s was refused\n", form);
             rc = 1;
-        } else if (ace_test_source_ignores() != ignored + 1 || ace_test_source_refusals() != refused) {
-            fprintf(stderr, "[Test] FAIL: a text2music given a source was %s\n",
-                    ace_test_source_refusals() != refused ? "refused" : "not warned of it");
+        } else if (ace_test_source_ignores() != ignored + 1) {
+            fprintf(stderr, "[Test] FAIL: a text2music given %s was not warned of it\n", form);
+            rc = 1;
+        } else if (job || dit_polls != polls + 1) {
+            fprintf(stderr, "[Test] FAIL: a text2music given %s returned a job, or failed before its DiT\n", form);
             rc = 1;
         } else if (!given.src_latents.empty() || given.ref_latents != text.ref_latents) {
             fprintf(stderr,
-                    "[Test] FAIL: a text2music given a source kept %zu source and %zu reference values, want none "
-                    "of the source and the reference's (%zu)\n",
-                    given.src_latents.size(), given.ref_latents.size(), text.ref_latents.size());
+                    "[Test] FAIL: a text2music given %s kept %zu source and %zu reference values, want "
+                    "none of the source and the reference's (%zu)\n",
+                    form, given.src_latents.size(), given.ref_latents.size(), text.ref_latents.size());
             rc = 1;
         }
     }
