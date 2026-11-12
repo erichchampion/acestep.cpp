@@ -150,6 +150,23 @@ void ace_synth_release(AceSynth * ctx);
 // The owner's free: its keys go at once, the context with its last job.
 void ace_synth_free(AceSynth * ctx);
 
+// What the engine's task table says of a task, by name (cadenza-audio #1094),
+// so a tool reads it rather than naming tasks itself: whether the task works
+// from a source, and whether it needs a caption -- lego, extract and complete
+// are told what to make by their track instead. False, *info untouched, for a
+// task the engine does not know.
+struct AceSynthTaskInfo {
+    bool needs_source;
+    bool needs_caption;
+};
+
+bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
+
+// Whether a request is short of the caption its task needs: by the table, and
+// for a task the engine does not know, which run_task refuses by name, as if
+// it needed one -- the tools' check before a run (#1094).
+bool ace_synth_request_missing_caption(const AceRequest * req);
+
 // Tests only: with `armed`, the next Cover's FSQ roundtrip fails as its
 // tokenizer could not be had (store_require_fsq_tok returning NULL), once --
 // a path no input reaches, which a test drives to see the Cover fail and

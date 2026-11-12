@@ -1016,8 +1016,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         json_error(res, 400, "Empty request");
         return;
     }
-    if (ace_reqs[0].caption.empty() && ace_reqs[0].task_type != TASK_LEGO && ace_reqs[0].task_type != TASK_EXTRACT &&
-        ace_reqs[0].task_type != TASK_COMPLETE) {
+    if (ace_synth_request_missing_caption(&ace_reqs[0])) {
         json_error(res, 400, "Caption is required");
         return;
     }

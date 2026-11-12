@@ -588,24 +588,54 @@ static int run_complete(AceSynth *          ctx,
 // The tasks, by name: what run_task dispatches on, and the list of the ones
 // it knows (#1057). needs_source: a task that works from a source refuses a
 // run given none; a task that takes none runs without one it is given, and
-// says so (cadenza-audio #1095).
+// says so (cadenza-audio #1095). needs_caption: a task told what to make by
+// its caption, not by its track (lego, extract, complete) -- the rule the
+// tools hold a request to, read through ace_synth_task_info (#1094).
 using SynthTaskFn = int (*)(AceSynth *, const AceRequest *, const SynthInputs &, int, SynthState &, AceProgress);
 
 struct SynthTask {
     const char * name;
     SynthTaskFn  run;
     bool         needs_source;
+    bool         needs_caption;
 };
 
 static const SynthTask kSynthTasks[] = {
-    { TASK_TEXT2MUSIC,  run_text2music,  false },
-    { TASK_COVER,       run_cover,       true  },
-    { TASK_COVER_NOFSQ, run_cover_nofsq, true  },
-    { TASK_REPAINT,     run_repaint,     true  },
-    { TASK_LEGO,        run_lego,        true  },
-    { TASK_EXTRACT,     run_extract,     true  },
-    { TASK_COMPLETE,    run_complete,    true  },
+    { TASK_TEXT2MUSIC,  run_text2music,  false, true  },
+    { TASK_COVER,       run_cover,       true,  true  },
+    { TASK_COVER_NOFSQ, run_cover_nofsq, true,  true  },
+    { TASK_REPAINT,     run_repaint,     true,  true  },
+    { TASK_LEGO,        run_lego,        true,  false },
+    { TASK_EXTRACT,     run_extract,     true,  false },
+    { TASK_COMPLETE,    run_complete,    true,  false },
 };
+
+// The table's row for a task, by name; NULL for one it does not hold.
+static const SynthTask * find_synth_task(const std::string & task) {
+    for (const SynthTask & t : kSynthTasks) {
+        if (task == t.name) {
+            return &t;
+        }
+    }
+    return nullptr;
+}
+
+bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
+    const SynthTask * entry = task ? find_synth_task(task) : nullptr;
+    if (!entry) {
+        return false;
+    }
+    if (info) {
+        info->needs_source  = entry->needs_source;
+        info->needs_caption = entry->needs_caption;
+    }
+    return true;
+}
+
+bool ace_synth_request_missing_caption(const AceRequest * req) {
+    AceSynthTaskInfo info;
+    return req->caption.empty() && (!ace_synth_task_info(req->task_type.c_str(), &info) || info.needs_caption);
+}
 
 // The runs run_task has refused for want of a source (ace_test_source_refusals).
 static std::atomic<int> g_test_source_refusals{ 0 };
@@ -635,13 +665,7 @@ static AceSynthJob * run_task(AceSynth *          ctx,
     // first, so a misspelt task is said as that. A task that takes no source
     // given one is warned of.
     const std::string & task  = reqs[0].task_type;
-    const SynthTask *   entry = nullptr;
-    for (const SynthTask & t : kSynthTasks) {
-        if (task == t.name) {
-            entry = &t;
-            break;
-        }
-    }
+    const SynthTask *   entry = find_synth_task(task);
     if (!entry) {
         fprintf(stderr, "[Synth-Run] ERROR: unknown task_type '%s'\n", task.c_str());
         return NULL;

@@ -521,14 +521,16 @@ static int scenario_vram_except(const char * vae_path) {
 static void usage(const char * prog) {
     fprintf(stderr, "acestep.cpp %s\n\n", ACE_VERSION);
     fprintf(stderr,
-            "Usage: %s --models <dir> [--scenarios all|store|encodes] | --scenarios splice\n"
+            "Usage: %s --models <dir> [--scenarios all|store|encodes] | --scenarios splice|tasks\n"
             "\n"
             "Required:\n"
             "  --models <dir>          Directory of GGUF model files\n"
             "Optional:\n"
             "  --scenarios <which>     store: the store's policies (1-10); encodes: a\n"
             "                          failed run's hand-out (11); splice: the\n"
-            "                          splice rule alone (12), no --models; all (default)\n",
+            "                          splice rule alone (12), no --models; tasks:\n"
+            "                          the task table's query alone (13), no --models;\n"
+            "                          all (default)\n",
             prog);
 }
 
@@ -673,6 +675,76 @@ static int scenario_splice_rule() {
     want("a cover, or any other task", false, false, false);
     if (rc == 0) {
         fprintf(stderr, "[Test] scenario 12 PASS\n");
+    }
+    return rc;
+}
+
+// Scenario 13: the task table, as a tool reads it (cadenza-audio #1094):
+// what ace_synth_task_info says of each task -- a source needed by all but
+// text2music, a caption by all but lego, extract and complete -- that it
+// knows no other, and the caption rule the tools hold a request to by it.
+// No model needed: `--scenarios tasks` runs it alone, with no --models.
+static int scenario_task_table() {
+    fprintf(stderr, "[Test] scenario 13: the task table, as a tool reads it\n");
+    int rc = 0;
+
+    struct Want {
+        const char * task;
+        bool         needs_source, needs_caption;
+    };
+
+    for (const Want & w : {
+             Want{ "text2music",  false, true  },
+             Want{ "cover",       true,  true  },
+             Want{ "cover-nofsq", true,  true  },
+             Want{ "repaint",     true,  true  },
+             Want{ "lego",        true,  false },
+             Want{ "extract",     true,  false },
+             Want{ "complete",    true,  false }
+    }) {
+        AceSynthTaskInfo info{ !w.needs_source, !w.needs_caption };
+        if (!ace_synth_task_info(w.task, &info)) {
+            fprintf(stderr, "[Test] FAIL: the task table does not know %s\n", w.task);
+            rc = 1;
+        } else if (info.needs_source != w.needs_source || info.needs_caption != w.needs_caption) {
+            fprintf(stderr, "[Test] FAIL: %s needs_source %d needs_caption %d, want %d %d\n", w.task, info.needs_source,
+                    info.needs_caption, w.needs_source, w.needs_caption);
+            rc = 1;
+        }
+    }
+    // A task it does not know -- misspelt, empty, none -- is said as that,
+    // the caller's info left as it was.
+    for (const char * task : { "covers", "", (const char *) nullptr }) {
+        AceSynthTaskInfo info{ true, false };
+        if (ace_synth_task_info(task, &info) || !info.needs_source || info.needs_caption) {
+            fprintf(stderr, "[Test] FAIL: the task table knows '%s', or wrote to the info of a task it does not\n",
+                    task ? task : "(null)");
+            rc = 1;
+        }
+    }
+    // The caption rule: a task told what to make by its caption needs one,
+    // and so does a task the engine does not know, refused by name later.
+    auto missing = [&](const char * task, const char * caption, bool want) {
+        AceRequest r;
+        request_init(&r);
+        r.task_type = task;
+        r.caption   = caption;
+        if (ace_synth_request_missing_caption(&r) != want) {
+            fprintf(stderr, "[Test] FAIL: a %s request with caption '%s' is %s\n", task, caption,
+                    want ? "not short of one" : "short of one");
+            rc = 1;
+        }
+    };
+    missing("text2music", "", true);
+    missing("cover", "", true);
+    missing("covers", "", true);
+    missing("lego", "", false);
+    missing("extract", "", false);
+    missing("complete", "", false);
+    missing("text2music", "a song", false);
+    missing("covers", "a song", false);
+    if (rc == 0) {
+        fprintf(stderr, "[Test] scenario 13 PASS\n");
     }
     return rc;
 }
@@ -909,8 +981,9 @@ int main(int argc, char ** argv) {
             models_dir = argv[++i];
         } else if (!strcmp(argv[i], "--scenarios") && i + 1 < argc) {
             which = argv[++i];
-            if (strcmp(which, "all") && strcmp(which, "store") && strcmp(which, "encodes") && strcmp(which, "splice")) {
-                fprintf(stderr, "[CLI] ERROR: --scenarios takes all, store, encodes or splice, not %s\n", which);
+            if (strcmp(which, "all") && strcmp(which, "store") && strcmp(which, "encodes") && strcmp(which, "splice") &&
+                strcmp(which, "tasks")) {
+                fprintf(stderr, "[CLI] ERROR: --scenarios takes all, store, encodes, splice or tasks, not %s\n", which);
                 return 1;
             }
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
@@ -923,9 +996,9 @@ int main(int argc, char ** argv) {
         }
     }
 
-    // Scenario 12 reads no model: run alone, it needs no --models.
-    if (!strcmp(which, "splice")) {
-        const int rc = scenario_splice_rule();
+    // Scenarios 12 and 13 read no model: run alone, they need no --models.
+    if (!strcmp(which, "splice") || !strcmp(which, "tasks")) {
+        const int rc = !strcmp(which, "splice") ? scenario_splice_rule() : scenario_task_table();
         fprintf(stderr, rc == 0 ? "[Test] ALL PASS\n" : "[Test] FAIL\n");
         return rc;
     }
@@ -973,10 +1046,11 @@ int main(int argc, char ** argv) {
         rc |= scenario_vram_except(vae_path);
         rc |= scenario_loaded_threads(vae_path);
     }
-    // Scenario 12 runs with these only in a full run: ctest runs it alone
-    // (--scenarios splice), so a failure of it is said once.
+    // Scenarios 12 and 13 run with these only in a full run: ctest runs each
+    // alone (--scenarios splice, tasks), so a failure of one is said once.
     if (strcmp(which, "all") == 0) {
         rc |= scenario_splice_rule();
+        rc |= scenario_task_table();
     }
     if (encodes) {
         // Scenario 11 runs the synth, which needs a text encoder too: without one

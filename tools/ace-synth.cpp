@@ -126,8 +126,7 @@ static int synth_main(int argc, char ** argv) {
             return 1;
         }
         request_dump(&reqs[ri], stderr);
-        if (reqs[ri].caption.empty() && reqs[ri].task_type != TASK_LEGO && reqs[ri].task_type != TASK_EXTRACT &&
-            reqs[ri].task_type != TASK_COMPLETE) {
+        if (ace_synth_request_missing_caption(&reqs[ri])) {
             fprintf(stderr, "[Ace-Synth] FATAL: caption is empty in %s\n", rpath);
             return 1;
         }
