@@ -997,9 +997,14 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
     // already the cleanest output we can produce).
     if (splices_source_after_decode(s) && !s.padded_src.empty()) {
         int       T_src   = (int) (s.padded_src.size() / 2);
-        const int start_s = (int) ((size_t) s.repaint_t0 * ACE_LATENT_HOP);
-        const int end_s   = (int) ((size_t) s.repaint_t1 * ACE_LATENT_HOP);
+        // At the region's own samples, not its frames': the frames round out
+        // to cover every frame the region touches, and cutting there would
+        // put up to a frame (40 ms) of generated audio over the source past
+        // the region asked for (#1129). The DiT generated all of [start_s,
+        // end_s), its frames holding them.
         const int T_clip  = T_audio < T_src ? T_audio : T_src;
+        const int start_s = std::clamp(sec_samples_nearest(s.rs), 0, T_clip);
+        const int end_s   = std::clamp(sec_samples_nearest(s.re), start_s, T_clip);
         for (int ch = 0; ch < 2; ch++) {
             float * pred = out->samples + (size_t) ch * T_audio;
             for (int si = 0; si < start_s && si < T_clip; si++) {

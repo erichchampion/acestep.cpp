@@ -50,10 +50,12 @@ inline constexpr int frame_index(double frames) {
     return (int) frames;
 }
 
-// The latent frame a time in seconds falls in: truncated, a frame start
+// The latent frame a time in seconds falls in: rounded down, a frame start
 // counted as its own frame. A run's length, and a region's first frame (#1129).
 inline constexpr int sec_latent_frame(float sec) {
-    return frame_index((double) sec * ACE_LATENT_FPS + ACE_FRAME_SLACK);
+    const double frames = (double) sec * ACE_LATENT_FPS + ACE_FRAME_SLACK;
+    const int    whole  = frame_index(frames);
+    return frames < whole ? whole - 1 : whole;
 }
 
 // The frame a span ending at a time in seconds ends before: rounded up, so a
@@ -65,6 +67,15 @@ inline constexpr int sec_latent_frame_end(float sec) {
     const double frames = (double) sec * ACE_LATENT_FPS - ACE_FRAME_SLACK;
     const int    whole  = frame_index(frames);
     return frames > whole ? whole + 1 : whole;
+}
+
+// The sample nearest a time in seconds, per channel: a pad's length in samples,
+// and where a waveform splice cuts. Nearest, not truncated: a float time is
+// off by up to ~3 samples at 1440 s, either way (#1129).
+inline constexpr int sec_samples_nearest(float sec) {
+    const double samples = (double) sec * ACE_SAMPLE_RATE + 0.5;
+    const int    whole   = frame_index(samples);
+    return samples < whole ? whole - 1 : whole;
 }
 
 // The whole number of latent frames nearest a span in seconds: a pad's length.
@@ -85,6 +96,10 @@ static_assert(sec_latent_frame_end(20.0f) == 500 && sec_latent_frame_end(10.03f)
                   sec_latent_frame_end(-0.5f) == -12,
               "a span's end, rounded up to the frame it reaches into");
 static_assert(sec_latent_frames_nearest(0.03f) == 1 && sec_latent_frames_nearest(0.01f) == 0, "a pad's frames");
+static_assert(sec_latent_frame(-0.5f) == -13 && sec_latent_frame(-0.04f) == -1, "a time before 0 rounds down too");
+static_assert(sec_samples_nearest(0.01f) == 480 && sec_samples_nearest(2.12f) == 101760 &&
+                  sec_samples_nearest(-0.01f) == -480,
+              "seconds to the nearest sample");
 static_assert(frame_index(1e12) == 1000000000 && frame_index(-1e12) == -1000000000 &&
                   frame_index(std::numeric_limits<double>::quiet_NaN()) == 0,
               "a frame count held to an int");

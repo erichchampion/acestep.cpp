@@ -953,7 +953,8 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     {
         AceSynthEncodes none;
         if (cover.src_latents.empty() ||
-            !run("repaint", NULL, NULL, none, true, 0, &cover.src_latents, -0.01f, -1.0f)) {
+            !run("repaint", NULL, NULL, none, true, 0, &cover.src_latents, -0.01f, -1.0f) ||
+            !none.src_latents.empty() || !none.ref_latents.empty()) {
             fprintf(stderr, "[Test] FAIL: a repaint whose region covers no frame returned a job, or reached its DiT\n");
             rc = 1;
         }

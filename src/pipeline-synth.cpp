@@ -211,8 +211,14 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
             return enc;
         }
         // Latent pad: round to 25Hz frames, splice silence_full at the edges.
-        int           lpad_T  = sec_latent_frames_nearest(lpad);
-        int           rpad_T  = sec_latent_frames_nearest(rpad);
+        int lpad_T = sec_latent_frames_nearest(lpad);
+        int rpad_T = sec_latent_frames_nearest(rpad);
+        // Pads that round to no frame pad nothing: the source as given, the
+        // region not shifted (#1129).
+        if (lpad_T == 0 && rpad_T == 0) {
+            s.left_pad_sec = 0.0f;
+            return enc;
+        }
         int           total_T = lpad_T + src.T_latent + rpad_T;
         const float * sil     = ctx->meta->silence_full.data();
         // The region is shifted by the pad as padded, not as asked: a 0.03 s
@@ -233,9 +239,12 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
 
     // Audio path: always populate s.padded_src so the post-decode waveform
     // splice always has the source PCM to read from, with or without outpaint.
-    int lpad_s       = (int) (lpad * ACE_SAMPLE_RATE);
-    int rpad_s       = (int) (rpad * ACE_SAMPLE_RATE);
+    // In whole samples, nearest; the region shifted by the pad as padded,
+    // as the latent path's is (#1129).
+    int lpad_s       = sec_samples_nearest(lpad);
+    int rpad_s       = sec_samples_nearest(rpad);
     int padded_total = src.len + lpad_s + rpad_s;
+    s.left_pad_sec   = samples_sec(lpad_s);
     s.padded_src.resize((size_t) padded_total * 2);
     if (lpad_s > 0 || rpad_s > 0) {
         memset(s.padded_src.data(), 0, s.padded_src.size() * sizeof(float));
