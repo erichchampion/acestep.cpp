@@ -17,7 +17,6 @@
 #include <array>
 #include <atomic>
 #include <cctype>
-#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -243,7 +242,7 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
         return true;
     }
     // The padded frames, in 64 bits, against the run's most.
-    auto too_long = [&](int64_t frames) {
+    auto too_long = [](int64_t frames) {
         if (frames <= ACE_MAX_LATENT_FRAMES) {
             return false;
         }
@@ -264,18 +263,21 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
         int                rpad_T = sec_latent_frames_nearest(rpad);
         // A region wholly past the frames padded has the frames it reaches.
         const RegionFrames region = asked_region_frames(rs_raw, re_raw, src_dur, latent_frames_sec(lpad_T));
-        const int          held   = lpad_T + src.T_latent + rpad_T;
+        const int64_t      held   = (int64_t) lpad_T + src.T_latent + rpad_T;
+        // The pads' frames in 64 bits against the run's most, before any is
+        // added to or allocated: each pad is held to 1e9 frames, and two can
+        // pass an int.
+        if (too_long(std::max<int64_t>(held, region.first >= held ? (int64_t) region.end : held))) {
+            return false;
+        }
         if (region.first >= held && region.end > held) {
-            rpad_T += region.end - held;
+            rpad_T += (int) (region.end - held);
         }
         // Pads within the frame slack of none pad nothing: the source as
         // given, the region not shifted (#1129).
         if (lpad_T == 0 && rpad_T == 0) {
             s.left_pad_sec = 0.0f;
             return true;
-        }
-        if (too_long((int64_t) lpad_T + src.T_latent + rpad_T)) {
-            return false;
         }
         int           total_T = lpad_T + src.T_latent + rpad_T;
         const float * sil     = ctx->meta->silence_full.data();
@@ -300,23 +302,22 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
     // padded, as the latent path's is (#1129).
     int lpad_s = sec_samples_nearest(lpad);
     int rpad_s = sec_samples_nearest(rpad);
-    // Plus the frame a region past the whole frames may run on to.
-    if (too_long((int64_t) samples_frames_ceil(lpad_s) + samples_frames_ceil(src.len) + samples_frames_ceil(rpad_s) +
-                 1)) {
+    // The padded source's frames, rounded up -- the most its pad runs on to.
+    if (too_long(padded_samples_frames(lpad_s, src.len, rpad_s))) {
         return false;
     }
-    int padded_total             = src.len + lpad_s + rpad_s;
-    s.left_pad_sec               = samples_sec(lpad_s);
+    int padded_total          = src.len + lpad_s + rpad_s;
+    s.left_pad_sec            = samples_sec(lpad_s);
     // The encoder keeps whole frames only, so a region wholly past the last
     // whole frame -- to a source's end inside one, or into a pad of less
     // than a frame -- would have no frame, and be refused as covering none.
     // Then the pad runs on to the next frame's end (#1138).
-    const RegionFrames region    = asked_region_frames(rs_raw, re_raw, src_dur, s.left_pad_sec);
-    const int          whole     = samples_frames_floor(padded_total);
-    const int64_t      frame_end = (int64_t) samples_frames_ceil(padded_total) * ACE_LATENT_HOP;
-    if (region.first >= whole && region.end > whole && frame_end <= INT_MAX) {
-        rpad_s += (int) frame_end - padded_total;
-        padded_total = (int) frame_end;
+    const RegionFrames region = asked_region_frames(rs_raw, re_raw, src_dur, s.left_pad_sec);
+    const int          whole  = samples_frames_floor(padded_total);
+    if (region.first >= whole && region.end > whole) {
+        const int frame_end = samples_frames_ceil(padded_total) * ACE_LATENT_HOP;
+        rpad_s += frame_end - padded_total;
+        padded_total = frame_end;
     }
     s.padded_src.resize((size_t) padded_total * 2);
     if (lpad_s > 0 || rpad_s > 0) {

@@ -97,6 +97,12 @@ inline constexpr int samples_frames_ceil(int samples) {
     return (int) (((long long) samples + ACE_LATENT_HOP - 1) / ACE_LATENT_HOP);
 }
 
+// A padded source's whole frames, rounded up -- what an audio outpaint's pad
+// runs on to at most -- from its parts in samples, summed in 64 bits (#1139).
+inline constexpr long long padded_samples_frames(long long lpad, long long len, long long rpad) {
+    return (lpad + len + rpad + ACE_LATENT_HOP - 1) / ACE_LATENT_HOP;
+}
+
 // The whole number of latent frames nearest a span in seconds: a left pad's
 // length, which places the source as near as a frame can to where it was asked.
 inline constexpr int sec_latent_frames_nearest(float sec) {
@@ -124,6 +130,10 @@ static_assert(sec_samples_nearest(0.01f) == 480 && sec_samples_nearest(2.12f) ==
               "seconds to the nearest sample");
 static_assert(samples_frames_floor(97440) == 50 && samples_frames_ceil(97440) == 51 && samples_frames_ceil(96000) == 50,
               "samples to whole frames");
+static_assert(padded_samples_frames(0, 28800000, 0) == ACE_MAX_LATENT_FRAMES &&
+                  padded_samples_frames(0, 28800001, 0) == ACE_MAX_LATENT_FRAMES + 1 &&
+                  padded_samples_frames(1440, 96000, 480) == 51,
+              "a 600 s source is a run's most frames, and not one past them");
 static_assert(frame_index(1e12) == 1000000000 && frame_index(-1e12) == -1000000000 &&
                   frame_index(std::numeric_limits<double>::quiet_NaN()) == 0,
               "a frame count held to an int");

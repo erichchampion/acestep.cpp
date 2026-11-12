@@ -13,6 +13,7 @@
 #include "model-store.h"
 
 #include "ace-fatal.h"
+#include "audio-frames.h"
 #include "gpu-compute.h"
 #include "gguf-weights.h"
 #include "timer.h"
@@ -878,8 +879,8 @@ const float * store_silence(ModelStore * s, const char * dit_path, const std::st
         gf_close(&gf);
         return nullptr;
     }
-    auto * vec = new std::vector<float>(15000 * 64);
-    memcpy(vec->data(), sl, 15000 * 64 * sizeof(float));
+    auto * vec = new std::vector<float>(ACE_MAX_LATENT_FRAMES * 64);
+    memcpy(vec->data(), sl, ACE_MAX_LATENT_FRAMES * 64 * sizeof(float));
     gf_close(&gf);
 
     if (!cpu_file_unchanged(key, fid)) {
@@ -951,7 +952,7 @@ std::shared_ptr<const DiTMeta> store_dit_meta_shared(ModelStore *        s,
     }
     meta->is_turbo = gf_get_bool(gf, "acestep.is_turbo");
 
-    // silence_latent: [15000, 64] f32, also accessible via store_silence for
+    // silence_latent: [ACE_MAX_LATENT_FRAMES, 64] f32, also accessible via store_silence for
     // callers that only need the pointer. Cached here too so DiTMeta is
     // self-contained.
     const void * sl = gf_get_data(gf, "silence_latent");
@@ -960,8 +961,8 @@ std::shared_ptr<const DiTMeta> store_dit_meta_shared(ModelStore *        s,
         gf_close(&gf);
         return nullptr;
     }
-    meta->silence_full.resize(15000 * 64);
-    memcpy(meta->silence_full.data(), sl, 15000 * 64 * sizeof(float));
+    meta->silence_full.resize(ACE_MAX_LATENT_FRAMES * 64);
+    memcpy(meta->silence_full.data(), sl, ACE_MAX_LATENT_FRAMES * 64 * sizeof(float));
 
     // null_condition_emb: present on some variants, absent on others.
     struct ggml_tensor * nce_meta = ggml_get_tensor(gf.meta, "null_condition_emb");
