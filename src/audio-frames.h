@@ -90,7 +90,7 @@ inline constexpr int samples_frames_floor(int samples) {
 }
 
 inline constexpr int samples_frames_ceil(int samples) {
-    return (samples + ACE_LATENT_HOP - 1) / ACE_LATENT_HOP;
+    return (int) (((long long) samples + ACE_LATENT_HOP - 1) / ACE_LATENT_HOP);
 }
 
 // The whole number of latent frames nearest a span in seconds: a left pad's

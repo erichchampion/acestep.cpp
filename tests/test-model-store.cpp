@@ -962,6 +962,13 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             fprintf(stderr, "[Test] FAIL: an audio repaint 2.00..2.03s, past a 2 s source, did not reach its DiT\n");
             rc = 1;
         }
+        // And before it: a 0.01 s outpaint of latents, a pad the nearest frame
+        // would make none, is padded a frame, not refused as covering none.
+        AceSynthEncodes before;
+        if (!run("repaint", NULL, NULL, before, true, 1, &cover.src_latents, -0.01f, -1.0f)) {
+            fprintf(stderr, "[Test] FAIL: a latent repaint -0.01s before a 2 s source did not reach its DiT\n");
+            rc = 1;
+        }
         // A source whose end falls inside a frame -- 1.53 s, 38.25 frames, the
         // tone cut short; 38 whole frames, already patch-aligned -- repainted
         // from 1.52 s to its end has its last frame, the pad run on to it,

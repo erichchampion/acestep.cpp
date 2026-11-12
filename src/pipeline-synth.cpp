@@ -17,7 +17,9 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <climits>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -183,6 +185,27 @@ struct SynthInputs {
     SynthInput ref;
 };
 
+// Where a region asked for ends, in the source's own seconds (before any pad):
+// its repainting_end, or for the -1 sentinel the left pad's end (an outpaint
+// before the source) or the source's end. The one reading of the sentinel, for
+// the pads and for adjust_region_coords (#1138).
+static float asked_region_end(float rs_raw, float re_raw, float src_dur) {
+    return re_raw >= 0.0f ? re_raw : (rs_raw < 0.0f ? 0.0f : src_dur);
+}
+
+// The frames a region spans once the source is padded by left_pad_sec, by the
+// rule resolve_region_frames reads them with: its first frame, and its end
+// rounded up (#1138).
+struct RegionFrames {
+    int first;
+    int end;
+};
+
+static RegionFrames asked_region_frames(float rs_raw, float re_raw, float src_dur, float left_pad_sec) {
+    return { sec_latent_frame(std::max(rs_raw, -left_pad_sec) + left_pad_sec),
+             sec_latent_frame_end(asked_region_end(rs_raw, re_raw, src_dur) + left_pad_sec) };
+}
+
 // Outpainting: pads the source when the region extends beyond its bounds, and
 // returns the input to encode -- the source itself, or a SynthInput pointing
 // into s.padded_src or s.padded_latents, valid while those are not resized.
@@ -192,15 +215,10 @@ struct SynthInputs {
 // Latent path: pads into s.padded_latents with the precomputed silence_full
 // latent (the canonical VAE encoding of audio silence), only when there is
 // padding to add. No VAE encode needed.
+// Either path pads on to one more frame only for a region that would else lie
+// wholly past the source's last whole frame -- a region of none, refused --
+// so a region with frames inside the source pads as it always did (#1138).
 // Sets s.left_pad_sec for adjust_region_coords.
-// Where a region asked for ends, in the source's own seconds (before any pad):
-// its repainting_end, or for the -1 sentinel the left pad's end (an outpaint
-// before the source) or the source's end. The one reading of the sentinel, for
-// the pads and for adjust_region_coords (#1138).
-static float asked_region_end(float rs_raw, float re_raw, float src_dur) {
-    return re_raw >= 0.0f ? re_raw : (rs_raw < 0.0f ? 0.0f : src_dur);
-}
-
 static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
                                             const AceRequest & r,
                                             const SynthInput & src,
@@ -210,7 +228,7 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
     float src_dur  = src.duration_sec();
     float rs_raw   = r.repainting_start;
     float re_raw   = r.repainting_end;
-    float end_time = (re_raw < 0.0f) ? src_dur : re_raw;
+    float end_time = asked_region_end(rs_raw, re_raw, src_dur);
     float lpad     = (rs_raw < 0.0f) ? -rs_raw : 0.0f;
     float rpad     = (end_time > src_dur) ? end_time - src_dur : 0.0f;
     s.left_pad_sec = lpad;
@@ -225,13 +243,18 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
         if (lpad <= 0.0f && rpad <= 0.0f) {
             return enc;
         }
-        // Latent pad: whole 25Hz frames, silence_full spliced at the edges.
-        // The left one the nearest, placing the source as near as a frame can
-        // to where it was asked -- but a frame, not none, for a pad past the
-        // slack. The right one rounded up, so a region reaching into it by
-        // less than a frame has that frame (#1138).
-        int lpad_T = std::max(sec_latent_frames_nearest(lpad), sec_latent_frame_end(lpad) > 0 ? 1 : 0);
-        int rpad_T = sec_latent_frame_end(rpad);
+        // Latent pad: whole 25Hz frames, the nearest, silence_full spliced at
+        // the edges. The left one places the source as near as a frame can to
+        // where it was asked, and is a frame, not none, for a pad past the
+        // slack (#1138).
+        int                lpad_T = std::max(sec_latent_frames_nearest(lpad), sec_latent_frame_end(lpad) > 0 ? 1 : 0);
+        int                rpad_T = sec_latent_frames_nearest(rpad);
+        // A region wholly past the frames padded has the frames it reaches.
+        const RegionFrames region = asked_region_frames(rs_raw, re_raw, src_dur, latent_frames_sec(lpad_T));
+        const int          held   = lpad_T + src.T_latent + rpad_T;
+        if (region.first >= held && region.end > held) {
+            rpad_T += region.end - held;
+        }
         // Pads within the frame slack of none pad nothing: the source as
         // given, the region not shifted (#1129).
         if (lpad_T == 0 && rpad_T == 0) {
@@ -257,25 +280,22 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
 
     // Audio path: always populate s.padded_src so the post-decode waveform
     // splice always has the source PCM to read from, with or without outpaint.
-    // In whole samples, nearest; the region shifted by the pad as padded,
-    // as the latent path's is (#1129).
-    int lpad_s              = sec_samples_nearest(lpad);
-    int rpad_s              = sec_samples_nearest(rpad);
-    int padded_total        = src.len + lpad_s + rpad_s;
-    s.left_pad_sec          = samples_sec(lpad_s);
-    // The encoder keeps whole frames only, so a region reaching past the last
-    // whole frame -- to a source's end that falls inside one, or into a pad of
-    // less than a frame -- would have no frame there, and be refused as
-    // covering none (#1138). Then the pad runs on to the next frame's end;
-    // else the source is padded as asked, its frames as before.
-    // By the rule the region's frames are read with (resolve_region_frames:
-    // its end rounded up, with the frame slack), so a pad is added only when
-    // the region gets the frame it adds.
-    const int region_frames = sec_latent_frame_end(asked_region_end(rs_raw, re_raw, src_dur) + s.left_pad_sec);
-    if (region_frames > samples_frames_floor(padded_total)) {
-        const int frame_end = samples_frames_ceil(padded_total) * ACE_LATENT_HOP;
-        rpad_s += frame_end - padded_total;
-        padded_total = frame_end;
+    // Pads in whole samples, the nearest; the region shifted by the pad as
+    // padded, as the latent path's is (#1129).
+    int lpad_s                   = sec_samples_nearest(lpad);
+    int rpad_s                   = sec_samples_nearest(rpad);
+    int padded_total             = src.len + lpad_s + rpad_s;
+    s.left_pad_sec               = samples_sec(lpad_s);
+    // The encoder keeps whole frames only, so a region wholly past the last
+    // whole frame -- to a source's end inside one, or into a pad of less
+    // than a frame -- would have no frame, and be refused as covering none.
+    // Then the pad runs on to the next frame's end (#1138).
+    const RegionFrames region    = asked_region_frames(rs_raw, re_raw, src_dur, s.left_pad_sec);
+    const int          whole     = samples_frames_floor(padded_total);
+    const int64_t      frame_end = (int64_t) samples_frames_ceil(padded_total) * ACE_LATENT_HOP;
+    if (region.first >= whole && region.end > whole && frame_end <= INT_MAX) {
+        rpad_s += (int) frame_end - padded_total;
+        padded_total = (int) frame_end;
     }
     s.padded_src.resize((size_t) padded_total * 2);
     if (lpad_s > 0 || rpad_s > 0) {
@@ -284,7 +304,7 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
     memcpy(s.padded_src.data() + (size_t) lpad_s * 2, src.audio, (size_t) src.len * 2 * sizeof(float));
     enc.audio = s.padded_src.data();
     enc.len   = padded_total;
-    if (lpad > 0.0f || rpad > 0.0f) {
+    if (lpad_s > 0 || rpad_s > 0) {
         fprintf(stderr, "[Outpaint] audio pad left=%.3fs (%d) right=%.3fs (%d) total=%.1fs\n", samples_sec(lpad_s),
                 lpad_s, samples_sec(rpad_s), rpad_s, samples_sec(padded_total));
     }
