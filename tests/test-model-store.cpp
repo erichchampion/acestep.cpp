@@ -947,13 +947,29 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             rc = 1;
         }
     }
-    // A repaint whose region covers no latent frame -- a 0.01 s outpaint of
-    // latents, a pad rounded to none -- is refused before its DiT, not run to
-    // give back its source unsaid (cadenza-audio #1129).
+    // A region reaching past the source's end by less than a frame has that
+    // frame, the pad rounded up to it -- latents and audio both -- and runs
+    // to its DiT, not refused as covering none (#1138). The source is 2 s,
+    // 50 whole frames.
+    {
+        AceSynthEncodes past_latents, past_audio;
+        if (cover.src_latents.empty() ||
+            !run("repaint", NULL, NULL, past_latents, true, 1, &cover.src_latents, 2.0f, 2.01f)) {
+            fprintf(stderr, "[Test] FAIL: a latent repaint 2.00..2.01s, past a 2 s source, did not reach its DiT\n");
+            rc = 1;
+        }
+        if (!run("repaint", source.data(), NULL, past_audio, true, 1, nullptr, 2.0f, 2.03f)) {
+            fprintf(stderr, "[Test] FAIL: an audio repaint 2.00..2.03s, past a 2 s source, did not reach its DiT\n");
+            rc = 1;
+        }
+    }
+    // A repaint whose region covers no latent frame -- an outpaint of latents
+    // within the frame slack of none, so nothing padded -- is refused before
+    // its DiT, not run to give back its source unsaid (cadenza-audio #1129).
     {
         AceSynthEncodes none;
         if (cover.src_latents.empty() ||
-            !run("repaint", NULL, NULL, none, true, 0, &cover.src_latents, -0.01f, -1.0f) ||
+            !run("repaint", NULL, NULL, none, true, 0, &cover.src_latents, -0.0001f, -1.0f) ||
             !none.src_latents.empty() || !none.ref_latents.empty()) {
             fprintf(stderr, "[Test] FAIL: a repaint whose region covers no frame returned a job, or reached its DiT\n");
             rc = 1;

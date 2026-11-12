@@ -211,11 +211,13 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
         if (lpad <= 0.0f && rpad <= 0.0f) {
             return enc;
         }
-        // Latent pad: round to 25Hz frames, splice silence_full at the edges.
-        int lpad_T = sec_latent_frames_nearest(lpad);
-        int rpad_T = sec_latent_frames_nearest(rpad);
-        // Pads that round to no frame pad nothing: the source as given, the
-        // region not shifted (#1129).
+        // Latent pad: whole 25Hz frames, rounded up -- a region reaching into
+        // a pad by less than a frame has that frame, not none (#1138) --
+        // silence_full spliced at the edges.
+        int lpad_T = sec_latent_frame_end(lpad);
+        int rpad_T = sec_latent_frame_end(rpad);
+        // Pads within the frame slack of none pad nothing: the source as
+        // given, the region not shifted (#1129).
         if (lpad_T == 0 && rpad_T == 0) {
             s.left_pad_sec = 0.0f;
             return enc;
@@ -223,8 +225,7 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
         int           total_T = lpad_T + src.T_latent + rpad_T;
         const float * sil     = ctx->meta->silence_full.data();
         // The region is shifted by the pad as padded, not as asked: a 0.03 s
-        // pad is one frame, 0.04 s, and a region left at 0.03 s would end
-        // inside that frame and cover none (cadenza-audio #1129).
+        // pad is one frame, 0.04 s (cadenza-audio #1129).
         s.left_pad_sec        = latent_frames_sec(lpad_T);
         s.padded_latents.resize((size_t) total_T * 64);
         memcpy(s.padded_latents.data(), sil, (size_t) lpad_T * 64 * sizeof(float));
@@ -242,10 +243,22 @@ static SynthInput apply_outpainting_padding(const AceSynth *   ctx,
     // splice always has the source PCM to read from, with or without outpaint.
     // In whole samples, nearest; the region shifted by the pad as padded,
     // as the latent path's is (#1129).
-    int lpad_s       = sec_samples_nearest(lpad);
-    int rpad_s       = sec_samples_nearest(rpad);
-    int padded_total = src.len + lpad_s + rpad_s;
-    s.left_pad_sec   = samples_sec(lpad_s);
+    int lpad_s             = sec_samples_nearest(lpad);
+    int rpad_s             = sec_samples_nearest(rpad);
+    int padded_total       = src.len + lpad_s + rpad_s;
+    s.left_pad_sec         = samples_sec(lpad_s);
+    // The encoder keeps whole frames only, so a region reaching past the last
+    // whole frame -- to a source's end that falls inside one, or into a pad of
+    // less than a frame -- would have no frame there, and be refused as
+    // covering none (#1138). Then the pad runs on to the next frame's end;
+    // else the source is padded as asked, its frames as before.
+    const float region_end = (re_raw >= 0.0f) ? re_raw : (rs_raw < 0.0f ? 0.0f : src_dur);
+    const int   whole_end  = (padded_total / ACE_LATENT_HOP) * ACE_LATENT_HOP;
+    if (sec_samples_nearest(region_end) + lpad_s > whole_end) {
+        const int frame_end = ((padded_total + ACE_LATENT_HOP - 1) / ACE_LATENT_HOP) * ACE_LATENT_HOP;
+        rpad_s += frame_end - padded_total;
+        padded_total = frame_end;
+    }
     s.padded_src.resize((size_t) padded_total * 2);
     if (lpad_s > 0 || rpad_s > 0) {
         memset(s.padded_src.data(), 0, s.padded_src.size() * sizeof(float));
