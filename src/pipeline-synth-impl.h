@@ -193,6 +193,31 @@ inline bool splices_source_after_decode(const SynthState & s) {
     return s.is_repaint || s.is_lego_region;
 }
 
+// The region's latent frames, [repaint_t0, repaint_t1) clamped to [0, T], for
+// a run that splices its source after the decode -- a repaint or a lego region,
+// by the one rule above -- and none for any other. A lego region once got none
+// (only a repaint was asked), so it masked no frame and gave back its source
+// (cadenza-audio #1130). Reads s.rs, s.re (seconds, shifted into the padded
+// frame) and s.T.
+inline void resolve_region_frames(SynthState & s) {
+    s.repaint_t0 = 0;
+    s.repaint_t1 = 0;
+    if (!splices_source_after_decode(s)) {
+        return;
+    }
+    s.repaint_t0 = sec_latent_frame(s.rs);
+    s.repaint_t1 = sec_latent_frame(s.re);
+    if (s.repaint_t0 < 0) {
+        s.repaint_t0 = 0;
+    }
+    if (s.repaint_t1 > s.T) {
+        s.repaint_t1 = s.T;
+    }
+    if (s.repaint_t0 > s.T) {
+        s.repaint_t0 = s.T;
+    }
+}
+
 // The source's clean VAE latents: fsq_clean_latents holds them once the FSQ
 // roundtrip has moved them there (its degraded latents in cover_latents, #1042),
 // cover_latents before (or without one). The noise blend and a failed run's

@@ -653,7 +653,8 @@ static bool cancel_at_dit(void * data, AceStage stage, int, int) {
 }
 
 // Scenario 12: what the one predicate the hand-out and the decode share,
-// splices_source_after_decode, says of a task's flags (cadenza-audio #1056)
+// splices_source_after_decode, says of a task's flags (cadenza-audio #1056),
+// and the region frames it gives those it holds for (#1130)
 // -- the rule scenario 11's repaint can't tell from the padding it also
 // leaves. The flags a task sets are scenario 11's lego runs'. No model
 // needed: `--scenarios splice` runs it alone, with no --models.
@@ -673,6 +674,31 @@ static int scenario_splice_rule() {
     want("a repaint", true, false, true);
     want("a lego region", false, true, true);
     want("a cover, or any other task", false, false, false);
+    // The frames of the region those splice, by the same rule: a repaint's
+    // and a lego region's, clamped to the run's T, and none for any other task
+    // -- a lego region once got none, and gave back its source (#1130).
+    auto frames = [&](const char * what, bool repaint, bool lego_region, float rs, float re, int T, int t0, int t1) {
+        SynthState st{};
+        st.is_repaint     = repaint;
+        st.is_lego_region = lego_region;
+        st.rs             = rs;
+        st.re             = re;
+        st.T              = T;
+        st.repaint_t0     = -7;
+        st.repaint_t1     = -7;
+        resolve_region_frames(st);
+        if (st.repaint_t0 != t0 || st.repaint_t1 != t1) {
+            fprintf(stderr, "[Test] FAIL: %s %.2fs..%.2fs of %d frames is frames [%d, %d), want [%d, %d)\n", what, rs,
+                    re, T, st.repaint_t0, st.repaint_t1, t0, t1);
+            rc = 1;
+        }
+    };
+    frames("a repaint", true, false, 10.0f, 20.0f, 750, 250, 500);
+    frames("a lego region", false, true, 10.0f, 20.0f, 750, 250, 500);
+    frames("a lego region past the end", false, true, 20.0f, 40.0f, 750, 500, 750);
+    frames("a lego region before the start", false, true, -1.0f, 2.0f, 750, 0, 50);
+    frames("a lego region wholly past the end", false, true, 40.0f, 50.0f, 750, 750, 750);
+    frames("a cover", false, false, 10.0f, 20.0f, 750, 0, 0);
     if (rc == 0) {
         fprintf(stderr, "[Test] scenario 12 PASS\n");
     }

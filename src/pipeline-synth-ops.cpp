@@ -658,19 +658,8 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
     // Cover/Lego/Repaint: shared s.context replicated (s.cover_latents from src_audio).
     // Passthrough: per-batch detokenized FSQ codes + silence padding, mask = 1.0.
     // Text2music: silence only, mask = 1.0.
-    s.repaint_t0 = 0, s.repaint_t1 = 0;
-    if (s.is_repaint) {
-        s.repaint_t0 = sec_latent_frame(s.rs);
-        s.repaint_t1 = sec_latent_frame(s.re);
-        if (s.repaint_t0 < 0) {
-            s.repaint_t0 = 0;
-        }
-        if (s.repaint_t1 > s.T) {
-            s.repaint_t1 = s.T;
-        }
-        if (s.repaint_t0 > s.T) {
-            s.repaint_t0 = s.T;
-        }
+    resolve_region_frames(s);
+    if (splices_source_after_decode(s)) {
         fprintf(stderr, "[Build-Context] Latent frames: [%d, %d) / %d\n", s.repaint_t0, s.repaint_t1, s.T);
     }
 
