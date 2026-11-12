@@ -658,8 +658,9 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
     // Cover/Lego/Repaint: shared s.context replicated (s.cover_latents from src_audio).
     // Passthrough: per-batch detokenized FSQ codes + silence padding, mask = 1.0.
     // Text2music: silence only, mask = 1.0.
+    const bool region = splices_source_after_decode(s);
     resolve_region_frames(s);
-    if (splices_source_after_decode(s)) {
+    if (region) {
         fprintf(stderr, "[Build-Context] Latent frames: [%d, %d) / %d\n", s.repaint_t0, s.repaint_t1, s.T);
     }
 
@@ -668,7 +669,6 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
     if (s.use_source_context && s.have_cover) {
         // Cover/Lego/Repaint: build once, replicate (s.cover_latents are shared)
         std::vector<float> context_single(s.T * s.ctx_ch);
-        const bool         region = splices_source_after_decode(s);
         for (int t = 0; t < s.T; t++) {
             // resolve_region_frames gave any other task [0, 0): out of it.
             bool          in_region = t >= s.repaint_t0 && t < s.repaint_t1;
