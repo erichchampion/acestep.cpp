@@ -156,8 +156,8 @@ void ace_synth_free(AceSynth * ctx);
 // are told what to make by their track instead. False, *info untouched, for a
 // task the engine does not know.
 struct AceSynthTaskInfo {
-    bool needs_source;
-    bool needs_caption;
+    bool needs_source  = false;
+    bool needs_caption = false;
 };
 
 bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);

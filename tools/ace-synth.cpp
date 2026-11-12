@@ -10,7 +10,6 @@
 #include "pipeline-synth.h"
 #include "request.h"
 #include "synth-batch-runner.h"
-#include "task-types.h"
 #include "tool-main.h"
 #include "version.h"
 

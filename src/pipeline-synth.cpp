@@ -634,8 +634,11 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
 }
 
 bool ace_synth_request_missing_caption(const AceRequest * req) {
+    if (!req->caption.empty()) {
+        return false;
+    }
     const SynthTask * entry = find_synth_task(req->task_type);
-    return req->caption.empty() && (!entry || entry->needs_caption);
+    return !entry || entry->needs_caption;
 }
 
 // The runs run_task has refused for want of a source (ace_test_source_refusals).

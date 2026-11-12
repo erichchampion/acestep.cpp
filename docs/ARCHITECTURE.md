@@ -530,9 +530,12 @@ picks the audio encoder: `"mp3"`, `"wav16"`, `"wav24"`, `"wav32"`.
 
 ### Text conditioning (ace-lm + ace-synth)
 
-**`caption`** (string, required)
+**`caption`** (string, required except for lego, extract and complete)
 Natural language description of the music style, mood, instruments, etc.
-Fed to both the LLM and the DiT text encoder.
+Fed to both the LLM and the DiT text encoder. Lego, extract and complete
+are told what to make by their `track`, and may leave it empty: the task
+table's `needs_caption` column, which the tools read through
+`ace_synth_request_missing_caption`.
 
 **`lyrics`** (string, default `""`)
 Controls vocal generation. Three valid states:
