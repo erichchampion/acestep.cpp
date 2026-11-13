@@ -712,16 +712,21 @@ static int scenario_splice_rule() {
             bool  want;
         };
 
+        // A start within the frame slack of 0 is 0: float noise about it asks
+        // the whole song, not an outpaint of no frame before the source.
         for (const Case & c : {
-                 Case{ 10.0f, 20.0f, true  },
-                 Case{ 10.0f, -1.0f, true  },
-                 Case{ -5.0f, -1.0f, true  },
-                 Case{ 0.0f,  -1.0f, false },
-                 Case{ 20.0f, 10.0f, false },
-                 Case{ 0.0f,  0.0f,  false }
+                 Case{ 10.0f,    20.0f, true  },
+                 Case{ 10.0f,    -1.0f, true  },
+                 Case{ -5.0f,    -1.0f, true  },
+                 Case{ 0.0f,     -1.0f, false },
+                 Case{ 20.0f,    10.0f, false },
+                 Case{ 0.0f,     0.0f,  false },
+                 Case{ -0.0001f, -1.0f, false },
+                 Case{ 0.0001f,  -1.0f, false },
+                 Case{ -0.001f,  -1.0f, true  }
         }) {
             if (lego_asks_region(c.rs, c.re) != c.want) {
-                fprintf(stderr, "[Test] FAIL: a lego from %.1fs to %.1fs asks %s region, want %s\n", c.rs, c.re,
+                fprintf(stderr, "[Test] FAIL: a lego from %.4fs to %.1fs asks %s region, want %s\n", c.rs, c.re,
                         c.want ? "no" : "a", c.want ? "one" : "none");
                 rc = 1;
             }
@@ -1006,6 +1011,18 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                         c.rs, c.re);
                 rc = 1;
             }
+        }
+    }
+    // A lego whose own end is at or before its start asks no region a lego
+    // can run: it runs the whole song, warned of -- not refused as a
+    // repaint's would be -- handing out its clean encode (#1134).
+    {
+        AceSynthEncodes inverted;
+        const int       before = ace_test_region_empty();
+        if (!run("lego", source.data(), NULL, inverted, true, 1, nullptr, 1.5f, 0.5f) ||
+            ace_test_region_empty() != before || inverted.src_latents != cover.src_latents) {
+            fprintf(stderr, "[Test] FAIL: an inverted lego did not run the whole song, handing out its encode\n");
+            rc = 1;
         }
     }
     // A lego from 0.5 s with the -1 end is a region to the source's end, as a
