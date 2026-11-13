@@ -1161,13 +1161,15 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 continue;
             }
             const AceTestCoverRecord got = ace_test_last_cover();
-            if (full_steps < 0) {
+            // The baseline is the plain cover's alone: if it failed, every
+            // later case says so, not that its knobs were wrong.
+            if (c.cover && c.noise == 0.0f) {
                 full_steps = got.num_steps;
             }
             // A noise blend's effect is its truncated schedule: a cover's
             // with noise is shorter, every other task's the full one.
-            const bool steps_ok =
-                (c.cover && c.noise > 0.0f) ? got.num_steps < full_steps : got.num_steps == full_steps;
+            const bool steps_ok = full_steps >= 0 && ((c.cover && c.noise > 0.0f) ? got.num_steps < full_steps :
+                                                                                    got.num_steps == full_steps);
             const bool knobs_ok =
                 c.cover ? got.strength == 0.5f && got.noise == c.noise && got.enc_switch && got.cover_steps >= 0 :
                           got.strength == 1.0f && got.noise == 0.0f && !got.enc_switch && got.cover_steps == -1;

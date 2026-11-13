@@ -790,9 +790,7 @@ int ace_test_source_ignores() {
     return g_test_source_ignores.load();
 }
 
-// The cover strength the last run ran with, and whether it built the switch
-// to a non-cover text encode -- what its task made of the request's
-// (ace_test_last_cover_strength, ace_test_last_enc_switch).
+// What the last run made of the request's cover knobs (ace_test_last_cover).
 // Reset when each run starts and written however it ends, so none is a
 // former run's; one snapshot under one lock, so none mixes two runs.
 static const AceTestCoverRecord kCoverRecordUnset{ -1.0f, -1.0f, false, -2, -1 };
@@ -855,8 +853,8 @@ static AceSynthJob * run_task(AceSynth *          ctx,
         if (entry->needs_source && (s.rr.audio_cover_strength != def.audio_cover_strength ||
                                     s.rr.cover_noise_strength != def.cover_noise_strength)) {
             fprintf(stderr,
-                    "[Synth-Run] WARNING: task '%s' runs at audio_cover_strength %.2f, cover_noise_strength %.2f, "
-                    "not the %.2f, %.2f asked: they are a cover's\n",
+                    "[Synth-Run] WARNING: task '%s' runs at audio_cover_strength %g, cover_noise_strength %g, "
+                    "not the %g, %g asked: they are a cover's\n",
                     task.c_str(), def.audio_cover_strength, def.cover_noise_strength, s.rr.audio_cover_strength,
                     s.rr.cover_noise_strength);
         }
@@ -899,6 +897,9 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
         std::vector<float>().swap(failed_encodes->src_latents);
         std::vector<float>().swap(failed_encodes->ref_latents);
     }
+    // Reset before any refusal, so a call refused here leaves no former
+    // run's record (run_task resets it again for its own).
+    set_test_last_cover(kCoverRecordUnset);
     if (!ctx || !reqs || batch_n < 1 || batch_n > 9) {
         return NULL;
     }

@@ -605,7 +605,9 @@ steps use the source (pure text2music, source is ignored). Values below 1.0
 switch DiT context to silence and encoder hidden states to text2music
 instruction at the corresponding step. Lower values give more creative
 freedom, higher values preserve more of the original structure.
-Defaults to 1.0 for `lego`, `extract`, `complete` (context-switch inactive for these modes).
+Read by `cover` and `cover-nofsq` only: every other task runs at 1.0, with a
+warning when a request with a source asks otherwise (`lego`, `extract` and
+`complete` keep the full source context, the context-switch inactive).
 Ignored in `repaint` mode (the mask handles everything).
 
 **`cover_noise_strength`** (float, default `0.0`)
@@ -803,10 +805,11 @@ The registry accepts either a safetensors file or a directory containing
 
 `--src-audio` provides source content for cover, repaint, lego, extract and
 complete tasks. The audio (WAV or MP3, any sample rate) is resampled to 48kHz
-and VAE-encoded once. `audio_cover_strength` in the JSON controls how many
-DiT steps use the source context (default 1.0). `cover_noise_strength`
-blends the initial noise with source latents to start diffusion closer to
-the source (default 0.0).
+and VAE-encoded once. For a cover, `audio_cover_strength` in the JSON
+controls how many DiT steps use the source context (default 1.0), and
+`cover_noise_strength` blends the initial noise with source latents to start
+diffusion closer to the source (default 0.0). Every other task runs at those
+defaults, warning when asked otherwise.
 
 `--ref-audio` provides a timbre reference, independent of the task. The audio
 is VAE-encoded and fed to the 4-layer timbre encoder, which pools to a single
