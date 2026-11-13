@@ -128,8 +128,20 @@ static_assert(sec_latent_frame(-0.5f) == -13 && sec_latent_frame(-0.04f) == -1, 
 static_assert(sec_samples_nearest(0.01f) == 480 && sec_samples_nearest(2.12f) == 101760 &&
                   sec_samples_nearest(-0.01f) == -480,
               "seconds to the nearest sample");
+
+// Whether a run of this many latent frames is past a run's most -- the one
+// test every bound on a run's frames makes (cadenza-audio #1139, #1144).
+inline constexpr bool frames_past_run_most(long long frames) {
+    return frames > ACE_MAX_LATENT_FRAMES;
+}
+
 static_assert(samples_frames_floor(97440) == 50 && samples_frames_ceil(97440) == 51 && samples_frames_ceil(96000) == 50,
               "samples to whole frames");
+static_assert(!frames_past_run_most(ACE_MAX_LATENT_FRAMES) && frames_past_run_most(ACE_MAX_LATENT_FRAMES + 1),
+              "a run of the most frames runs, one past it does not");
+static_assert(samples_frames_floor(ACE_MAX_LATENT_FRAMES * ACE_LATENT_HOP + ACE_LATENT_HOP - 1) ==
+                  ACE_MAX_LATENT_FRAMES,
+              "600 s and a part frame of audio is the most whole frames, not past it");
 static_assert(padded_samples_frames(0, 28800000, 0) == ACE_MAX_LATENT_FRAMES &&
                   padded_samples_frames(0, 28800001, 0) == ACE_MAX_LATENT_FRAMES + 1 &&
                   padded_samples_frames(1440, 96000, 480) == 51,

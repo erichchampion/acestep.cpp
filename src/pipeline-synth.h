@@ -185,7 +185,8 @@ int ace_test_source_refusals();
 // a task that takes none, run without it (cadenza-audio #1095).
 int ace_test_source_ignores();
 
-// Tests only: how many runs have been refused for a source past a run's most
-// frames before its encode -- so a test can tell that refusal from
-// ops_resolve_T's, which comes after the encode (cadenza-audio #1144).
+// Tests only: how many runs have been refused for a source, with its pads if
+// any, past a run's most frames -- before its pad is allocated or its encode
+// run -- so a test can tell that refusal from ops_resolve_T's, which comes
+// after the encode (cadenza-audio #1139, #1144).
 int ace_test_source_too_long();

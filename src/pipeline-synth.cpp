@@ -205,6 +205,27 @@ static RegionFrames asked_region_frames(float rs_raw, float re_raw, float src_du
              sec_latent_frame_end(asked_region_end(rs_raw, re_raw, src_dur) + left_pad_sec) };
 }
 
+// The runs refused for a source, with its pads if any, past a run's most
+// frames -- before its pad is allocated or its encode run
+// (ace_test_source_too_long).
+static std::atomic<int> g_test_source_too_long{ 0 };
+
+int ace_test_source_too_long() {
+    return g_test_source_too_long.load();
+}
+
+// True, said and counted, for a run of more frames than a run's most: the one
+// refusal the outpaint's pads and every task's source share (#1139, #1144).
+static bool refuse_past_run_most(long long frames, const char * what) {
+    if (!frames_past_run_most(frames)) {
+        return false;
+    }
+    g_test_source_too_long.fetch_add(1);
+    fprintf(stderr, "[Synth-Run] ERROR: %s, %lld frames, is past a run's most, %d\n", what, frames,
+            ACE_MAX_LATENT_FRAMES);
+    return true;
+}
+
 // Outpainting: pads the source when the region extends beyond its bounds, and
 // returns the input to encode -- the source itself, or a SynthInput pointing
 // into s.padded_src or s.padded_latents, valid while those are not resized.
@@ -235,20 +256,17 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
     float lpad     = (rs_raw < 0.0f) ? -rs_raw : 0.0f;
     float rpad     = (end_time > src_dur) ? end_time - src_dur : 0.0f;
     s.left_pad_sec = lpad;
-    // A bound that is no number pads nothing: adjust_region_coords refuses
-    // it, and an infinite pad would be allocated first (#1129, #1138).
+    // A bound that is no number is refused here, before its pad -- an
+    // infinite one -- or the source's encode (#1129, #1138, #1144); it would
+    // read as frame 0 and repaint from the start, unsaid.
     if (!std::isfinite(rs_raw) || !std::isfinite(re_raw)) {
         s.left_pad_sec = 0.0f;
-        return true;
+        fprintf(stderr, "[Region] ERROR: a region bound is not a finite number\n");
+        return false;
     }
     // The padded frames, in 64 bits, against the run's most.
     auto too_long = [](int64_t frames) {
-        if (frames <= ACE_MAX_LATENT_FRAMES) {
-            return false;
-        }
-        fprintf(stderr, "[Outpaint] ERROR: the source with its pads (if any), %lld frames, is past a run's most, %d\n",
-                (long long) frames, ACE_MAX_LATENT_FRAMES);
-        return true;
+        return refuse_past_run_most(frames, "the source with its pads");
     };
 
     if (src.has_latents()) {
@@ -412,14 +430,6 @@ class JobOwner {
 };
 }  // namespace
 
-// The runs refused for a source past a run's most frames before its encode
-// (ace_test_source_too_long).
-static std::atomic<int> g_test_source_too_long{ 0 };
-
-int ace_test_source_too_long() {
-    return g_test_source_too_long.load();
-}
-
 // Pin VAE-Enc across two back-to-back encodes (source then timbre) so STRICT
 // does not unload and reload the 160 MB weights between them. On return the
 // pin is released, VAE-Enc can be evicted by the next require. The pin is
@@ -437,18 +447,11 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
     const bool  have_src         = src.given();
     const bool  have_ref_audio   = ref.has_audio();
     // A source past a run's most frames is refused here, before the pin
-    // loads the encoder or the encode spends minutes on it -- for every task,
-    // as ops_resolve_T would refuse its T after (cadenza-audio #1144). The
-    // frames the encode would keep: the latents' (they win), else the audio's
-    // whole ones. An outpaint's pads were bounded before they were allocated
-    // (#1139); this is the source it encodes, padded or not.
-    const int64_t src_frames       = have_src_latents ? (int64_t) src.T_latent :
-                                     have_src_audio   ? (int64_t) samples_frames_floor(src.len) :
-                                                        0;
-    if (src_frames > ACE_MAX_LATENT_FRAMES) {
-        g_test_source_too_long.fetch_add(1);
-        fprintf(stderr, "[Encode-Src] ERROR: the source, %lld frames, is past a run's most, %d\n",
-                (long long) src_frames, ACE_MAX_LATENT_FRAMES);
+    // loads the encoder or the encode spends minutes on it -- for every synth
+    // task, as ops_resolve_T would refuse its T after (cadenza-audio #1144).
+    // An outpaint's pads were bounded before they were allocated (#1139);
+    // this is the source a task encodes, padded or not.
+    if (refuse_past_run_most(src.frames(), "the source")) {
         return false;
     }
     bool        need_vae_pin     = (have_src_audio || have_ref_audio);

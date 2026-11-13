@@ -89,6 +89,12 @@ struct SynthInput {
 
     // Its length in seconds: the latents' when given, else the audio's.
     float duration_sec() const { return has_latents() ? latent_frames_sec(T_latent) : samples_sec(len); }
+
+    // Its length in the frames an encode keeps: the latents' when given,
+    // else the audio's whole frames -- the encoder keeps no part one.
+    long long frames() const {
+        return has_latents() ? (long long) T_latent : has_audio() ? (long long) samples_frames_floor(len) : 0;
+    }
 };
 
 // Transient state for a single job, shared by reference across the primitive

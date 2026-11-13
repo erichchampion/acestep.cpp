@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 
 static void dump(ModelStore * s, const char * tag) {
     fprintf(stderr, "[Test] %-24s modules=%d, vram=%.1f MB\n", tag, store_gpu_module_count(s),
@@ -727,6 +728,40 @@ static int scenario_splice_rule() {
         const float pad    = latent_frames_sec(lpad_T);
         frames("a latent outpaint 0.03s before", true, false, -0.03f + pad, pad, 750, 0, 1);
     }
+    // A source's frames, as the bound before its encode counts them, at a
+    // run's most: 15000 latent frames run, and 600 s of audio with a part
+    // frame more is 15000 whole ones, which runs too -- one frame more of
+    // either does not (cadenza-audio #1144). No sample is read.
+    {
+        const float sample = 0.0f;
+
+        struct Case {
+            const char * name;
+            SynthInput   in;
+            long long    want;
+        };
+
+        SynthInput most_latents, past_latents, most_audio, past_audio;
+        most_latents.latents = past_latents.latents = &sample;
+        most_latents.T_latent                       = ACE_MAX_LATENT_FRAMES;
+        past_latents.T_latent                       = ACE_MAX_LATENT_FRAMES + 1;
+        most_audio.audio = past_audio.audio = &sample;
+        most_audio.len                      = ACE_MAX_LATENT_FRAMES * ACE_LATENT_HOP + ACE_LATENT_HOP - 1;
+        past_audio.len                      = (ACE_MAX_LATENT_FRAMES + 1) * ACE_LATENT_HOP;
+        for (const Case & c : {
+                 Case{ "15000 latent frames",             most_latents, ACE_MAX_LATENT_FRAMES     },
+                 Case{ "15001 latent frames",             past_latents, ACE_MAX_LATENT_FRAMES + 1 },
+                 Case{ "600 s and a part frame of audio", most_audio,   ACE_MAX_LATENT_FRAMES     },
+                 Case{ "15001 frames of audio",           past_audio,   ACE_MAX_LATENT_FRAMES + 1 }
+        }) {
+            const bool want_past = c.want > ACE_MAX_LATENT_FRAMES;
+            if (c.in.frames() != c.want || frames_past_run_most(c.in.frames()) != want_past) {
+                fprintf(stderr, "[Test] FAIL: %s is %lld frames (want %lld), %s\n", c.name, c.in.frames(), c.want,
+                        frames_past_run_most(c.in.frames()) ? "past a run's most" : "within it");
+                rc = 1;
+            }
+        }
+    }
     if (rc == 0) {
         fprintf(stderr, "[Test] scenario 12 PASS\n");
     }
@@ -1030,10 +1065,12 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 }
             }
             const int                long_len = (ACE_MAX_LATENT_FRAMES + 1) * ACE_LATENT_HOP;
-            const std::vector<float> long_audio((size_t) long_len * 2, 0.0f);
+            // Never read when the bound holds: allocated, not filled, so its
+            // 230 MB are never touched.
+            const std::unique_ptr<float[]> long_audio(new float[(size_t) long_len * 2]);
             AceSynthEncodes          too_long;
             const int                before = ace_test_source_too_long();
-            if (!run("cover", long_audio.data(), NULL, too_long, false, 0, nullptr, 0.5f, 1.5f, long_len) ||
+            if (!run("cover", long_audio.get(), NULL, too_long, false, 0, nullptr, 0.5f, 1.5f, long_len) ||
                 ace_test_source_too_long() != before + 1 || !too_long.src_latents.empty()) {
                 fprintf(stderr, "[Test] FAIL: a cover from audio of %d frames was not refused before its encode\n",
                         ACE_MAX_LATENT_FRAMES + 1);
