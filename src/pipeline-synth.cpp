@@ -412,6 +412,14 @@ class JobOwner {
 };
 }  // namespace
 
+// The runs refused for a source past a run's most frames before its encode
+// (ace_test_source_too_long).
+static std::atomic<int> g_test_source_too_long{ 0 };
+
+int ace_test_source_too_long() {
+    return g_test_source_too_long.load();
+}
+
 // Pin VAE-Enc across two back-to-back encodes (source then timbre) so STRICT
 // does not unload and reload the 160 MB weights between them. On return the
 // pin is released, VAE-Enc can be evicted by the next require. The pin is
@@ -428,6 +436,21 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
     const bool  have_src_latents = src.has_latents();
     const bool  have_src         = src.given();
     const bool  have_ref_audio   = ref.has_audio();
+    // A source past a run's most frames is refused here, before the pin
+    // loads the encoder or the encode spends minutes on it -- for every task,
+    // as ops_resolve_T would refuse its T after (cadenza-audio #1144). The
+    // frames the encode would keep: the latents' (they win), else the audio's
+    // whole ones. An outpaint's pads were bounded before they were allocated
+    // (#1139); this is the source it encodes, padded or not.
+    const int64_t src_frames       = have_src_latents ? (int64_t) src.T_latent :
+                                     have_src_audio   ? (int64_t) samples_frames_floor(src.len) :
+                                                        0;
+    if (src_frames > ACE_MAX_LATENT_FRAMES) {
+        g_test_source_too_long.fetch_add(1);
+        fprintf(stderr, "[Encode-Src] ERROR: the source, %lld frames, is past a run's most, %d\n",
+                (long long) src_frames, ACE_MAX_LATENT_FRAMES);
+        return false;
+    }
     bool        need_vae_pin     = (have_src_audio || have_ref_audio);
     ModelHandle vae_pin(ctx->store, need_vae_pin ? store_require_vae_enc(ctx->store, ctx->vae_enc_key) : NULL);
     if (need_vae_pin && !vae_pin.ptr) {

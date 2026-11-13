@@ -1011,6 +1011,35 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             fprintf(stderr, "[Test] FAIL: a latent outpaint to 15001 frames returned a job, or reached its DiT\n");
             rc = 1;
         }
+        // A source past a run's most frames is refused before its encode, by
+        // every task that works from one -- not by ops_resolve_T after the
+        // encode, minutes of one for an hour's audio (cadenza-audio #1144).
+        // Latents of 15001 frames, one past the most, for each task; and the
+        // audio of as many whole frames for a cover, whose encode it skips.
+        {
+            const std::vector<float> long_latents((size_t) (ACE_MAX_LATENT_FRAMES + 1) * 64, 0.0f);
+            for (const char * task : { "cover", "cover-nofsq", "repaint", "lego", "extract", "complete" }) {
+                AceSynthEncodes too_long;
+                const int       before = ace_test_source_too_long();
+                const bool      region = strcmp(task, "repaint") == 0;
+                if (!run(task, NULL, NULL, too_long, region, 0, &long_latents) ||
+                    ace_test_source_too_long() != before + 1 || !too_long.src_latents.empty()) {
+                    fprintf(stderr, "[Test] FAIL: the %s from latents of %d frames was not refused before its encode\n",
+                            task, ACE_MAX_LATENT_FRAMES + 1);
+                    rc = 1;
+                }
+            }
+            const int                long_len = (ACE_MAX_LATENT_FRAMES + 1) * ACE_LATENT_HOP;
+            const std::vector<float> long_audio((size_t) long_len * 2, 0.0f);
+            AceSynthEncodes          too_long;
+            const int                before = ace_test_source_too_long();
+            if (!run("cover", long_audio.data(), NULL, too_long, false, 0, nullptr, 0.5f, 1.5f, long_len) ||
+                ace_test_source_too_long() != before + 1 || !too_long.src_latents.empty()) {
+                fprintf(stderr, "[Test] FAIL: a cover from audio of %d frames was not refused before its encode\n",
+                        ACE_MAX_LATENT_FRAMES + 1);
+                rc = 1;
+            }
+        }
         // Nor a region whose bound is no number: refused, not read as 0 s.
         AceSynthEncodes nan_bound;
         if (!run("repaint", source.data(), NULL, nan_bound, true, 0, nullptr, std::nanf(""), 1.0f) ||

@@ -184,3 +184,8 @@ int ace_test_source_refusals();
 // Tests only: how many runs the task table has warned of a source given to
 // a task that takes none, run without it (cadenza-audio #1095).
 int ace_test_source_ignores();
+
+// Tests only: how many runs have been refused for a source past a run's most
+// frames before its encode -- so a test can tell that refusal from
+// ops_resolve_T's, which comes after the encode (cadenza-audio #1144).
+int ace_test_source_too_long();
