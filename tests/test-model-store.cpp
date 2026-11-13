@@ -871,7 +871,7 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // a lego, a region; SOURCE LATENTS gives the source as latents.
     auto run = [&](const char * task, const float * src, const float * ref, AceSynthEncodes & kept, bool region = false,
                    int want_polls = 1, const std::vector<float> * src_latents = nullptr, float region_start = 0.5f,
-                   float region_end = 1.5f, int src_len = 0, float cover_strength = 1.0f) {
+                   float region_end = 1.5f, int src_len = 0, float cover_strength = 1.0f, float cover_noise = 0.0f) {
         AceRequest r;
         request_init(&r);
         r.caption   = "a short test";
@@ -879,6 +879,7 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         r.seed      = 1;
         r.task_type = task;
         r.audio_cover_strength = cover_strength;
+        r.cover_noise_strength = cover_noise;
         if (region) {
             r.repainting_start = region_start;
             r.repainting_end   = region_end;
@@ -1123,32 +1124,47 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             }
         }
     }
-    // A lego runs at full cover strength whatever it is asked, as run_lego
-    // says: a whole-song lego asked 0.5 would else hear silence for its last
-    // steps (cadenza-audio #1135). A cover asked 0.5 keeps it and builds its
-    // switch -- the record can tell a partial strength.
+    // The cover knobs are a cover's alone (docs/ARCHITECTURE.md): a lego,
+    // an extract, a complete and a repaint asked strength 0.5 and noise 0.5
+    // run at 1.0 and 0.0 -- no switch to a non-cover encode, no step their
+    // context turns to silence at -- where a whole-song lego asked 0.5 heard
+    // silence for its last half (cadenza-audio #1135). A cover keeps both,
+    // and switches: the record can tell a partial strength.
     {
         struct Case {
             const char * task;
             bool         region;
-            float        want;
-            bool         want_switch;
+            float        noise;
+            bool         cover;
         };
 
         for (const Case & c : {
-                 Case{ "lego",  false, 1.0f, false },
-                 Case{ "lego",  true,  1.0f, false },
-                 Case{ "cover", false, 0.5f, true  }
+                 Case{ "lego",     false, 0.5f, false },
+                 Case{ "lego",     true,  0.5f, false },
+                 Case{ "extract",  false, 0.5f, false },
+                 Case{ "complete", false, 0.5f, false },
+                 Case{ "repaint",  true,  0.5f, false },
+                 Case{ "cover",    false, 0.0f, true  },
+                 Case{ "cover",    false, 0.5f, true  }
         }) {
             AceSynthEncodes kept;
-            if (!run(c.task, source.data(), NULL, kept, c.region, 1, nullptr, 0.5f, 1.5f, 0, 0.5f)) {
+            const char *    what = c.region ? " region" : "";
+            if (!run(c.task, source.data(), NULL, kept, c.region, 1, nullptr, 0.5f, 1.5f, 0, 0.5f, c.noise)) {
                 fprintf(stderr, "[Test] FAIL: the %s%s asked strength 0.5 returned a job, or failed before its DiT\n",
-                        c.task, c.region ? " region" : "");
+                        c.task, what);
                 rc = 1;
-            } else if (ace_test_last_cover_strength() != c.want || ace_test_last_enc_switch() != c.want_switch) {
-                fprintf(stderr, "[Test] FAIL: the %s%s asked strength 0.5 ran at %.2f, %s its switch (want %.2f, %s)\n",
-                        c.task, c.region ? " region" : "", ace_test_last_cover_strength(),
-                        ace_test_last_enc_switch() ? "with" : "without", c.want, c.want_switch ? "with" : "without");
+                continue;
+            }
+            const AceTestCoverRecord got = ace_test_last_cover();
+            const bool ok = c.cover ?
+                                got.strength == 0.5f && got.noise == c.noise && got.enc_switch && got.cover_steps >= 0 :
+                                got.strength == 1.0f && got.noise == 0.0f && !got.enc_switch && got.cover_steps == -1;
+            if (!ok) {
+                fprintf(stderr,
+                        "[Test] FAIL: the %s%s asked strength 0.5, noise %.2f ran at %.2f, %.2f, %s its switch, "
+                        "silence from step %d\n",
+                        c.task, what, c.noise, got.strength, got.noise, got.enc_switch ? "with" : "without",
+                        got.cover_steps);
                 rc = 1;
             }
         }

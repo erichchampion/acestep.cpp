@@ -195,8 +195,16 @@ int ace_test_source_too_long();
 // number, before its pad or its source's encode (cadenza-audio #1144).
 int ace_test_region_nonfinite();
 
-// Tests only: the audio_cover_strength the last run ran with, and whether it
-// built the switch to a non-cover text encode -- what its task made of the
-// request's, read once the run has ended (cadenza-audio #1135).
-float ace_test_last_cover_strength();
-bool  ace_test_last_enc_switch();
+// Tests only: what the last run made of the request's cover knobs -- the
+// strength and noise it ran with, whether it built the switch to a non-cover
+// text encode, and the step its context switches to silence at (-1: none).
+// Reset when a run starts (strength and noise -1, steps -2), written however
+// it ends (cadenza-audio #1135).
+struct AceTestCoverRecord {
+    float strength;
+    float noise;
+    bool  enc_switch;
+    int   cover_steps;
+};
+
+AceTestCoverRecord ace_test_last_cover();

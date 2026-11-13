@@ -172,7 +172,6 @@ static AceSynthJob * alloc_job(AceSynth * ctx, const AceRequest * reqs, int batc
     s.re              = s.rr.repainting_end;
     s.is_repaint      = false;
     s.is_lego_region  = false;
-    s.need_enc_switch = false;
     s.have_cover      = false;
     s.T_cover         = 0;
     debug_init(&s.dbg, ctx->params.dump_dir);
@@ -629,8 +628,8 @@ static int run_repaint(AceSynth *          ctx,
 // lego: stem generation. With valid rs/re: region-constrained, DiT generates
 // only in the zone with full audio context. Without: whole-song generation.
 // audio_cover_strength forced to 1.0 so all DiT steps hear the backing track:
-// a whole-song lego asked less would hear silence for its last steps, and its
-// stem stop following the track (cadenza-audio #1135).
+// run_task holds every task but a cover to the cover knobs' defaults, by the
+// table's cover_knobs (cadenza-audio #1135).
 // Both in.src.audio and in.src.latents are accepted; in region mode the source is
 // padded with silence at the edges when the region extends beyond bounds.
 static int run_lego(AceSynth *          ctx,
@@ -646,7 +645,6 @@ static int run_lego(AceSynth *          ctx,
     }
     s.is_lego_region          = (s.rr.repainting_end > s.rr.repainting_start);
     s.use_source_context      = true;
-    s.rr.audio_cover_strength = 1.0f;
     std::string track_upper = prepare_track(s.rr.track, "Lego");
     s.instruction_str       = dit_instr_lego(track_upper);
     fprintf(stderr, "[Synth-Run] task=%s\n", reqs[0].task_type.c_str());
@@ -727,16 +725,21 @@ struct SynthTask {
     SynthTaskFn  run;
     bool         needs_source;
     bool         needs_caption;
+    // Whether audio_cover_strength and cover_noise_strength are the task's
+    // to read: a cover's alone (docs/ARCHITECTURE.md). Every other task runs
+    // at their defaults -- a lego, an extract, a complete at full source
+    // context, never switched to silence or started from the source (#1135).
+    bool         cover_knobs;
 };
 
 static const SynthTask kSynthTasks[] = {
-    { TASK_TEXT2MUSIC,  run_text2music,  false, true  },
-    { TASK_COVER,       run_cover,       true,  true  },
-    { TASK_COVER_NOFSQ, run_cover_nofsq, true,  true  },
-    { TASK_REPAINT,     run_repaint,     true,  true  },
-    { TASK_LEGO,        run_lego,        true,  false },
-    { TASK_EXTRACT,     run_extract,     true,  false },
-    { TASK_COMPLETE,    run_complete,    true,  false },
+    { TASK_TEXT2MUSIC,  run_text2music,  false, true,  false },
+    { TASK_COVER,       run_cover,       true,  true,  true  },
+    { TASK_COVER_NOFSQ, run_cover_nofsq, true,  true,  true  },
+    { TASK_REPAINT,     run_repaint,     true,  true,  false },
+    { TASK_LEGO,        run_lego,        true,  false, false },
+    { TASK_EXTRACT,     run_extract,     true,  false, false },
+    { TASK_COMPLETE,    run_complete,    true,  false, false },
 };
 
 // The table's row for a task, by name; NULL for one it does not hold.
@@ -787,15 +790,16 @@ int ace_test_source_ignores() {
 // The cover strength the last run ran with, and whether it built the switch
 // to a non-cover text encode -- what its task made of the request's
 // (ace_test_last_cover_strength, ace_test_last_enc_switch).
-static std::atomic<float> g_test_last_cover_strength{ 0.0f };
+// Reset when each run starts and written however it ends, so none is a
+// former run's.
+static std::atomic<float> g_test_last_cover_strength{ -1.0f };
+static std::atomic<float> g_test_last_cover_noise{ -1.0f };
 static std::atomic<bool>  g_test_last_enc_switch{ false };
+static std::atomic<int>   g_test_last_cover_steps{ -2 };
 
-float ace_test_last_cover_strength() {
-    return g_test_last_cover_strength.load();
-}
-
-bool ace_test_last_enc_switch() {
-    return g_test_last_enc_switch.load();
+AceTestCoverRecord ace_test_last_cover() {
+    return { g_test_last_cover_strength.load(), g_test_last_cover_noise.load(), g_test_last_enc_switch.load(),
+             g_test_last_cover_steps.load() };
 }
 
 // Dispatches on reqs[0].task_type to the right task function. task_type is
@@ -810,6 +814,10 @@ static AceSynthJob * run_task(AceSynth *          ctx,
     // table's needs_source), are refused before the job is made -- the name
     // first, so a misspelt task is said as that. A task that takes no source
     // given one is warned of.
+    g_test_last_cover_strength.store(-1.0f);
+    g_test_last_cover_noise.store(-1.0f);
+    g_test_last_enc_switch.store(false);
+    g_test_last_cover_steps.store(-2);
     const std::string & task  = reqs[0].task_type;
     const SynthTask *   entry = find_synth_task(task);
     if (!entry) {
@@ -833,10 +841,38 @@ static AceSynthJob * run_task(AceSynth *          ctx,
     // run that ends without it -- -1, or a throw (#403) --
     // frees it, handing out its encodes first (JobOwner).
     JobOwner     job_owner(ctx, alloc_job(ctx, reqs, batch_n));
-    SynthState & s  = job_owner.get()->state;
-    const int    rc = entry->run(ctx, reqs, in, batch_n, s, progress);
-    g_test_last_cover_strength.store(s.rr.audio_cover_strength);
-    g_test_last_enc_switch.store(s.need_enc_switch);
+    SynthState & s = job_owner.get()->state;
+    // The cover knobs are a cover's alone: every other task runs at their
+    // defaults, said when it was asked otherwise (#1135).
+    if (!entry->cover_knobs) {
+        AceRequest def;
+        request_init(&def);
+        if (s.rr.audio_cover_strength != def.audio_cover_strength ||
+            s.rr.cover_noise_strength != def.cover_noise_strength) {
+            fprintf(stderr,
+                    "[Synth-Run] WARNING: task '%s' runs at audio_cover_strength %.2f, cover_noise_strength %.2f, "
+                    "not the %.2f, %.2f asked: they are a cover's\n",
+                    task.c_str(), def.audio_cover_strength, def.cover_noise_strength, s.rr.audio_cover_strength,
+                    s.rr.cover_noise_strength);
+        }
+        s.rr.audio_cover_strength = def.audio_cover_strength;
+        s.rr.cover_noise_strength = def.cover_noise_strength;
+    }
+
+    // What the run made of the request, written however it ends -- a throw
+    // included -- while the job's state still stands (destroyed before it).
+    struct CoverRecord {
+        const SynthState & s;
+
+        ~CoverRecord() {
+            g_test_last_cover_strength.store(s.rr.audio_cover_strength);
+            g_test_last_cover_noise.store(s.rr.cover_noise_strength);
+            g_test_last_enc_switch.store(s.need_enc_switch);
+            g_test_last_cover_steps.store(s.cover_steps);
+        }
+    } record{ s };
+
+    const int rc = entry->run(ctx, reqs, in, batch_n, s, progress);
     return rc == 0 ? job_owner.release() : NULL;
 }
 
