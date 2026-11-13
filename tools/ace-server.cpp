@@ -245,7 +245,6 @@ static const int                                             MAX_JOBS = 32;
 // GGUF, which is fixed at [15000, 64] f32. The pipeline indexes into it
 // directly when padding context, so any T_latent above 15000 would walk
 // past the buffer. Same hard limit ops_resolve_T enforces on s.T.
-static const int MAX_T_LATENT = ACE_MAX_LATENT_FRAMES;  // the run's most (cadenza-audio #1139)
 
 // Latent payload format: raw f32 [T * 64] little-endian, no header. Same
 // layout neural-codec emits in --encode -f f32 mode and what /synth,
@@ -254,7 +253,7 @@ static const int LATENT_CHANNELS    = 64;
 static const int LATENT_FRAME_BYTES = LATENT_CHANNELS * (int) sizeof(float);
 
 // Validate a latent payload coming from the wire: size must be a strict
-// multiple of one frame, T must be in (0, MAX_T_LATENT]. Returns the frame
+// multiple of one frame, T must be in (0, ACE_MAX_LATENT_FRAMES]. Returns the frame
 // count or -1 on failure (with the HTTP code the caller should reply).
 static int latent_payload_validate(size_t size, int * http_code_out) {
     if (size == 0 || (size % LATENT_FRAME_BYTES) != 0) {
@@ -1351,11 +1350,13 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
     ModelHandle vae_guard(g_store, vae);
 
     // 1 latent frame covers 1920 audio samples, plus a safety tile for the
-    // tiled encoder boundary rounding. Capped at MAX_T_LATENT so oversized
+    // tiled encoder boundary rounding. Capped at the run's most and that tile
+    // -- the handler's pre-check refuses what is past the most, and a source
+    // at it keeps its margin (cadenza-audio #1144)
     // audio never sneaks past the handler-side pre-check.
     int T_latent_max = src_len / 1920 + 64;
-    if (T_latent_max > MAX_T_LATENT) {
-        T_latent_max = MAX_T_LATENT;
+    if (T_latent_max > ACE_MAX_LATENT_FRAMES + 64) {
+        T_latent_max = ACE_MAX_LATENT_FRAMES + 64;
     }
     std::vector<float> latent((size_t) T_latent_max * LATENT_CHANNELS);
     int                T_latent =

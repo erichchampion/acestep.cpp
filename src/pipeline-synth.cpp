@@ -376,8 +376,13 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
 // src_dur is the unpadded source duration in seconds, agnostic of audio vs
 // latent input. Returns false when the resolved range is empty or inverted.
 static bool adjust_region_coords(SynthState & s, float src_dur) {
-    // A bound that is no number was refused by apply_outpainting_padding,
-    // which every caller runs first on the same bounds (#1144).
+    // A bound that is no number was refused by refuse_nonfinite_region before
+    // any pad or encode (#1144); kept here too, so a caller that skips it
+    // still never reads NaN as frame 0 and repaints from the start (#1129).
+    if (!std::isfinite(s.rs) || !std::isfinite(s.re)) {
+        fprintf(stderr, "[Region] ERROR: a region bound is not a finite number\n");
+        return false;
+    }
     s.rs += s.left_pad_sec;
     s.re = asked_region_end(s.rr.repainting_start, s.re, src_dur) + s.left_pad_sec;
     if (s.re <= s.rs) {
@@ -462,8 +467,11 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
     // loads the encoder or the encode spends minutes on it -- for every synth
     // task, as ops_resolve_T would refuse its T after (cadenza-audio #1144).
     // An outpaint's pads were bounded before they were allocated (#1139);
-    // this is the source a task encodes, padded or not.
-    if (refuse_past_run_most(src.frames(), "the source")) {
+    // this is the source a task encodes, padded or not. Its frames are
+    // rounded up to the DiT's patch, as ops_resolve_T rounds T, so the two
+    // bounds agree for any patch_size, not only one that divides the most.
+    const long long patch            = ctx->meta->cfg.patch_size > 0 ? ctx->meta->cfg.patch_size : 1;
+    if (refuse_past_run_most((src.frames() + patch - 1) / patch * patch, "the source")) {
         return false;
     }
     bool        need_vae_pin     = (have_src_audio || have_ref_audio);

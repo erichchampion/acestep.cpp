@@ -1058,14 +1058,30 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         // audio of as many whole frames for a cover, whose encode it skips.
         {
             const std::vector<float> long_latents((size_t) (ACE_MAX_LATENT_FRAMES + 1) * 64, 0.0f);
-            for (const char * task : { "cover", "cover-nofsq", "repaint", "lego", "extract", "complete" }) {
+
+            // A lego both whole and over a region: the region one is padded
+            // (by none, here) before the bound sees it.
+            struct Case {
+                const char * task;
+                bool         region;
+            };
+
+            for (const Case & c : {
+                     Case{ "cover",       false },
+                     Case{ "cover-nofsq", false },
+                     Case{ "repaint",     true  },
+                     Case{ "lego",        false },
+                     Case{ "lego",        true  },
+                     Case{ "extract",     false },
+                     Case{ "complete",    false }
+            }) {
                 AceSynthEncodes too_long;
                 const int       before = ace_test_source_too_long();
-                const bool      region = strcmp(task, "repaint") == 0;
-                if (!run(task, NULL, NULL, too_long, region, 0, &long_latents) ||
+                if (!run(c.task, NULL, NULL, too_long, c.region, 0, &long_latents) ||
                     ace_test_source_too_long() != before + 1 || !too_long.src_latents.empty()) {
-                    fprintf(stderr, "[Test] FAIL: the %s from latents of %d frames was not refused before its encode\n",
-                            task, ACE_MAX_LATENT_FRAMES + 1);
+                    fprintf(stderr,
+                            "[Test] FAIL: the %s%s from latents of %d frames was not refused before its encode\n",
+                            c.task, c.region ? " region" : "", ACE_MAX_LATENT_FRAMES + 1);
                     rc = 1;
                 }
             }
@@ -1077,8 +1093,12 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 static_cast<float *>(calloc((size_t) long_len * 2, sizeof(float))), &free);
             AceSynthEncodes          too_long;
             const int                before = ace_test_source_too_long();
-            if (!run("cover", long_audio.get(), NULL, too_long, false, 0, nullptr, 0.5f, 1.5f, long_len) ||
-                ace_test_source_too_long() != before + 1 || !too_long.src_latents.empty()) {
+            if (!long_audio) {
+                fprintf(stderr, "[Test] FAIL: could not allocate %d frames of audio for the over-long cover\n",
+                        ACE_MAX_LATENT_FRAMES + 1);
+                rc = 1;
+            } else if (!run("cover", long_audio.get(), NULL, too_long, false, 0, nullptr, 0.5f, 1.5f, long_len) ||
+                       ace_test_source_too_long() != before + 1 || !too_long.src_latents.empty()) {
                 fprintf(stderr, "[Test] FAIL: a cover from audio of %d frames was not refused before its encode\n",
                         ACE_MAX_LATENT_FRAMES + 1);
                 rc = 1;
