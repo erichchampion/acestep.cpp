@@ -1027,12 +1027,15 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             rc = 1;
         }
         // Nor a region whose end is far past what a run holds: refused before
-        // its pad is allocated -- gigabytes of one, for 1e10 s (#1139).
+        // its pad is allocated -- gigabytes of one, for 1e10 s (#1139) -- by
+        // the bound, not by a failure further in (#1144).
         for (const bool as_latents : { true, false }) {
             AceSynthEncodes far;
+            const int       before = ace_test_source_too_long();
             if ((as_latents && cover.src_latents.empty()) ||
                 !run("repaint", as_latents ? NULL : source.data(), NULL, far, true, 0,
-                     as_latents ? &cover.src_latents : nullptr, 0.5f, 1e10f)) {
+                     as_latents ? &cover.src_latents : nullptr, 0.5f, 1e10f) ||
+                ace_test_source_too_long() != before + 1) {
                 fprintf(stderr, "[Test] FAIL: a %s repaint to 1e10 s returned a job, or reached its DiT\n",
                         as_latents ? "latent" : "audio");
                 rc = 1;
@@ -1041,8 +1044,10 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         // And at the most: a latent outpaint to 600.04 s on the 2 s source pads
         // to 15001 frames, one past a run's most, and is refused (#1139).
         AceSynthEncodes past_most;
+        const int       before_most = ace_test_source_too_long();
         if (cover.src_latents.empty() ||
-            !run("repaint", NULL, NULL, past_most, true, 0, &cover.src_latents, 1.0f, 600.04f)) {
+            !run("repaint", NULL, NULL, past_most, true, 0, &cover.src_latents, 1.0f, 600.04f) ||
+            ace_test_source_too_long() != before_most + 1) {
             fprintf(stderr, "[Test] FAIL: a latent outpaint to 15001 frames returned a job, or reached its DiT\n");
             rc = 1;
         }
@@ -1065,9 +1070,11 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 }
             }
             const int                long_len = (ACE_MAX_LATENT_FRAMES + 1) * ACE_LATENT_HOP;
-            // Never read when the bound holds: allocated, not filled, so its
-            // 230 MB are never touched.
-            const std::unique_ptr<float[]> long_audio(new float[(size_t) long_len * 2]);
+            // Zeros, by calloc: never touched when the bound holds (its 230 MB
+            // are not faulted in), and silence, not indeterminate floats, for
+            // an encode that runs when it does not.
+            const std::unique_ptr<float, decltype(&free)> long_audio(
+                static_cast<float *>(calloc((size_t) long_len * 2, sizeof(float))), &free);
             AceSynthEncodes          too_long;
             const int                before = ace_test_source_too_long();
             if (!run("cover", long_audio.get(), NULL, too_long, false, 0, nullptr, 0.5f, 1.5f, long_len) ||
@@ -1077,12 +1084,22 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 rc = 1;
             }
         }
-        // Nor a region whose bound is no number: refused, not read as 0 s.
-        AceSynthEncodes nan_bound;
-        if (!run("repaint", source.data(), NULL, nan_bound, true, 0, nullptr, std::nanf(""), 1.0f) ||
-            !nan_bound.src_latents.empty()) {
-            fprintf(stderr, "[Test] FAIL: a repaint from a NaN start returned a job, or reached its DiT\n");
-            rc = 1;
+        // Nor a region whose bound is no number: refused, not read as 0 s --
+        // before its pad and its source's encode, by a repaint and a lego
+        // alike; a lego's would else read as no region and run whole (#1144).
+        for (const char * task : { "repaint", "lego" }) {
+            for (const bool nan_start : { true, false }) {
+                AceSynthEncodes nan_bound;
+                const int       before = ace_test_region_nonfinite();
+                const float     rs     = nan_start ? std::nanf("") : 0.5f;
+                const float     re     = nan_start ? 1.0f : std::nanf("");
+                if (!run(task, source.data(), NULL, nan_bound, true, 0, nullptr, rs, re) ||
+                    ace_test_region_nonfinite() != before + 1 || !nan_bound.src_latents.empty()) {
+                    fprintf(stderr, "[Test] FAIL: the %s with a NaN %s was not refused before its encode\n", task,
+                            nan_start ? "start" : "end");
+                    rc = 1;
+                }
+            }
         }
     }
     // A cover whose FSQ roundtrip cannot run fails before its DiT, and still

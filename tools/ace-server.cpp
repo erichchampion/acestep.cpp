@@ -270,7 +270,7 @@ static int latent_payload_validate(size_t size, int * http_code_out) {
         }
         return -1;
     }
-    if (T > MAX_T_LATENT) {
+    if (frames_past_run_most(T)) {
         if (http_code_out) {
             *http_code_out = 413;
         }
@@ -1451,7 +1451,8 @@ static void handle_vae(const httplib::Request & req, httplib::Response & res) {
             json_error(res, 400, "Failed to decode audio");
             return;
         }
-        if ((int64_t) T_audio / 1920 >= (int64_t) MAX_T_LATENT) {
+        // The engine's bound: 600 s of whole frames runs (cadenza-audio #1144).
+        if (frames_past_run_most(samples_frames_floor(T_audio))) {
             free(planar);
             json_error(res, 413, "audio exceeds max duration (10 min)");
             return;

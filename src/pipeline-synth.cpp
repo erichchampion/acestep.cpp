@@ -205,6 +205,27 @@ static RegionFrames asked_region_frames(float rs_raw, float re_raw, float src_du
              sec_latent_frame_end(asked_region_end(rs_raw, re_raw, src_dur) + left_pad_sec) };
 }
 
+// The runs refused for a region bound that is no number, before its pad or
+// its source's encode (ace_test_region_nonfinite).
+static std::atomic<int> g_test_region_nonfinite{ 0 };
+
+int ace_test_region_nonfinite() {
+    return g_test_region_nonfinite.load();
+}
+
+// True, said and counted, for a region bound that is no number -- a NaN
+// through the C API, an infinity -- which would read as frame 0 and repaint
+// from the start, unsaid, or pad without end (#1129, #1138, #1144). Every
+// task that reads a region asks it first, before any pad or encode.
+static bool refuse_nonfinite_region(const AceRequest & r) {
+    if (std::isfinite(r.repainting_start) && std::isfinite(r.repainting_end)) {
+        return false;
+    }
+    g_test_region_nonfinite.fetch_add(1);
+    fprintf(stderr, "[Region] ERROR: a region bound is not a finite number\n");
+    return true;
+}
+
 // The runs refused for a source, with its pads if any, past a run's most
 // frames -- before its pad is allocated or its encode run
 // (ace_test_source_too_long).
@@ -248,6 +269,9 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
                                       SynthState &       s,
                                       SynthInput &       enc) {
     enc = src;
+    if (refuse_nonfinite_region(r)) {
+        return false;
+    }
 
     float src_dur  = src.duration_sec();
     float rs_raw   = r.repainting_start;
@@ -256,14 +280,6 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
     float lpad     = (rs_raw < 0.0f) ? -rs_raw : 0.0f;
     float rpad     = (end_time > src_dur) ? end_time - src_dur : 0.0f;
     s.left_pad_sec = lpad;
-    // A bound that is no number is refused here, before its pad -- an
-    // infinite one -- or the source's encode (#1129, #1138, #1144); it would
-    // read as frame 0 and repaint from the start, unsaid.
-    if (!std::isfinite(rs_raw) || !std::isfinite(re_raw)) {
-        s.left_pad_sec = 0.0f;
-        fprintf(stderr, "[Region] ERROR: a region bound is not a finite number\n");
-        return false;
-    }
     // The padded frames, in 64 bits, against the run's most.
     auto too_long = [](int64_t frames) {
         return refuse_past_run_most(frames, "the source with its pads");
@@ -360,12 +376,8 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
 // src_dur is the unpadded source duration in seconds, agnostic of audio vs
 // latent input. Returns false when the resolved range is empty or inverted.
 static bool adjust_region_coords(SynthState & s, float src_dur) {
-    // A bound that is no number -- a NaN through the C API, an infinity --
-    // would read as frame 0 and repaint from the start, unsaid (#1129).
-    if (!std::isfinite(s.rs) || !std::isfinite(s.re)) {
-        fprintf(stderr, "[Region] ERROR: a region bound is not a finite number\n");
-        return false;
-    }
+    // A bound that is no number was refused by apply_outpainting_padding,
+    // which every caller runs first on the same bounds (#1144).
     s.rs += s.left_pad_sec;
     s.re = asked_region_end(s.rr.repainting_start, s.re, src_dur) + s.left_pad_sec;
     if (s.re <= s.rs) {
@@ -616,6 +628,11 @@ static int run_lego(AceSynth *          ctx,
                     int                 batch_n,
                     SynthState &        s,
                     AceProgress         progress) {
+    // A bound that is no number is refused, not read as no region: NaN > x
+    // is false, so it would run a whole-song lego, unsaid (#1144).
+    if (refuse_nonfinite_region(reqs[0])) {
+        return -1;
+    }
     s.is_lego_region        = (s.rr.repainting_end > s.rr.repainting_start);
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Lego");

@@ -190,3 +190,7 @@ int ace_test_source_ignores();
 // run -- so a test can tell that refusal from ops_resolve_T's, which comes
 // after the encode (cadenza-audio #1139, #1144).
 int ace_test_source_too_long();
+
+// Tests only: how many runs have been refused for a region bound that is no
+// number, before its pad or its source's encode (cadenza-audio #1144).
+int ace_test_region_nonfinite();
