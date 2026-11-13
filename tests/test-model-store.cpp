@@ -983,6 +983,31 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 whole.src_latents.size(), cover.src_latents.size());
         rc = 1;
     }
+    // A region that ends at or before its start once its -1 end is read is
+    // refused before its pad and its source's encode, by a repaint and a lego
+    // alike: a start past the source's end with -1 (which reads as the
+    // source's end), and an inverted repaint (cadenza-audio #1134).
+    {
+        struct Case {
+            const char * task;
+            float        rs, re;
+        };
+
+        for (const Case & c : {
+                 Case{ "repaint", (float) seconds + 1.0f, -1.0f },
+                 Case{ "lego",    (float) seconds + 1.0f, -1.0f },
+                 Case{ "repaint", 1.5f,                   0.5f  }
+        }) {
+            AceSynthEncodes empty;
+            const int       before = ace_test_region_empty();
+            if (!run(c.task, source.data(), NULL, empty, true, 0, nullptr, c.rs, c.re) ||
+                ace_test_region_empty() != before + 1 || !empty.src_latents.empty()) {
+                fprintf(stderr, "[Test] FAIL: the %s from %.1f s to %.1f s was not refused before its encode\n", c.task,
+                        c.rs, c.re);
+                rc = 1;
+            }
+        }
+    }
     // A lego from 0.5 s with the -1 end is a region to the source's end, as a
     // repaint's: it splices, so it hands out none (#1134). (The whole-song
     // lego above is the defaults, 0 and -1: no region.)

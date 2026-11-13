@@ -618,10 +618,16 @@ noise level. `cover_steps` is recalculated against the remaining steps.
 
 **`repainting_start`** (float seconds, default `0`)
 **`repainting_end`** (float seconds, default `-1`)
-Region boundaries for `repaint` and `lego` modes. Default end (`-1`) resolves
-to source start when outpainting (start < 0), source duration otherwise.
-Negative start pads silence before, end beyond source duration pads after.
-Error if end <= start after adjustment.
+Region boundaries for `repaint` and `lego` modes. Default end (`-1`, or any
+negative end) resolves to source start when outpainting (start < 0), source
+duration otherwise. Negative start pads silence before, end beyond source
+duration pads after. Error, before any encode, if end <= start once the `-1`
+end is read -- an inverted region, or a start at or past the source's end
+with `-1`.
+A `lego` has a region when it gives an end after its start, or the `-1` end
+with a start other than 0; the defaults (`0`, `-1`) are the whole song. A
+lego whose own end is at or before its start runs the whole song, with a
+warning.
 
 **`task_type`** (string, default `"text2music"`)
 Controls the generation mode. This field is the single source of truth for

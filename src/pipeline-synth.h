@@ -198,6 +198,10 @@ int ace_test_source_too_long();
 // number, before its pad or its source's encode (cadenza-audio #1144).
 int ace_test_region_nonfinite();
 
+// Tests only: how many runs have been refused for a region that ends at or
+// before its start, before its pad or its source's encode (cadenza-audio #1134).
+int ace_test_region_empty();
+
 // Tests only: what the last run made of the request's cover knobs -- the
 // strength and noise it ran with, whether it built the switch to a non-cover
 // text encode, the step its context switches to silence at (-1: none), and

@@ -228,6 +228,15 @@ static bool refuse_nonfinite_region(const AceRequest & r) {
     return true;
 }
 
+// The runs refused for a region that ends at or before its start, once its
+// -1 end is read, before its pad or its source's encode
+// (ace_test_region_empty).
+static std::atomic<int> g_test_region_empty{ 0 };
+
+int ace_test_region_empty() {
+    return g_test_region_empty.load();
+}
+
 // The runs refused for a source, with its pads if any, past a run's most
 // frames -- before its pad is allocated or its encode run
 // (ace_test_source_too_long).
@@ -279,6 +288,15 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
     float rs_raw   = r.repainting_start;
     float re_raw   = r.repainting_end;
     float end_time = asked_region_end(rs_raw, re_raw, src_dur);
+    // A region that ends at or before its start -- an inverted repaint, or a
+    // start at or past the source's end with the -1 end, which reads as the
+    // source's end -- is refused here, before its pad or its source's encode,
+    // as adjust_region_coords would refuse it after (#1134).
+    if (end_time <= rs_raw) {
+        g_test_region_empty.fetch_add(1);
+        fprintf(stderr, "[Region] ERROR: end (%.1f) <= start (%.1f)\n", end_time, rs_raw);
+        return false;
+    }
     float lpad     = (rs_raw < 0.0f) ? -rs_raw : 0.0f;
     float rpad     = (end_time > src_dur) ? end_time - src_dur : 0.0f;
     s.left_pad_sec = lpad;
@@ -640,12 +658,18 @@ static int run_lego(AceSynth *          ctx,
                     int                 batch_n,
                     SynthState &        s,
                     AceProgress         progress) {
-    // A bound that is no number is refused, not read as no region: NaN > x
-    // is false, so it would run a whole-song lego, unsaid (#1144).
+    // A bound that is no number is refused, not read as a region or none:
+    // lego_asks_region has no right answer for one (#1144).
     if (refuse_nonfinite_region(reqs[0])) {
         return -1;
     }
     s.is_lego_region        = lego_asks_region(s.rr.repainting_start, s.rr.repainting_end);
+    // An end of its own at or before the start asks no region a lego can
+    // run -- a repaint refuses it -- so the lego runs the whole song, said.
+    if (!s.is_lego_region && s.rr.repainting_end >= 0.0f && s.rr.repainting_end <= s.rr.repainting_start) {
+        fprintf(stderr, "[Region] WARNING: lego region %.1f..%.1f s ends at or before its start: the whole song\n",
+                s.rr.repainting_start, s.rr.repainting_end);
+    }
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Lego");
     s.instruction_str       = dit_instr_lego(track_upper);
