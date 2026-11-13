@@ -779,25 +779,27 @@ static int scenario_task_table() {
 
     struct Want {
         const char * task;
-        bool         needs_source, needs_caption;
+        bool         needs_source, needs_caption, cover_knobs;
     };
 
     for (const Want & w : {
-             Want{ "text2music",  false, true  },
-             Want{ "cover",       true,  true  },
-             Want{ "cover-nofsq", true,  true  },
-             Want{ "repaint",     true,  true  },
-             Want{ "lego",        true,  false },
-             Want{ "extract",     true,  false },
-             Want{ "complete",    true,  false }
+             Want{ "text2music",  false, true,  false },
+             Want{ "cover",       true,  true,  true  },
+             Want{ "cover-nofsq", true,  true,  true  },
+             Want{ "repaint",     true,  true,  false },
+             Want{ "lego",        true,  false, false },
+             Want{ "extract",     true,  false, false },
+             Want{ "complete",    true,  false, false }
     }) {
-        AceSynthTaskInfo info{ !w.needs_source, !w.needs_caption };
+        AceSynthTaskInfo info{ !w.needs_source, !w.needs_caption, !w.cover_knobs };
         if (!ace_synth_task_info(w.task, &info)) {
             fprintf(stderr, "[Test] FAIL: the task table does not know %s\n", w.task);
             rc = 1;
-        } else if (info.needs_source != w.needs_source || info.needs_caption != w.needs_caption) {
-            fprintf(stderr, "[Test] FAIL: %s needs_source %d needs_caption %d, want %d %d\n", w.task, info.needs_source,
-                    info.needs_caption, w.needs_source, w.needs_caption);
+        } else if (info.needs_source != w.needs_source || info.needs_caption != w.needs_caption ||
+                   info.cover_knobs != w.cover_knobs) {
+            fprintf(stderr, "[Test] FAIL: %s needs_source %d needs_caption %d cover_knobs %d, want %d %d %d\n", w.task,
+                    info.needs_source, info.needs_caption, info.cover_knobs, w.needs_source, w.needs_caption,
+                    w.cover_knobs);
             rc = 1;
         }
     }
@@ -1138,14 +1140,17 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             bool         cover;
         };
 
+        // The cover with no noise first: its steps are the full schedule a
+        // noise blend truncates, which no other task's may be.
+        int full_steps = -1;
         for (const Case & c : {
+                 Case{ "cover",    false, 0.0f, true  },
+                 Case{ "cover",    false, 0.5f, true  },
                  Case{ "lego",     false, 0.5f, false },
                  Case{ "lego",     true,  0.5f, false },
                  Case{ "extract",  false, 0.5f, false },
                  Case{ "complete", false, 0.5f, false },
-                 Case{ "repaint",  true,  0.5f, false },
-                 Case{ "cover",    false, 0.0f, true  },
-                 Case{ "cover",    false, 0.5f, true  }
+                 Case{ "repaint",  true,  0.5f, false }
         }) {
             AceSynthEncodes kept;
             const char *    what = c.region ? " region" : "";
@@ -1156,15 +1161,23 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 continue;
             }
             const AceTestCoverRecord got = ace_test_last_cover();
-            const bool ok = c.cover ?
-                                got.strength == 0.5f && got.noise == c.noise && got.enc_switch && got.cover_steps >= 0 :
-                                got.strength == 1.0f && got.noise == 0.0f && !got.enc_switch && got.cover_steps == -1;
+            if (full_steps < 0) {
+                full_steps = got.num_steps;
+            }
+            // A noise blend's effect is its truncated schedule: a cover's
+            // with noise is shorter, every other task's the full one.
+            const bool steps_ok =
+                (c.cover && c.noise > 0.0f) ? got.num_steps < full_steps : got.num_steps == full_steps;
+            const bool knobs_ok =
+                c.cover ? got.strength == 0.5f && got.noise == c.noise && got.enc_switch && got.cover_steps >= 0 :
+                          got.strength == 1.0f && got.noise == 0.0f && !got.enc_switch && got.cover_steps == -1;
+            const bool ok = steps_ok && knobs_ok;
             if (!ok) {
                 fprintf(stderr,
                         "[Test] FAIL: the %s%s asked strength 0.5, noise %.2f ran at %.2f, %.2f, %s its switch, "
-                        "silence from step %d\n",
+                        "silence from step %d, %d of %d steps\n",
                         c.task, what, c.noise, got.strength, got.noise, got.enc_switch ? "with" : "without",
-                        got.cover_steps);
+                        got.cover_steps, got.num_steps, full_steps);
                 rc = 1;
             }
         }

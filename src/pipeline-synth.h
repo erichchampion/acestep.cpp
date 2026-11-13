@@ -158,6 +158,9 @@ void ace_synth_free(AceSynth * ctx);
 struct AceSynthTaskInfo {
     bool needs_source  = false;
     bool needs_caption = false;
+    // Whether the task reads audio_cover_strength and cover_noise_strength;
+    // every other runs at their defaults (cadenza-audio #1135).
+    bool cover_knobs   = false;
 };
 
 bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
@@ -197,14 +200,16 @@ int ace_test_region_nonfinite();
 
 // Tests only: what the last run made of the request's cover knobs -- the
 // strength and noise it ran with, whether it built the switch to a non-cover
-// text encode, and the step its context switches to silence at (-1: none).
-// Reset when a run starts (strength and noise -1, steps -2), written however
-// it ends (cadenza-audio #1135).
+// text encode, the step its context switches to silence at (-1: none), and
+// its steps -- which a noise blend truncates. Reset when a run starts
+// (strength and noise -1, cover_steps -2), written however it ends
+// (cadenza-audio #1135).
 struct AceTestCoverRecord {
     float strength;
     float noise;
     bool  enc_switch;
     int   cover_steps;
+    int   num_steps;
 };
 
 AceTestCoverRecord ace_test_last_cover();

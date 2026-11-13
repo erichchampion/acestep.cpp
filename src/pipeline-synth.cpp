@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -172,6 +173,7 @@ static AceSynthJob * alloc_job(AceSynth * ctx, const AceRequest * reqs, int batc
     s.re              = s.rr.repainting_end;
     s.is_repaint      = false;
     s.is_lego_region  = false;
+    s.cover_steps     = -1;  // no switch to silence until the context says one
     s.have_cover      = false;
     s.T_cover         = 0;
     debug_init(&s.dbg, ctx->params.dump_dir);
@@ -643,8 +645,8 @@ static int run_lego(AceSynth *          ctx,
     if (refuse_nonfinite_region(reqs[0])) {
         return -1;
     }
-    s.is_lego_region          = (s.rr.repainting_end > s.rr.repainting_start);
-    s.use_source_context      = true;
+    s.is_lego_region        = (s.rr.repainting_end > s.rr.repainting_start);
+    s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Lego");
     s.instruction_str       = dit_instr_lego(track_upper);
     fprintf(stderr, "[Synth-Run] task=%s\n", reqs[0].task_type.c_str());
@@ -760,6 +762,7 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
     if (info) {
         info->needs_source  = entry->needs_source;
         info->needs_caption = entry->needs_caption;
+        info->cover_knobs   = entry->cover_knobs;
     }
     return true;
 }
@@ -791,15 +794,19 @@ int ace_test_source_ignores() {
 // to a non-cover text encode -- what its task made of the request's
 // (ace_test_last_cover_strength, ace_test_last_enc_switch).
 // Reset when each run starts and written however it ends, so none is a
-// former run's.
-static std::atomic<float> g_test_last_cover_strength{ -1.0f };
-static std::atomic<float> g_test_last_cover_noise{ -1.0f };
-static std::atomic<bool>  g_test_last_enc_switch{ false };
-static std::atomic<int>   g_test_last_cover_steps{ -2 };
+// former run's; one snapshot under one lock, so none mixes two runs.
+static const AceTestCoverRecord kCoverRecordUnset{ -1.0f, -1.0f, false, -2, -1 };
+static std::mutex               g_test_cover_mutex;
+static AceTestCoverRecord       g_test_last_cover = kCoverRecordUnset;
+
+static void set_test_last_cover(const AceTestCoverRecord & r) {
+    std::lock_guard<std::mutex> lock(g_test_cover_mutex);
+    g_test_last_cover = r;
+}
 
 AceTestCoverRecord ace_test_last_cover() {
-    return { g_test_last_cover_strength.load(), g_test_last_cover_noise.load(), g_test_last_enc_switch.load(),
-             g_test_last_cover_steps.load() };
+    std::lock_guard<std::mutex> lock(g_test_cover_mutex);
+    return g_test_last_cover;
 }
 
 // Dispatches on reqs[0].task_type to the right task function. task_type is
@@ -814,10 +821,7 @@ static AceSynthJob * run_task(AceSynth *          ctx,
     // table's needs_source), are refused before the job is made -- the name
     // first, so a misspelt task is said as that. A task that takes no source
     // given one is warned of.
-    g_test_last_cover_strength.store(-1.0f);
-    g_test_last_cover_noise.store(-1.0f);
-    g_test_last_enc_switch.store(false);
-    g_test_last_cover_steps.store(-2);
+    set_test_last_cover(kCoverRecordUnset);
     const std::string & task  = reqs[0].task_type;
     const SynthTask *   entry = find_synth_task(task);
     if (!entry) {
@@ -843,12 +847,13 @@ static AceSynthJob * run_task(AceSynth *          ctx,
     JobOwner     job_owner(ctx, alloc_job(ctx, reqs, batch_n));
     SynthState & s = job_owner.get()->state;
     // The cover knobs are a cover's alone: every other task runs at their
-    // defaults, said when it was asked otherwise (#1135).
+    // defaults, said when a task with a source -- one they would have
+    // reached -- was asked otherwise; text2music never read them (#1135).
     if (!entry->cover_knobs) {
         AceRequest def;
         request_init(&def);
-        if (s.rr.audio_cover_strength != def.audio_cover_strength ||
-            s.rr.cover_noise_strength != def.cover_noise_strength) {
+        if (entry->needs_source && (s.rr.audio_cover_strength != def.audio_cover_strength ||
+                                    s.rr.cover_noise_strength != def.cover_noise_strength)) {
             fprintf(stderr,
                     "[Synth-Run] WARNING: task '%s' runs at audio_cover_strength %.2f, cover_noise_strength %.2f, "
                     "not the %.2f, %.2f asked: they are a cover's\n",
@@ -865,10 +870,8 @@ static AceSynthJob * run_task(AceSynth *          ctx,
         const SynthState & s;
 
         ~CoverRecord() {
-            g_test_last_cover_strength.store(s.rr.audio_cover_strength);
-            g_test_last_cover_noise.store(s.rr.cover_noise_strength);
-            g_test_last_enc_switch.store(s.need_enc_switch);
-            g_test_last_cover_steps.store(s.cover_steps);
+            set_test_last_cover({ s.rr.audio_cover_strength, s.rr.cover_noise_strength, s.need_enc_switch,
+                                  s.cover_steps, s.num_steps });
         }
     } record{ s };
 
