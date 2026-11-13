@@ -194,3 +194,9 @@ int ace_test_source_too_long();
 // Tests only: how many runs have been refused for a region bound that is no
 // number, before its pad or its source's encode (cadenza-audio #1144).
 int ace_test_region_nonfinite();
+
+// Tests only: the audio_cover_strength the last run ran with, and whether it
+// built the switch to a non-cover text encode -- what its task made of the
+// request's, read once the run has ended (cadenza-audio #1135).
+float ace_test_last_cover_strength();
+bool  ace_test_last_enc_switch();

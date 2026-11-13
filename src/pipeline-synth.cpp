@@ -172,6 +172,7 @@ static AceSynthJob * alloc_job(AceSynth * ctx, const AceRequest * reqs, int batc
     s.re              = s.rr.repainting_end;
     s.is_repaint      = false;
     s.is_lego_region  = false;
+    s.need_enc_switch = false;
     s.have_cover      = false;
     s.T_cover         = 0;
     debug_init(&s.dbg, ctx->params.dump_dir);
@@ -627,7 +628,9 @@ static int run_repaint(AceSynth *          ctx,
 
 // lego: stem generation. With valid rs/re: region-constrained, DiT generates
 // only in the zone with full audio context. Without: whole-song generation.
-// audio_cover_strength forced to 1.0 so all DiT steps hear the backing track.
+// audio_cover_strength forced to 1.0 so all DiT steps hear the backing track:
+// a whole-song lego asked less would hear silence for its last steps, and its
+// stem stop following the track (cadenza-audio #1135).
 // Both in.src.audio and in.src.latents are accepted; in region mode the source is
 // padded with silence at the edges when the region extends beyond bounds.
 static int run_lego(AceSynth *          ctx,
@@ -641,8 +644,9 @@ static int run_lego(AceSynth *          ctx,
     if (refuse_nonfinite_region(reqs[0])) {
         return -1;
     }
-    s.is_lego_region        = (s.rr.repainting_end > s.rr.repainting_start);
-    s.use_source_context    = true;
+    s.is_lego_region          = (s.rr.repainting_end > s.rr.repainting_start);
+    s.use_source_context      = true;
+    s.rr.audio_cover_strength = 1.0f;
     std::string track_upper = prepare_track(s.rr.track, "Lego");
     s.instruction_str       = dit_instr_lego(track_upper);
     fprintf(stderr, "[Synth-Run] task=%s\n", reqs[0].task_type.c_str());
@@ -780,6 +784,20 @@ int ace_test_source_ignores() {
     return g_test_source_ignores.load();
 }
 
+// The cover strength the last run ran with, and whether it built the switch
+// to a non-cover text encode -- what its task made of the request's
+// (ace_test_last_cover_strength, ace_test_last_enc_switch).
+static std::atomic<float> g_test_last_cover_strength{ 0.0f };
+static std::atomic<bool>  g_test_last_enc_switch{ false };
+
+float ace_test_last_cover_strength() {
+    return g_test_last_cover_strength.load();
+}
+
+bool ace_test_last_enc_switch() {
+    return g_test_last_enc_switch.load();
+}
+
 // Dispatches on reqs[0].task_type to the right task function. task_type is
 // always set: request_init defaults it to text2music, the JSON parser ignores
 // empty strings.
@@ -817,6 +835,8 @@ static AceSynthJob * run_task(AceSynth *          ctx,
     JobOwner     job_owner(ctx, alloc_job(ctx, reqs, batch_n));
     SynthState & s  = job_owner.get()->state;
     const int    rc = entry->run(ctx, reqs, in, batch_n, s, progress);
+    g_test_last_cover_strength.store(s.rr.audio_cover_strength);
+    g_test_last_enc_switch.store(s.need_enc_switch);
     return rc == 0 ? job_owner.release() : NULL;
 }
 

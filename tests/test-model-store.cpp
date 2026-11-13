@@ -871,13 +871,14 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // a lego, a region; SOURCE LATENTS gives the source as latents.
     auto run = [&](const char * task, const float * src, const float * ref, AceSynthEncodes & kept, bool region = false,
                    int want_polls = 1, const std::vector<float> * src_latents = nullptr, float region_start = 0.5f,
-                   float region_end = 1.5f, int src_len = 0) {
+                   float region_end = 1.5f, int src_len = 0, float cover_strength = 1.0f) {
         AceRequest r;
         request_init(&r);
         r.caption   = "a short test";
         r.duration  = (float) seconds;
         r.seed      = 1;
         r.task_type = task;
+        r.audio_cover_strength = cover_strength;
         if (region) {
             r.repainting_start = region_start;
             r.repainting_end   = region_end;
@@ -1119,6 +1120,36 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                             nan_start ? "start" : "end");
                     rc = 1;
                 }
+            }
+        }
+    }
+    // A lego runs at full cover strength whatever it is asked, as run_lego
+    // says: a whole-song lego asked 0.5 would else hear silence for its last
+    // steps (cadenza-audio #1135). A cover asked 0.5 keeps it and builds its
+    // switch -- the record can tell a partial strength.
+    {
+        struct Case {
+            const char * task;
+            bool         region;
+            float        want;
+            bool         want_switch;
+        };
+
+        for (const Case & c : {
+                 Case{ "lego",  false, 1.0f, false },
+                 Case{ "lego",  true,  1.0f, false },
+                 Case{ "cover", false, 0.5f, true  }
+        }) {
+            AceSynthEncodes kept;
+            if (!run(c.task, source.data(), NULL, kept, c.region, 1, nullptr, 0.5f, 1.5f, 0, 0.5f)) {
+                fprintf(stderr, "[Test] FAIL: the %s%s asked strength 0.5 returned a job, or failed before its DiT\n",
+                        c.task, c.region ? " region" : "");
+                rc = 1;
+            } else if (ace_test_last_cover_strength() != c.want || ace_test_last_enc_switch() != c.want_switch) {
+                fprintf(stderr, "[Test] FAIL: the %s%s asked strength 0.5 ran at %.2f, %s its switch (want %.2f, %s)\n",
+                        c.task, c.region ? " region" : "", ace_test_last_cover_strength(),
+                        ace_test_last_enc_switch() ? "with" : "without", c.want, c.want_switch ? "with" : "without");
+                rc = 1;
             }
         }
     }
