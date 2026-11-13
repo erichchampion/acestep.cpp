@@ -702,6 +702,31 @@ static int scenario_splice_rule() {
     frames("a repaint wholly before the start", true, false, -2.0f, -1.0f, 750, 0, 0);
     frames("an inverted repaint", true, false, 20.0f, 10.0f, 750, 500, 500);
     frames("a cover", false, false, 10.0f, 20.0f, 750, 0, 0);
+    // A lego reads its bounds as a repaint does: the -1 end (any negative)
+    // is the source's end, so a start with it asks a region to there -- or,
+    // before the source, an outpaint -- where it once ran the whole song.
+    // The defaults, 0 and -1, ask the whole song: no region (#1134).
+    {
+        struct Case {
+            float rs, re;
+            bool  want;
+        };
+
+        for (const Case & c : {
+                 Case{ 10.0f, 20.0f, true  },
+                 Case{ 10.0f, -1.0f, true  },
+                 Case{ -5.0f, -1.0f, true  },
+                 Case{ 0.0f,  -1.0f, false },
+                 Case{ 20.0f, 10.0f, false },
+                 Case{ 0.0f,  0.0f,  false }
+        }) {
+            if (lego_asks_region(c.rs, c.re) != c.want) {
+                fprintf(stderr, "[Test] FAIL: a lego from %.1fs to %.1fs asks %s region, want %s\n", c.rs, c.re,
+                        c.want ? "no" : "a", c.want ? "one" : "none");
+                rc = 1;
+            }
+        }
+    }
     // A region on frame starts gets those frames -- every start to 1440 s
     // its own frame, none a frame early, as 2991 once were (#1129).
     for (int k = 0; k <= 36000; k++) {
@@ -957,6 +982,22 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 "cover's, %zu)\n",
                 whole.src_latents.size(), cover.src_latents.size());
         rc = 1;
+    }
+    // A lego from 0.5 s with the -1 end is a region to the source's end, as a
+    // repaint's: it splices, so it hands out none (#1134). (The whole-song
+    // lego above is the defaults, 0 and -1: no region.)
+    {
+        AceSynthEncodes to_end;
+        if (!run("lego", source.data(), NULL, to_end, true, 1, nullptr, 0.5f, -1.0f)) {
+            fprintf(stderr, "[Test] FAIL: a lego from 0.5 s to the end returned a job, or failed before its DiT\n");
+            rc = 1;
+        } else if (!to_end.src_latents.empty()) {
+            fprintf(stderr,
+                    "[Test] FAIL: a lego from 0.5 s to the end kept %zu source values: it ran the whole song, not "
+                    "the region\n",
+                    to_end.src_latents.size());
+            rc = 1;
+        }
     }
     // An extract and a complete, which work from their source but do not
     // splice it, hand out their clean encode too -- the two tasks only this

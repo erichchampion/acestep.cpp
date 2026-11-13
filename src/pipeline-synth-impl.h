@@ -201,6 +201,16 @@ inline bool splices_source_after_decode(const SynthState & s) {
     return s.is_repaint || s.is_lego_region;
 }
 
+// Whether a lego's bounds ask for a region, read as a repaint reads them
+// (cadenza-audio #1134): an end of its own, after the start; or the -1
+// sentinel (any negative end, as asked_region_end reads it) -- the source's
+// end, or for a start before the source the source's start -- with a start
+// other than 0. The defaults, 0 and -1, ask the whole song, which a lego runs
+// as no region: a region of all of it would be the same song, spliced.
+inline bool lego_asks_region(float rs, float re) {
+    return re >= 0.0f ? re > rs : rs != 0.0f;
+}
+
 // The region's latent frames, [repaint_t0, repaint_t1) with
 // 0 <= repaint_t0 <= repaint_t1 <= T -- its first frame the one its start falls
 // in, its end rounded up to cover the last frame it reaches into (#1129); an

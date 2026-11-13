@@ -627,7 +627,7 @@ static int run_repaint(AceSynth *          ctx,
     return 0;
 }
 
-// lego: stem generation. With valid rs/re: region-constrained, DiT generates
+// lego: stem generation. With a region (lego_asks_region): region-constrained, DiT generates
 // only in the zone with full audio context. Without: whole-song generation.
 // audio_cover_strength forced to 1.0 so all DiT steps hear the backing track:
 // run_task holds every task but a cover to the cover knobs' defaults, by the
@@ -645,7 +645,7 @@ static int run_lego(AceSynth *          ctx,
     if (refuse_nonfinite_region(reqs[0])) {
         return -1;
     }
-    s.is_lego_region        = (s.rr.repainting_end > s.rr.repainting_start);
+    s.is_lego_region        = lego_asks_region(s.rr.repainting_start, s.rr.repainting_end);
     s.use_source_context    = true;
     std::string track_upper = prepare_track(s.rr.track, "Lego");
     s.instruction_str       = dit_instr_lego(track_upper);
