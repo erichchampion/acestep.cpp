@@ -26,7 +26,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <memory>
+#include <tuple>
 
 static void dump(ModelStore * s, const char * tag) {
     fprintf(stderr, "[Test] %-24s modules=%d, vram=%.1f MB\n", tag, store_gpu_module_count(s),
@@ -1422,44 +1424,67 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // A cover's knobs out of [0, 1] -- an infinity too -- are clamped to it,
     // said; a NaN runs at its default (cadenza-audio #1152, owner decision).
     // Each run is the run of its clamped knobs: the same steps, the same
-    // switch and silence step as a cover asked those knobs outright.
+    // switch and silence step as a cover asked those knobs outright, run once
+    // per pair. Each knob fixed is warned of, counted. cover-nofsq, the other
+    // task that reads the knobs, is held to the same rule.
     {
         const float nan = std::nanf("");
         const float inf = std::numeric_limits<float>::infinity();
         struct Case {
-            float strength, noise, want_strength, want_noise;
+            const char * task;
+            float        strength, noise, want_strength, want_noise;
+            int          fixes;
         };
 
-        auto cover_run = [&](float strength, float noise, AceTestCoverRecord & got) {
+        auto cover_run = [&](const char * task, float strength, float noise, AceTestCoverRecord & got) {
             AceSynthEncodes kept;
-            const bool ran = run("cover", source.data(), NULL, kept, false, 1, nullptr, 0.5f, 1.5f, 0, strength, noise);
+            const bool ran = run(task, source.data(), NULL, kept, false, 1, nullptr, 0.5f, 1.5f, 0, strength, noise);
             got            = ace_test_last_cover();
             return ran;
         };
+        std::map<std::tuple<std::string, float, float>, AceTestCoverRecord> wants;
         for (const Case & c : {
-                 Case{ 1.5f,  0.0f,  1.0f, 0.0f },
-                 Case{ -0.5f, 0.0f,  0.0f, 0.0f },
-                 Case{ nan,   0.0f,  1.0f, 0.0f },
-                 Case{ inf,   0.0f,  1.0f, 0.0f },
-                 Case{ 0.5f,  1.5f,  0.5f, 1.0f },
-                 Case{ 0.5f,  -0.5f, 0.5f, 0.0f },
-                 Case{ 0.5f,  nan,   0.5f, 0.0f },
-                 Case{ 0.5f,  inf,   0.5f, 1.0f }
+                 Case{ "cover",       1.5f,  0.0f,  1.0f, 0.0f, 1 },
+                 Case{ "cover",       -0.5f, 0.0f,  0.0f, 0.0f, 1 },
+                 Case{ "cover",       nan,   0.0f,  1.0f, 0.0f, 1 },
+                 Case{ "cover",       inf,   0.0f,  1.0f, 0.0f, 1 },
+                 Case{ "cover",       -inf,  0.0f,  0.0f, 0.0f, 1 },
+                 Case{ "cover",       0.5f,  1.5f,  0.5f, 1.0f, 1 },
+                 Case{ "cover",       0.5f,  -0.5f, 0.5f, 0.0f, 1 },
+                 Case{ "cover",       0.5f,  nan,   0.5f, 0.0f, 1 },
+                 Case{ "cover",       0.5f,  inf,   0.5f, 1.0f, 1 },
+                 Case{ "cover",       1.5f,  1.5f,  1.0f, 1.0f, 2 },
+                 Case{ "cover-nofsq", -0.5f, 1.5f,  0.0f, 1.0f, 2 },
         }) {
-            AceTestCoverRecord got, want;
-            if (!cover_run(c.strength, c.noise, got) || !cover_run(c.want_strength, c.want_noise, want)) {
-                fprintf(stderr, "[Test] FAIL: a cover asked %g, %g returned a job, or failed before its DiT\n",
+            const auto key = std::make_tuple(std::string(c.task), c.want_strength, c.want_noise);
+            if (!wants.count(key)) {
+                AceTestCoverRecord want;
+                if (!cover_run(c.task, c.want_strength, c.want_noise, want)) {
+                    fprintf(stderr, "[Test] FAIL: a %s asked %g, %g outright did not reach its DiT\n", c.task,
+                            c.want_strength, c.want_noise);
+                    rc = 1;
+                    continue;
+                }
+                wants[key] = want;
+            }
+            const AceTestCoverRecord & want   = wants[key];
+            const int                  before = ace_test_cover_knob_fixes();
+            AceTestCoverRecord         got;
+            if (!cover_run(c.task, c.strength, c.noise, got)) {
+                fprintf(stderr, "[Test] FAIL: a %s asked %g, %g returned a job, or failed before its DiT\n", c.task,
                         c.strength, c.noise);
                 rc = 1;
                 continue;
             }
+            const int fixes = ace_test_cover_knob_fixes() - before;
             if (got.strength != c.want_strength || got.noise != c.want_noise || got.num_steps != want.num_steps ||
-                got.enc_switch != want.enc_switch || got.cover_steps != want.cover_steps) {
+                got.enc_switch != want.enc_switch || got.cover_steps != want.cover_steps || fixes != c.fixes) {
                 fprintf(stderr,
-                        "[Test] FAIL: a cover asked %g, %g ran at %g, %g (%d steps, switch %d, silence at %d), want "
-                        "%g, %g's run (%d, %d, %d)\n",
-                        c.strength, c.noise, got.strength, got.noise, got.num_steps, got.enc_switch, got.cover_steps,
-                        c.want_strength, c.want_noise, want.num_steps, want.enc_switch, want.cover_steps);
+                        "[Test] FAIL: a %s asked %g, %g ran at %g, %g (%d steps, switch %d, silence at %d, %d "
+                        "warned), want %g, %g's run (%d, %d, %d, %d warned)\n",
+                        c.task, c.strength, c.noise, got.strength, got.noise, got.num_steps, got.enc_switch,
+                        got.cover_steps, fixes, c.want_strength, c.want_noise, want.num_steps, want.enc_switch,
+                        want.cover_steps, c.fixes);
                 rc = 1;
             }
         }

@@ -244,3 +244,7 @@ struct AceTestCoverRecord {
 };
 
 AceTestCoverRecord ace_test_last_cover();
+
+// Tests only: how many cover knobs run_task has clamped to [0, 1], or run at
+// their default for a NaN, each with a warning (cadenza-audio #1152).
+int ace_test_cover_knob_fixes();

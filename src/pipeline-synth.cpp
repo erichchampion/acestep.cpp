@@ -889,6 +889,14 @@ AceTestCoverRecord ace_test_last_cover() {
     return g_test_last_cover;
 }
 
+// The cover knobs run_task has clamped, or run at their default for a NaN
+// (ace_test_cover_knob_fixes).
+static std::atomic<int> g_test_cover_knob_fixes{ 0 };
+
+int ace_test_cover_knob_fixes() {
+    return g_test_cover_knob_fixes.load();
+}
+
 // Dispatches on reqs[0].task_type to the right task function. task_type is
 // always set: request_init defaults it to text2music, the JSON parser ignores
 // empty strings.
@@ -950,20 +958,18 @@ static AceSynthJob * run_task(AceSynth *          ctx,
     } else {
         // A cover's knobs are fractions: one out of [0, 1] -- an infinity
         // too -- is clamped to it, and a NaN, which no clamp can place, runs
-        // at its default; either said (cadenza-audio #1152, owner decision).
-        // A strength below 0 built a switch no step used; a noise past 1 runs
-        // as 1, the shortest schedule the knob allows.
+        // at its default; either said and counted (cadenza-audio #1152, owner
+        // decision). A strength below 0 ran as 1 -- its switch step was
+        // negative, which no step reaches -- and now runs as 0, hearing the
+        // source on no step; a noise past 1 runs as 1, the shortest schedule.
         auto in_range = [&task](float & knob, float fallback, const char * name) {
             const float asked = knob;
-            if (std::isnan(asked)) {
-                knob = fallback;
-                fprintf(stderr, "[Synth-Run] WARNING: task '%s' runs at %s %g, its default: %g is no number\n",
-                        task.c_str(), name, knob, asked);
-                return;
-            }
-            knob = std::clamp(asked, 0.0f, 1.0f);
-            if (knob != asked) {
-                fprintf(stderr, "[Synth-Run] WARNING: task '%s' runs at %s %g, not the %g asked: it is in [0, 1]\n",
+            knob              = std::isnan(asked) ? fallback : std::clamp(asked, 0.0f, 1.0f);
+            if (!(knob == asked)) {  // true for a NaN too
+                g_test_cover_knob_fixes.fetch_add(1);
+                fprintf(stderr,
+                        "[Synth-Run] WARNING: task '%s' runs at %s %g, not the %g asked: a fraction in [0, 1], "
+                        "its default for a NaN\n",
                         task.c_str(), name, knob, asked);
             }
         };
