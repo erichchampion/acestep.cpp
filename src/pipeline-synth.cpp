@@ -766,16 +766,20 @@ struct SynthTask {
     // at their defaults -- a lego, an extract, a complete at full source
     // context, never switched to silence or started from the source (#1135).
     bool         cover_knobs;
+    // Whether the task reads the region (repainting_start/_end) and the
+    // track: a batch's requests must agree in those it reads (#1159).
+    bool         reads_region;
+    bool         reads_track;
 };
 
 static const SynthTask kSynthTasks[] = {
-    { TASK_TEXT2MUSIC,  run_text2music,  false, true,  false },
-    { TASK_COVER,       run_cover,       true,  true,  true  },
-    { TASK_COVER_NOFSQ, run_cover_nofsq, true,  true,  true  },
-    { TASK_REPAINT,     run_repaint,     true,  true,  false },
-    { TASK_LEGO,        run_lego,        true,  false, false },
-    { TASK_EXTRACT,     run_extract,     true,  false, false },
-    { TASK_COMPLETE,    run_complete,    true,  false, false },
+    { TASK_TEXT2MUSIC,  run_text2music,  false, true,  false, false, false },
+    { TASK_COVER,       run_cover,       true,  true,  true,  false, false },
+    { TASK_COVER_NOFSQ, run_cover_nofsq, true,  true,  true,  false, false },
+    { TASK_REPAINT,     run_repaint,     true,  true,  false, true,  false },
+    { TASK_LEGO,        run_lego,        true,  false, false, true,  true  },
+    { TASK_EXTRACT,     run_extract,     true,  false, false, false, true  },
+    { TASK_COMPLETE,    run_complete,    true,  false, false, false, true  },
 };
 
 // The table's row for a task, by name; NULL for one it does not hold.
@@ -809,6 +813,57 @@ bool ace_synth_request_missing_caption(const AceRequest * req) {
     return !entry || entry->needs_caption;
 }
 
+// Whether two floats are the same setting: NaN is NaN, so a batch whose
+// requests all ask a NaN region differs in nothing, and is refused for the
+// NaN itself (refuse_nonfinite_region).
+static bool same_setting(float a, float b) {
+    return a == b || (std::isnan(a) && std::isnan(b));
+}
+
+template <typename T> static bool same_setting(const T & a, const T & b) {
+    return a == b;
+}
+
+// The first field the engine or the tools read from a batch's first request
+// alone in which `b` differs from `a`, said as the reason a batch with them
+// is refused; NULL when they agree (#1159). The task's own: the region, the
+// track and the cover knobs only for a task that reads them, duration only
+// where it sets the length.
+static const char * shared_field_differs(const AceRequest & a,
+                                         const AceRequest & b,
+                                         const SynthTask &  task,
+                                         bool               reads_duration) {
+#define ACE_SHARED(field, read)                                                      \
+    if ((read) && !same_setting(a.field, b.field)) {                                 \
+        return "requests differ in " #field ": a batch runs as its first request's"; \
+    }
+    ACE_SHARED(duration, reads_duration)
+    ACE_SHARED(repainting_start, task.reads_region)
+    ACE_SHARED(repainting_end, task.reads_region)
+    ACE_SHARED(track, task.reads_track)
+    ACE_SHARED(audio_cover_strength, task.cover_knobs)
+    ACE_SHARED(cover_noise_strength, task.cover_knobs)
+    ACE_SHARED(inference_steps, true)
+    ACE_SHARED(guidance_scale, true)
+    ACE_SHARED(shift, true)
+    ACE_SHARED(custom_timesteps, true)
+    ACE_SHARED(solver, true)
+    ACE_SHARED(stork_substeps, true)
+    ACE_SHARED(dcw_scaler, true)
+    ACE_SHARED(dcw_high_scaler, true)
+    ACE_SHARED(dcw_mode, true)
+    ACE_SHARED(latent_shift, true)
+    ACE_SHARED(latent_rescale, true)
+    ACE_SHARED(synth_model, true)
+    ACE_SHARED(vae, true)
+    ACE_SHARED(adapter, true)
+    ACE_SHARED(adapter_scale, true)
+    ACE_SHARED(output_format, true)
+    ACE_SHARED(peak_clip, true)
+#undef ACE_SHARED
+    return nullptr;
+}
+
 bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why) {
     auto refuse = [&](int request, const char * reason) {
         if (why) {
@@ -835,6 +890,25 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
         }
         if (ace_synth_request_missing_caption(&reqs[i])) {
             return refuse(i, "caption is required");
+        }
+    }
+    // The engine reads a batch's shared settings from its first request alone
+    // (s.rr): another's would run as the first's, unsaid -- two legos of two
+    // tracks both as the first's, two repaints of two regions both the
+    // first's. Refused, by the first field that differs (#1159). A take's own
+    // are allowed: its seed, caption, lyrics, metas and codes, its
+    // synth_batch_size and mp3_bitrate, and the LM's fields synth never reads.
+    const SynthTask & task  = *find_synth_task(reqs[0].task_type);
+    // duration sets the length only of a batch with neither a source nor
+    // codes: a source's length, or the longest codes, set it otherwise.
+    bool              codes = false;
+    for (int i = 0; i < batch_n; i++) {
+        codes = codes || !reqs[i].audio_codes.empty();
+    }
+    const bool reads_duration = !task.needs_source && !codes;
+    for (int i = 1; i < batch_n; i++) {
+        if (const char * reason = shared_field_differs(reqs[0], reqs[i], task, reads_duration)) {
+            return refuse(i, reason);
         }
     }
     return false;

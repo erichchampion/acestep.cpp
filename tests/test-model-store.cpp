@@ -986,6 +986,200 @@ static int scenario_task_table() {
             rc = 1;
         }
     }
+    // A batch whose requests differ in a field the batch shares -- one the
+    // engine or the tools read from its first request alone -- is refused, by
+    // the request and the field; one differing only in a take's own fields
+    // runs (#1159). Every field request_to_json writes is held to the table,
+    // so a field added unclassified fails here.
+    {
+        enum Kind { PER_TAKE, SHARED, TASK };
+
+        struct Field {
+            const char * key;
+            Kind         kind;
+            const char * reads;    // a task the field is read under
+            const char * ignores;  // a task it is not, or NULL: every task reads it
+        };
+
+        const std::vector<Field> fields = {
+            { "caption",              PER_TAKE, "text2music", nullptr      },
+            { "lyrics",               PER_TAKE, "text2music", nullptr      },
+            { "bpm",                  PER_TAKE, "text2music", nullptr      },
+            { "duration",             SHARED,   "text2music", "cover"      },
+            { "keyscale",             PER_TAKE, "text2music", nullptr      },
+            { "timesignature",        PER_TAKE, "text2music", nullptr      },
+            { "vocal_language",       PER_TAKE, "text2music", nullptr      },
+            { "lm_batch_size",        PER_TAKE, "text2music", nullptr      },
+            { "synth_batch_size",     PER_TAKE, "text2music", nullptr      },
+            { "seed",                 PER_TAKE, "text2music", nullptr      },
+            { "lm_temperature",       PER_TAKE, "text2music", nullptr      },
+            { "lm_cfg_scale",         PER_TAKE, "text2music", nullptr      },
+            { "lm_top_p",             PER_TAKE, "text2music", nullptr      },
+            { "lm_top_k",             PER_TAKE, "text2music", nullptr      },
+            { "lm_negative_prompt",   PER_TAKE, "text2music", nullptr      },
+            { "lm_seed",              PER_TAKE, "text2music", nullptr      },
+            { "use_cot_caption",      PER_TAKE, "text2music", nullptr      },
+            { "audio_codes",          PER_TAKE, "text2music", nullptr      },
+            { "inference_steps",      SHARED,   "text2music", nullptr      },
+            { "guidance_scale",       SHARED,   "text2music", nullptr      },
+            { "shift",                SHARED,   "text2music", nullptr      },
+            { "dcw_scaler",           SHARED,   "text2music", nullptr      },
+            { "dcw_high_scaler",      SHARED,   "text2music", nullptr      },
+            { "dcw_mode",             SHARED,   "text2music", nullptr      },
+            { "audio_cover_strength", SHARED,   "cover",      "repaint"    },
+            { "cover_noise_strength", SHARED,   "cover",      "lego"       },
+            { "repainting_start",     SHARED,   "repaint",    "cover"      },
+            { "repainting_end",       SHARED,   "lego",       "extract"    },
+            { "latent_shift",         SHARED,   "text2music", nullptr      },
+            { "latent_rescale",       SHARED,   "text2music", nullptr      },
+            { "custom_timesteps",     SHARED,   "text2music", nullptr      },
+            { "task_type",            TASK,     "text2music", nullptr      },
+            { "track",                SHARED,   "extract",    "text2music" },
+            { "solver",               SHARED,   "text2music", nullptr      },
+            { "stork_substeps",       SHARED,   "text2music", nullptr      },
+            { "lm_mode",              PER_TAKE, "text2music", nullptr      },
+            { "output_format",        SHARED,   "text2music", nullptr      },
+            { "synth_model",          SHARED,   "text2music", nullptr      },
+            { "lm_model",             PER_TAKE, "text2music", nullptr      },
+            { "adapter",              SHARED,   "text2music", nullptr      },
+            { "adapter_scale",        SHARED,   "text2music", nullptr      },
+            { "vae",                  SHARED,   "text2music", nullptr      },
+            { "peak_clip",            SHARED,   "text2music", nullptr      },
+            { "mp3_bitrate",          PER_TAKE, "text2music", nullptr      },
+        };
+
+        // The top-level keys of a default request's full JSON, with each
+        // one's value as written.
+        AceRequest def;
+        request_init(&def);
+        const std::string                  json = request_to_json(&def, false);
+        std::map<std::string, std::string> written;
+        for (size_t at = json.find('"'); at != std::string::npos; at = json.find('"', at)) {
+            const size_t close = json.find('"', at + 1);
+            const size_t colon = json.find_first_not_of(" \n", close + 1);
+            if (close == std::string::npos || colon == std::string::npos || json[colon] != ':') {
+                at = close == std::string::npos ? close : close + 1;
+                continue;
+            }
+            const size_t value = json.find_first_not_of(" \n", colon + 1);
+            const size_t end   = json[value] == '"' ? json.find('"', value + 1) + 1 : json.find_first_of(",\n}", value);
+            written[json.substr(at + 1, close - at - 1)] = json.substr(value, end - value);
+            at                                           = end;
+        }
+        std::map<std::string, const Field *> table;
+        for (const Field & f : fields) {
+            table[f.key] = &f;
+            if (!written.count(f.key)) {
+                fprintf(stderr, "[Test] FAIL: the field table names %s, which request_to_json does not write\n", f.key);
+                rc = 1;
+            }
+        }
+        // A request of `task` with `key` set to a value other than its default.
+        auto differing = [&](const char * task, const std::string & key) {
+            const std::string & was = written[key];
+            const std::string   now = was[0] == '"'      ? "\"zz\"" :
+                                      was == "true"      ? "false" :
+                                      was == "false"     ? "true" :
+                                      was.find("2") == 0 ? "3" :
+                                                           "2";
+            const std::string   body =
+                "{\"task_type\":\"" + std::string(task) + "\",\"caption\":\"a song\",\"" + key + "\":" + now + "}";
+            AceRequest r;
+            if (!request_parse_json(&r, body.c_str())) {
+                fprintf(stderr, "[Test] FAIL: %s does not parse\n", body.c_str());
+                rc = 1;
+            }
+            return r;
+        };
+        auto batch_of = [](const char * task, const AceRequest & second) {
+            std::vector<AceRequest> b(2);
+            request_init(&b[0]);
+            b[0].task_type = task;
+            b[0].caption   = "a song";
+            b[1]           = second;
+            return b;
+        };
+        for (const auto & [key, value] : written) {
+            const auto it = table.find(key);
+            if (it == table.end()) {
+                fprintf(stderr, "[Test] FAIL: request field %s is in no class: per take, or shared and refused\n",
+                        key.c_str());
+                rc = 1;
+                continue;
+            }
+            const Field & f = *it->second;
+            if (f.kind == TASK) {
+                continue;  // a mix of tasks, refused above
+            }
+            AceSynthBatchRefusal    why;
+            std::vector<AceRequest> b       = batch_of(f.reads, differing(f.reads, key));
+            const bool              refused = ace_synth_batch_refused(b.data(), 2, &why);
+            const std::string       said    = "differ in " + key + ":";
+            if (f.kind == PER_TAKE ?
+                    refused :
+                    (!refused || why.request != 1 || !why.reason || !strstr(why.reason, said.c_str()))) {
+                fprintf(stderr, "[Test] FAIL: two %s requests differing in %s: refused %d (%s), want %s\n", f.reads,
+                        key.c_str(), refused, why.reason ? why.reason : "no reason",
+                        f.kind == PER_TAKE ? "none" : said.c_str());
+                rc = 1;
+            }
+            if (f.kind == SHARED && f.ignores) {
+                AceSynthBatchRefusal    ignored_why;
+                std::vector<AceRequest> ignored = batch_of(f.ignores, differing(f.ignores, key));
+                if (ace_synth_batch_refused(ignored.data(), 2, &ignored_why)) {
+                    fprintf(stderr, "[Test] FAIL: two %s requests differing in %s, which it ignores, refused (%s)\n",
+                            f.ignores, key.c_str(), ignored_why.reason ? ignored_why.reason : "no reason");
+                    rc = 1;
+                }
+            }
+        }
+        // duration sets no length where codes do: a text2music batch whose
+        // first request carries codes differs in it harmlessly.
+        {
+            std::vector<AceRequest> b = batch_of("text2music", differing("text2music", "duration"));
+            b[0].audio_codes          = "1,2,3";
+            AceSynthBatchRefusal why;
+            if (ace_synth_batch_refused(b.data(), 2, &why)) {
+                fprintf(stderr, "[Test] FAIL: a batch with codes differing in duration refused (%s)\n",
+                        why.reason ? why.reason : "no reason");
+                rc = 1;
+            }
+        }
+        // A NaN region asked by both is no difference: each is refused for
+        // the NaN itself when it runs, not as two settings.
+        {
+            std::vector<AceRequest> b(2);
+            for (AceRequest & r : b) {
+                request_init(&r);
+                r.task_type        = "repaint";
+                r.caption          = "a song";
+                r.repainting_start = std::numeric_limits<float>::quiet_NaN();
+            }
+            AceSynthBatchRefusal why;
+            if (ace_synth_batch_refused(b.data(), 2, &why)) {
+                fprintf(stderr, "[Test] FAIL: two repaints of one NaN region refused as differing (%s)\n",
+                        why.reason ? why.reason : "no reason");
+                rc = 1;
+            }
+        }
+        // Only the first difference is said, at the first request with one.
+        {
+            std::vector<AceRequest> b(3);
+            for (AceRequest & r : b) {
+                request_init(&r);
+                r.task_type = "lego";
+                r.track     = "guitar";
+            }
+            b[2].track = "drums";
+            AceSynthBatchRefusal why;
+            if (!ace_synth_batch_refused(b.data(), 3, &why) || why.request != 2 || !why.reason ||
+                !strstr(why.reason, "differ in track:")) {
+                fprintf(stderr, "[Test] FAIL: legos of guitar, guitar, drums refused for request %d (%s), want 2\n",
+                        why.request, why.reason ? why.reason : "no reason");
+                rc = 1;
+            }
+        }
+    }
     if (rc == 0) {
         fprintf(stderr, "[Test] scenario 13 PASS\n");
     }

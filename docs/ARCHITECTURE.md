@@ -229,7 +229,14 @@ EOF
 fields are preserved in all outputs. Empty fields are filled independently
 per batch item, producing genuinely different songs.
 ace-synth takes all request files as CLI arguments and runs them in a
-single GPU batch.
+single GPU batch. A batch shares its first request's settings, so its
+requests must agree in them: a batch that differs in one -- the steps,
+schedule, solver, models, output format and peak clip, the region, track
+and cover knobs of a task that reads them, or the duration of a batch with
+neither source nor codes -- is refused, naming the field. Each take keeps
+its own seed, caption, lyrics, metas, codes, synth_batch_size and
+mp3_bitrate; the longest codes set the batch's length. The LM's generate outputs
+above carry codes, so they batch.
 
 Transform an existing song with `--src-audio` (no LLM needed):
 
@@ -932,7 +939,9 @@ POST /synth                     Submit synth generation, returns job ID
         request checked: "unknown task_type", "requests mix tasks: a batch
         runs as its first request's task" (a batch is one task), or
         "caption is required" (a task that needs one sent none, or white
-        space alone). ace-synth refuses the same before loading a model.
+        space alone), or "requests differ in <field>: a batch runs as its
+        first request's" (a setting the batch shares; see the batch above).
+        ace-synth refuses the same before loading a model.
 
 POST /understand                Submit understand, returns job ID
   body: multipart/form-data (audio or src_latents required, optional request JSON)

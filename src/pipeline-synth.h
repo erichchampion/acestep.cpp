@@ -61,7 +61,8 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 // released before the next acquires, so VRAM hosts one at a time.
 // Produces a job that carries DiT latents in RAM for later VAE decoding.
 // reqs[batch_n]: each request has its own caption, lyrics, metadata, audio_codes, and seed.
-//   The first request (reqs[0]) is used for shared params (mode, duration, DiT settings).
+//   The first request (reqs[0]) is used for shared params (mode, duration, DiT settings);
+//   a batch whose requests differ in them is refused (ace_synth_batch_refused).
 //   seed must be resolved (non-negative) before calling this function.
 // src_audio / ref_audio: interleaved stereo 48kHz buffers, NULL when not applicable.
 // src_latents / ref_latents: pre-encoded latents [T_latent * 64] f32 alternative
@@ -180,8 +181,13 @@ struct AceSynthBatchRefusal {
 
 // Whether a batch of batch_n requests (reqs non-NULL) is one the engine
 // refuses up front, by the task table: a task it does not know, requests that
-// mix tasks (a batch runs as its first request's), or a request short of the
-// caption its task needs -- a caption of whitespace alone is none. run_task
+// mix tasks (a batch runs as its first request's), a request short of the
+// caption its task needs -- a caption of whitespace alone is none -- or
+// requests that differ in a setting the batch shares, read from its first
+// request alone: the steps, schedule, solver, models, output and the like,
+// and the region, track, cover knobs and duration where the task reads them
+// (#1159). A take's own may differ: seed, caption, lyrics, metas, codes,
+// synth_batch_size, mp3_bitrate, and the LM's fields. run_task
 // asks it first, and the tools before a run, so each says the same refusal.
 // `why`, when given, says which and why; it is left as it was for a batch
 // that passes.
