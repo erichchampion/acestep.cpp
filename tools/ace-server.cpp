@@ -534,6 +534,14 @@ static bool server_progress(void * data, AceStage /*stage*/, int /*step*/, int /
 }
 
 // helper: set a JSON error response
+// Frees a malloc'd buffer when its scope ends, by reference: a holder that
+// hands the buffer on nulls its pointer first, and nothing is freed.
+struct malloc_guard {
+    float *& p;
+
+    ~malloc_guard() { free(p); }
+};
+
 static void json_error(httplib::Response & res, int status, const char * msg) {
     yyjson_mut_doc * doc  = yyjson_mut_doc_new(NULL);
     yyjson_mut_val * root = yyjson_mut_obj(doc);
@@ -917,11 +925,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     // The decoded audio is this handler's until the worker is handed it: an
     // answer before then -- a refused batch, a bad output_format -- frees it,
     // not leaks it, 230 MB for 600 s of source (cadenza-audio #1123).
-    struct DecodedAudio {
-        float *& p;
-
-        ~DecodedAudio() { free(p); }
-    } own_src{ src_interleaved }, own_ref{ ref_interleaved };
+    malloc_guard own_src{ src_interleaved }, own_ref{ ref_interleaved };
 
     if (req.is_multipart_form_data()) {
         // multipart mode: single request + optional audio files or src_latents
@@ -1331,15 +1335,7 @@ static void decode_worker(std::shared_ptr<Job> job,
 // decode_worker, minus the audio codec at the output: the body is raw
 // latent bytes the client caches alongside its source card.
 static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * src_interleaved, int src_len) {
-    struct buf_guard {
-        float * p;
-
-        ~buf_guard() {
-            if (p) {
-                free(p);
-            }
-        }
-    } buf{ src_interleaved };
+    malloc_guard buf{ src_interleaved };
 
     if (job->cancel.load()) {
         job->status.store(JobStatus::CANCELLED);

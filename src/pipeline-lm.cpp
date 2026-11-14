@@ -789,9 +789,9 @@ int ace_lm_generate(AceLm *            ctx,
         // Caption preservation: the LM may enrich the user caption, but
         // never silently delete it. If the merge ended up with an empty
         // caption while the request had one, restore the request value.
-        if (!ace.caption.empty()) {
+        if (request_caption_given(ace.caption)) {
             for (auto & a : aces) {
-                if (a.caption.empty()) {
+                if (!request_caption_given(a.caption)) {
                     a.caption = ace.caption;
                 }
             }

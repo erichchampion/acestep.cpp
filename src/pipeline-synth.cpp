@@ -891,17 +891,17 @@ static AceSynthJob * run_task(AceSynth *          ctx,
     // needs_source), are refused before the job is made. A task that takes no
     // source given one is warned of.
     set_test_last_cover(kCoverRecordUnset);
-    const std::string &  task = reqs[0].task_type;
     // The batch rule the tools ask too: an unknown task, mixed tasks, a
     // request short of its caption -- refused before the job (#1123).
     AceSynthBatchRefusal refusal;
     if (ace_synth_batch_refused(reqs, batch_n, &refusal)) {
         g_test_batch_refusals.fetch_add(1);
         fprintf(stderr, "[Synth-Run] ERROR: request %d (task '%s'): %s\n", refusal.request,
-                reqs[refusal.request].task_type.c_str(), refusal.reason);
+                refusal.request >= 0 ? reqs[refusal.request].task_type.c_str() : "none", refusal.reason);
         return NULL;
     }
-    const SynthTask * entry = find_synth_task(task);
+    const std::string & task  = reqs[0].task_type;
+    const SynthTask *   entry = find_synth_task(task);
     if (entry->needs_source && !in.src.given()) {
         g_test_source_refusals.fetch_add(1);
         fprintf(stderr, "[Synth-Run] ERROR: task '%s' requires source audio or latents\n", task.c_str());

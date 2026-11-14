@@ -14,7 +14,6 @@
 static const yyjson_write_flag WRITE_FLAGS =
     YYJSON_WRITE_PRETTY | YYJSON_WRITE_PRETTY_TWO_SPACES | YYJSON_WRITE_FP_TO_FIXED(2);
 
-// Defaults (aligned with Python GenerationParams)
 // A code point the app trims as white space (Swift's .whitespacesAndNewlines).
 static bool trimmed_space(uint32_t cp) {
     return (cp >= 0x09 && cp <= 0x0D) || cp == 0x20 || cp == 0x85 || cp == 0xA0 || cp == 0x1680 ||
@@ -22,25 +21,52 @@ static bool trimmed_space(uint32_t cp) {
            cp == 0x3000;
 }
 
+// The UTF-8 code point at p (before end) and its length in bytes, or 0 for
+// bytes that start none well-formed: a stray continuation byte, a lead with
+// too few continuations after it, an overlong form, a surrogate, or past
+// U+10FFFF.
+static int utf8_code_point(const unsigned char * p, const unsigned char * end, uint32_t * cp) {
+    const unsigned char b = *p;
+    if (b < 0x80) {
+        *cp = b;
+        return 1;
+    }
+    int      len;
+    uint32_t v, least;
+    if ((b & 0xE0) == 0xC0) {
+        len = 2, v = b & 0x1F, least = 0x80;
+    } else if ((b & 0xF0) == 0xE0) {
+        len = 3, v = b & 0x0F, least = 0x800;
+    } else if ((b & 0xF8) == 0xF0) {
+        len = 4, v = b & 0x07, least = 0x10000;
+    } else {
+        return 0;
+    }
+    if (end - p < len) {
+        return 0;
+    }
+    for (int i = 1; i < len; i++) {
+        if ((p[i] & 0xC0) != 0x80) {
+            return 0;
+        }
+        v = (v << 6) | (p[i] & 0x3F);
+    }
+    if (v < least || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) {
+        return 0;
+    }
+    *cp = v;
+    return len;
+}
+
 bool request_caption_given(const std::string & caption) {
     const unsigned char * p   = (const unsigned char *) caption.data();
     const unsigned char * end = p + caption.size();
     while (p < end) {
-        // One UTF-8 code point; a byte that starts none is a character, so a
-        // caption of it is given.
-        uint32_t cp  = *p;
-        int      len = 1;
-        if (cp >= 0xF0 && end - p >= 4) {
-            cp  = ((cp & 0x07) << 18) | ((p[1] & 0x3F) << 12) | ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
-            len = 4;
-        } else if (cp >= 0xE0 && end - p >= 3) {
-            cp  = ((cp & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
-            len = 3;
-        } else if (cp >= 0xC0 && end - p >= 2) {
-            cp  = ((cp & 0x1F) << 6) | (p[1] & 0x3F);
-            len = 2;
-        }
-        if (!trimmed_space(cp)) {
+        uint32_t  cp  = 0;
+        const int len = utf8_code_point(p, end, &cp);
+        // Bytes that start no code point are a character: a caption of them
+        // is given, as the engine's tokenizer would take them.
+        if (len == 0 || !trimmed_space(cp)) {
             return true;
         }
         p += len;
@@ -48,6 +74,7 @@ bool request_caption_given(const std::string & caption) {
     return false;
 }
 
+// Defaults (aligned with Python GenerationParams)
 void request_init(AceRequest * r) {
     r->caption = "";
     r->lyrics  = "";

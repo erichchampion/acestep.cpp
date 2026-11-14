@@ -7,6 +7,7 @@
 
 #include "bpe.h"
 #include "prompt.h"
+#include "request.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -655,7 +656,9 @@ static void parse_phase1_into_aces(const std::vector<std::string> & texts,
         if (!parsed.vocal_language.empty() && (base.vocal_language.empty() || base.vocal_language == "unknown")) {
             aces[i].vocal_language = parsed.vocal_language;
         }
-        if (!parsed.caption.empty() && use_cot_caption) {
+        // A caption of white space is none (request_caption_given, #1123):
+        // it never replaces the user's.
+        if (request_caption_given(parsed.caption) && use_cot_caption) {
             aces[i].caption = parsed.caption;
         }
         // lyrics: only generated when user had none

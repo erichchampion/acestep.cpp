@@ -877,6 +877,14 @@ static int scenario_task_table() {
     missing("text2music", "\xE3\x80\x80 \xE2\x80\xA8", true);
     missing("text2music", "\xE2\x80\x8B", false);
     missing("text2music", "\xC2\xA0song", false);
+    // Bytes that start no well-formed code point are a character, not white
+    // space: a lone 0x85 or 0xA0 (Latin-1), an overlong space (C0 A0), a
+    // 4-byte lead cut short (F2 80 80), a stray continuation byte.
+    missing("text2music", "\x85", false);
+    missing("text2music", "\xA0", false);
+    missing("text2music", "\xC0\xA0", false);
+    missing("text2music", "\xF2\x80\x80", false);
+    missing("text2music", " \x80 ", false);
     // A batch is refused up front, by request and reason, for a task the
     // engine does not know (said as that, before any caption), requests that
     // mix tasks, or a request short of its caption -- any of them, not only
