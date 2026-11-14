@@ -234,7 +234,9 @@ requests must agree in them: a batch that differs in one -- the steps,
 schedule, solver, models, output format and peak clip, or the region,
 track and cover knobs of a task that reads them (a lego asking no region
 asks the whole song, whichever unset bounds it sends) -- is refused, naming
-the field. Each take keeps its own seed, caption, lyrics, metas, codes,
+the field. A text2music batch must not mix takes with codes and without:
+the first's set the instruction and context for all. A region bound that
+is no number is refused for the request that has it. Each take keeps its own seed, caption, lyrics, metas, codes,
 synth_batch_size and mp3_bitrate; the longest codes set the batch's length.
 A batch still runs at its first request's duration (cadenza-audio #1162).
 
@@ -939,8 +941,10 @@ POST /synth                     Submit synth generation, returns job ID
         request checked: "unknown task_type", "requests mix tasks: a batch
         runs as its first request's task" (a batch is one task), or
         "caption is required" (a task that needs one sent none, or white
-        space alone), or "requests differ in <field>: a batch runs as its
-        first request's" (a setting the batch shares; see the batch above).
+        space alone), "a region bound is not a finite number", "requests
+        differ in <field>: a batch runs as its first request's" (a setting
+        the batch shares; see the batch above), or "requests mix codes and
+        none: a batch runs as its first request's" (a text2music).
         ace-synth refuses the same before loading a model.
 
 POST /understand                Submit understand, returns job ID

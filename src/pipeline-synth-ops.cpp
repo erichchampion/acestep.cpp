@@ -121,6 +121,10 @@ template <typename T> static std::vector<T> parse_csv(const std::string & s) {
     return out;
 }
 
+bool ops_codes_given(const std::string & codes) {
+    return !parse_csv<int>(codes).empty();
+}
+
 int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s, AceProgress progress) {
     // Cover mode: ingest source either as pre-encoded latents (zero VAE work)
     // or by acquiring the VAE encoder and running it on src.audio. When both

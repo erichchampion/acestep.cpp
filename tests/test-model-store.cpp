@@ -1142,48 +1142,43 @@ static int scenario_task_table() {
                 }
             }
         }
-        // A later request's region bound that is no number is said as that,
-        // not as a difference, whether or not the first's is one too.
-        for (const bool first_nan : { false, true }) {
-            std::vector<AceRequest> b(2);
-            for (AceRequest & r : b) {
-                request_init(&r);
-                r.task_type        = "repaint";
-                r.caption          = "a song";
-                r.repainting_start = first_nan ? std::numeric_limits<float>::quiet_NaN() : 1.0f;
-            }
-            b[1].repainting_end = std::numeric_limits<float>::quiet_NaN();
-            AceSynthBatchRefusal why;
-            if (!ace_synth_batch_refused(b.data(), 2, &why) || why.request != 1 || !why.reason ||
-                !strstr(why.reason, "finite")) {
-                fprintf(stderr, "[Test] FAIL: a second repaint's NaN bound (first's %s) refused for %d as '%s'\n",
-                        first_nan ? "NaN" : "finite", why.request, why.reason ? why.reason : "nothing");
-                rc = 1;
-            }
-        }
-        // A first request's bound that is no number is no difference: the
-        // batch passes, and its run refuses request 0 for the NaN itself.
-        {
+        // Any request's region bound that is no number is said as that, up
+        // front, for the first request that has one -- not as a difference.
+        for (const auto & [first_nan, second_nan] : std::vector<std::pair<bool, bool>>{
+                 { false, true  },
+                 { true,  false },
+                 { true,  true  }
+        }) {
             std::vector<AceRequest> b(2);
             for (AceRequest & r : b) {
                 request_init(&r);
                 r.task_type = "repaint";
                 r.caption   = "a song";
             }
-            b[0].repainting_start = std::numeric_limits<float>::quiet_NaN();
+            if (first_nan) {
+                b[0].repainting_start = std::numeric_limits<float>::quiet_NaN();
+            }
+            if (second_nan) {
+                b[1].repainting_end = std::numeric_limits<float>::infinity();
+            }
+            const int            want = first_nan ? 0 : 1;
             AceSynthBatchRefusal why;
-            if (ace_synth_batch_refused(b.data(), 2, &why)) {
+            if (!ace_synth_batch_refused(b.data(), 2, &why) || why.request != want || !why.reason ||
+                !strstr(why.reason, "finite")) {
                 fprintf(stderr,
-                        "[Test] FAIL: a first repaint's NaN bound refused for %d as '%s', not left to its run\n",
-                        why.request, why.reason ? why.reason : "nothing");
+                        "[Test] FAIL: repaints with a bound no number (%d, %d) refused for %d as '%s', want %d\n",
+                        first_nan, second_nan, why.request, why.reason ? why.reason : "nothing", want);
                 rc = 1;
             }
         }
         // A text2music's codes are its own, but having any is the batch's:
-        // codes then none (either order) is refused; two sets of codes run.
+        // codes then none (either order, commas alone none) is refused; two
+        // sets of codes run.
         for (const auto & [first, second, mixed] : std::vector<std::tuple<const char *, const char *, bool>>{
                  { "1,2,3", "",      true  },
                  { "",      "1,2,3", true  },
+                 { "1,2,3", " , ",   true  },
+                 { " ",     "",      false },
                  { "1,2,3", "4,5",   false }
         }) {
             std::vector<AceRequest> b(2);

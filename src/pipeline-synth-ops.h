@@ -24,6 +24,10 @@ int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s,
 // place, unsaid (cadenza-audio #1042).
 int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s);
 
+// Whether `codes` parse to any code, as ops_resolve_params reads them: a
+// string of commas and spaces alone is none (cadenza-audio #1159).
+bool ops_codes_given(const std::string & codes);
+
 // Resolve shared DiT params (steps, guidance, shift) and scan audio_codes.
 int ops_resolve_params(const AceSynth * ctx, const AceRequest * reqs, int batch_n, SynthState & s);
 

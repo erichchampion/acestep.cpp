@@ -561,7 +561,7 @@ static int run_text2music(AceSynth *          ctx,
     // audio_codes from the LM produce a latent context; empty codes fall back
     // to silence (DiT-only). The DiT was trained with the cover instruction on
     // latent context, so the two flags cascade from the same condition.
-    s.use_source_context = !reqs[0].audio_codes.empty();
+    s.use_source_context = ops_codes_given(reqs[0].audio_codes);
     s.instruction_str    = s.use_source_context ? DIT_INSTR_COVER : DIT_INSTR_TEXT2MUSIC;
 
     if (!pinned_encode_src_and_timbre(ctx, SynthInput{}, in.ref, s, progress)) {
@@ -836,19 +836,17 @@ static const char * shared_field_differs(const AceRequest & a, const AceRequest 
         return "requests differ in " #field ": a batch runs as its first request's"; \
     }
     const bool lego          = task.name == std::string_view(TASK_LEGO);
-    // A first request's bound that is no number is refused as that when it
-    // runs (refuse_nonfinite_region), so its region is not compared here; a
-    // later request's was refused by the caller.
-    const bool a_finite      = std::isfinite(a.repainting_start) && std::isfinite(a.repainting_end);
-    const bool region_unread = !a_finite || (lego && !lego_asks_region(a.repainting_start, a.repainting_end) &&
-                                             !lego_asks_region(b.repainting_start, b.repainting_end));
+    // Both requests' bounds are finite here: the caller refused any that is
+    // not before comparing.
+    const bool region_unread = lego && !lego_asks_region(a.repainting_start, a.repainting_end) &&
+                               !lego_asks_region(b.repainting_start, b.repainting_end);
     ACE_SHARED(repainting_start, task.reads_region && !region_unread)
     ACE_SHARED(repainting_end, task.reads_region && !region_unread)
     ACE_SHARED(track, task.reads_track)
     // A text2music's codes are a take's own, but whether it has any is the
     // batch's: the first's set the instruction and the context for all
     // (run_text2music), so a take with codes and one without cannot share.
-    if (!task.needs_source && a.audio_codes.empty() != b.audio_codes.empty()) {
+    if (!task.needs_source && ops_codes_given(a.audio_codes) != ops_codes_given(b.audio_codes)) {
         return "requests mix codes and none: a batch runs as its first request's";
     }
     ACE_SHARED(audio_cover_strength, task.cover_knobs)
@@ -909,13 +907,15 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
     // are allowed: its seed, caption, lyrics, metas and codes, its
     // synth_batch_size and mp3_bitrate, and the LM's fields synth never reads.
     const SynthTask & task = *find_synth_task(reqs[0].task_type);
-    for (int i = 1; i < batch_n; i++) {
-        // A later request's bound that is no number is said as that, as the
-        // first's is when it runs (refuse_nonfinite_region), not as a
-        // difference.
-        if (task.reads_region && !(std::isfinite(reqs[i].repainting_start) && std::isfinite(reqs[i].repainting_end))) {
+    // Any request's region bound that is no number is said as that, up
+    // front -- the first's too, so a tool answers it as it answers a later
+    // one's -- and counted as refuse_nonfinite_region counts it.
+    for (int i = 0; i < batch_n && task.reads_region; i++) {
+        if (refuse_nonfinite_region(reqs[i])) {
             return refuse(i, "a region bound is not a finite number");
         }
+    }
+    for (int i = 1; i < batch_n; i++) {
         if (const char * reason = shared_field_differs(reqs[0], reqs[i], task)) {
             return refuse(i, reason);
         }
