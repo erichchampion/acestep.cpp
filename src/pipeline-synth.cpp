@@ -972,8 +972,10 @@ static AceSynthJob * run_task(AceSynth *          ctx,
                               int                 batch_n,
                               AceProgress         progress) {
     // Refused before the job is made: a batch the batch rule refuses -- an
-    // unknown task, mixed tasks, a request short of its caption; the rule the
-    // tools ask too (#1123) -- and a task that works from a source given none
+    // unknown task, mixed tasks, a request short of its caption, a region
+    // bound that is no number for a task that reads one (the table's
+    // reads_region: the engine's one check of it, #1150); the rule the tools
+    // ask too (#1123) -- and a task that works from a source given none
     // (the table's needs_source). A task that takes no source given one is
     // warned of.
     set_test_last_cover(kCoverRecordUnset);

@@ -1042,13 +1042,43 @@ static int scenario_task_table() {
                     ace_synth_task_ignores_source(w.task), !w.needs_source);
             rc = 1;
         }
+        // The batch rule by the column, both ways (#1150): a region bound
+        // that is no number -- a NaN, an infinity, at either end and of
+        // either sign -- is refused for a task that reads a region, and runs
+        // for one that does not, which never reads its bounds.
+        const float inf = std::numeric_limits<float>::infinity();
+        for (const auto & [rs, re] : {
+                 std::pair{ std::nanf(""), 1.0f          },
+                 std::pair{ 0.5f,          std::nanf("") },
+                 std::pair{ -inf,          1.0f          },
+                 std::pair{ inf,           1.0f          },
+                 std::pair{ 0.5f,          -inf          },
+                 std::pair{ 0.5f,          inf           }
+        }) {
+            AceRequest r;
+            request_init(&r);
+            r.task_type        = w.task;
+            r.caption          = "a short test";
+            r.repainting_start = rs;
+            r.repainting_end   = re;
+            AceSynthBatchRefusal why{ -2, nullptr };
+            const bool           refused = ace_synth_batch_refused(&r, 1, &why);
+            const bool           said    = refused && why.request == 0 && why.reason &&
+                                           std::string_view(why.reason) == "a region bound is not a finite number";
+            if (refused != w.reads_region || (w.reads_region && !said)) {
+                fprintf(stderr, "[Test] FAIL: a %s of region %g..%g: refused %d (%s), want %d\n", w.task, rs, re,
+                        refused, refused && why.reason ? why.reason : "no reason", w.reads_region);
+                rc = 1;
+            }
+        }
     }
     // A task it does not know -- misspelt, empty, none -- is said as that,
     // the caller's info left as it was; nor does it ignore a source, so a
     // tool decodes it and the run refuses the task by name.
     for (const char * task : { "covers", "", (const char *) nullptr }) {
-        AceSynthTaskInfo info{ true, false };
-        if (ace_synth_task_info(task, &info) || !info.needs_source || info.needs_caption) {
+        AceSynthTaskInfo info{ true, false, true, true };
+        if (ace_synth_task_info(task, &info) || !info.needs_source || info.needs_caption || !info.cover_knobs ||
+            !info.reads_region) {
             fprintf(stderr, "[Test] FAIL: the task table knows '%s', or wrote to the info of a task it does not\n",
                     task ? task : "(null)");
             rc = 1;
@@ -1879,7 +1909,9 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                      Bounds{ std::nanf(""), 1.0f,          "a NaN start"       },
                      Bounds{ 0.5f,          std::nanf(""), "a NaN end"         },
                      Bounds{ 0.5f,          inf,           "an infinite end"   },
-                     Bounds{ -inf,          1.0f,          "an infinite start" }
+                     Bounds{ 0.5f,          -inf,          "a -inf end"        },
+                     Bounds{ -inf,          1.0f,          "an infinite start" },
+                     Bounds{ inf,           1.0f,          "a +inf start"      }
             }) {
                 AceSynthEncodes bad_bound;
                 const int       before = ace_test_batch_refusals();
