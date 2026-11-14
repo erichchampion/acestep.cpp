@@ -708,6 +708,14 @@ static int scenario_timbre_crop() {
     want("a reference of three segments exactly", 12, 2, 4, {});
     want("a shorter reference", 5, 2, 4, {});
     want("an empty one", 0, 2, 4, {});
+    // The length rule, not the null guard: a buffer given, of no frames.
+    {
+        std::vector<float> one(8, 1.0f), out = { -1.0f };
+        if (timbre_crop(one.data(), 0, 2, 4, out) || out.size() != 1) {
+            fprintf(stderr, "[Test] FAIL: a reference of no frames was cropped\n");
+            rc = 1;
+        }
+    }
     // One frame over: thirds of 4, 4 and 5 frames, each segment at its start
     // but the last, half a frame in (rounded down).
     want("a reference one frame over", 13, 2, 4, { 0, 4, 8 });
@@ -1429,6 +1437,36 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 "values, want the reference's only (~%zu frames)\n",
                 text.src_latents.size(), text.ref_latents.size(), frames);
         rc = 1;
+    }
+    // A reference past 30 s is cropped before its encode (#1147): 32 s of it
+    // given as audio, the run encodes -- and hands back -- upstream's three
+    // 10 s segments, 750 frames, not the 800 of the whole.
+    {
+        const int          long_n = 32 * 48000;
+        std::vector<float> long_ref((size_t) long_n * 2);
+        for (int i = 0; i < long_n; i++) {
+            long_ref[(size_t) i * 2] = long_ref[(size_t) i * 2 + 1] =
+                0.3f * sinf(2.0f * 3.14159265f * 330.0f * i / 48000.0f);
+        }
+        AceRequest r;
+        request_init(&r);
+        r.caption   = "a short test";
+        r.duration  = (float) seconds;
+        r.seed      = 1;
+        r.task_type = "text2music";
+        AceSynthEncodes kept;
+        const int       polls = dit_polls;
+        AceSynthJob *   job =
+            ace_synth_job_run_dit(synth, &r, NULL, 0, NULL, 0, long_ref.data(), long_n, NULL, 0, 1, cancel, &kept);
+        if (job) {
+            ace_synth_job_free(job);
+        }
+        const size_t got = kept.ref_latents.size() / 64, want = 3 * ACE_TIMBRE_SEGMENT_FRAMES;
+        if (job || dit_polls != polls + 1 || kept.ref_latents.size() % 64 || got + 2 < want || got > want + 2) {
+            fprintf(stderr, "[Test] FAIL: a text2music given 32 s of reference encoded %zu frames of it, want ~%zu\n",
+                    got, want);
+            rc = 1;
+        }
     }
     if (!repaint.src_latents.empty()) {
         fprintf(stderr, "[Test] FAIL: a cancelled repaint kept %zu source values; it reads its source again\n",

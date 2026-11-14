@@ -844,7 +844,9 @@ frame (no timbre conditioning). A reference longer than 30 s is cropped
 before its encode to what upstream ACE-Step 1.5 reads of one: three 10 s
 segments, one from each third, each centred in its third (upstream places
 them at random) so a take repeats from its seed. Pre-encoded `ref_latents`
-are cropped the same way, 250 frames a segment; a shorter reference is read
+are cropped by the same rule in frames, 250 a segment; the audio is cut in
+samples and then encoded, so the two forms of one reference agree to within
+a frame and the encoder's context at the joins. A shorter reference is read
 whole (cadenza-audio #1147).
 
 Batching comes from two sources: multiple `--request` files on the CLI

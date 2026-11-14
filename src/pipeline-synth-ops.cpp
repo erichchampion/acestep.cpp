@@ -426,17 +426,16 @@ int ops_encode_timbre(const AceSynth * ctx, const SynthInput & ref, SynthState &
     // hour's reference costs 30 s of encode, not an hour's.
     if (ref.has_latents()) {
         std::vector<float> cropped;
+        const float *      latents = ref.latents;
+        int                T       = ref.T_latent;
         if (timbre_crop(ref.latents, ref.T_latent, 64, ACE_TIMBRE_SEGMENT_FRAMES, cropped)) {
-            s.S_ref_timbre = 3 * ACE_TIMBRE_SEGMENT_FRAMES;
-            s.timbre_feats = std::move(cropped);
-            fprintf(stderr, "[Encode-Timbre] Latents in: %d frames (%.1fs), cropped to %d, VAE encode skipped\n",
-                    ref.T_latent, latent_frames_sec(ref.T_latent), s.S_ref_timbre);
-            return 0;
+            latents = cropped.data();
+            T       = 3 * ACE_TIMBRE_SEGMENT_FRAMES;
         }
-        s.S_ref_timbre = ref.T_latent;
-        s.timbre_feats.assign(ref.latents, ref.latents + (size_t) ref.T_latent * 64);
-        fprintf(stderr, "[Encode-Timbre] Latents in: %d frames (%.1fs), VAE encode skipped\n", ref.T_latent,
-                latent_frames_sec(ref.T_latent));
+        s.S_ref_timbre = T;
+        s.timbre_feats.assign(latents, latents + (size_t) T * 64);
+        fprintf(stderr, "[Encode-Timbre] Latents in: %d frames (%.1fs), %d read, VAE encode skipped\n", ref.T_latent,
+                latent_frames_sec(ref.T_latent), T);
         return 0;
     }
     if (ref.has_audio()) {
