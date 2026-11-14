@@ -86,6 +86,9 @@ add_test(NAME test-splice-rule COMMAND test-model-store --scenarios splice)
 # Scenario 13, the task table as the tools read it, needs none either
 # (cadenza-audio #1094).
 add_test(NAME test-task-table COMMAND test-model-store --scenarios tasks)
+# Scenario 14, the timbre reference's crop, needs none either (cadenza-audio
+# #1147).
+add_test(NAME test-timbre-crop COMMAND test-model-store --scenarios timbre)
 # ace-synth says it leaves a source the task ignores unread, before any
 # model loads (cadenza-audio #1157): a text2music given a --src-audio that
 # does not exist warns, a cover does not. Both then stop at the missing

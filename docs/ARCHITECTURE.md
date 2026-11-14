@@ -840,7 +840,12 @@ defaults, warning when asked otherwise.
 is VAE-encoded and fed to the 4-layer timbre encoder, which pools to a single
 embedding via frame[0]. This conditions the DiT to match the tonal quality of
 the reference. When omitted, the timbre encoder receives a single silence
-frame (no timbre conditioning).
+frame (no timbre conditioning). A reference longer than 30 s is cropped
+before its encode to what upstream ACE-Step 1.5 reads of one: three 10 s
+segments, one from each third, each centred in its third (upstream places
+them at random) so a take repeats from its seed. Pre-encoded `ref_latents`
+are cropped the same way, 250 frames a segment; a shorter reference is read
+whole (cadenza-audio #1147).
 
 Batching comes from two sources: multiple `--request` files on the CLI
 (or JSON array on the server), and `synth_batch_size` inside each request.

@@ -16,6 +16,7 @@
 #include "model-store.h"
 #include "pipeline-lm.h"
 #include "pipeline-synth-impl.h"
+#include "pipeline-synth-ops.h"
 #include "pipeline-synth.h"
 #include "pipeline-understand.h"
 #include "prompt.h"
@@ -525,7 +526,7 @@ static int scenario_vram_except(const char * vae_path) {
 static void usage(const char * prog) {
     fprintf(stderr, "acestep.cpp %s\n\n", ACE_VERSION);
     fprintf(stderr,
-            "Usage: %s --models <dir> [--scenarios all|store|encodes] | --scenarios splice|tasks\n"
+            "Usage: %s --models <dir> [--scenarios all|store|encodes] | --scenarios splice|tasks|timbre\n"
             "\n"
             "Required:\n"
             "  --models <dir>          Directory of GGUF model files\n"
@@ -534,6 +535,8 @@ static void usage(const char * prog) {
             "                          failed run's hand-out (11); splice: the\n"
             "                          splice rule alone (12), no --models; tasks:\n"
             "                          the task table's query alone (13), no --models;\n"
+            "                          timbre: the reference's crop alone (14), no\n"
+            "                          --models;\n"
             "                          all (default)\n",
             prog);
 }
@@ -654,6 +657,72 @@ static bool cancel_at_dit(void * data, AceStage stage, int, int) {
     }
     ++*(int *) data;
     return true;
+}
+
+// Scenario 14: the part of a timbre reference the encode reads (cadenza-audio
+// #1147): upstream's three segments, one from each third, centred here, and
+// a reference no longer than the three read whole. Frame i holds i in each of
+// its floats, so the frames kept are read off the output. No model needed:
+// `--scenarios timbre` runs it alone, with no --models.
+static int scenario_timbre_crop() {
+    fprintf(stderr, "[Test] scenario 14: the timbre reference's crop\n");
+    int  rc   = 0;
+    auto want = [&](const char * what, int n, int width, int seg, std::vector<int> starts) {
+        std::vector<float> in((size_t) n * width);
+        for (int i = 0; i < n; i++) {
+            std::fill(in.begin() + (size_t) i * width, in.begin() + (size_t) (i + 1) * width, (float) i);
+        }
+        std::vector<float> out     = { -1.0f };
+        const bool         cropped = timbre_crop(in.data(), n, width, seg, out);
+        if (cropped != !starts.empty()) {
+            fprintf(stderr, "[Test] FAIL: %s %s cropped\n", what, cropped ? "was" : "was not");
+            rc = 1;
+            return;
+        }
+        if (!cropped) {
+            if (out.size() != 1 || out[0] != -1.0f) {
+                fprintf(stderr, "[Test] FAIL: %s, read whole, wrote its output\n", what);
+                rc = 1;
+            }
+            return;
+        }
+        if (out.size() != (size_t) 3 * seg * width) {
+            fprintf(stderr, "[Test] FAIL: %s cropped to %zu floats, want %d\n", what, out.size(), 3 * seg * width);
+            rc = 1;
+            return;
+        }
+        for (int k = 0; k < 3; k++) {
+            for (int f = 0; f < seg; f++) {
+                for (int c = 0; c < width; c++) {
+                    const float got = out[((size_t) k * seg + f) * width + c];
+                    if (got != (float) (starts[k] + f)) {
+                        fprintf(stderr, "[Test] FAIL: %s segment %d frame %d is frame %.0f, want %d\n", what, k, f, got,
+                                starts[k] + f);
+                        rc = 1;
+                        return;
+                    }
+                }
+            }
+        }
+    };
+    want("a reference of three segments exactly", 12, 2, 4, {});
+    want("a shorter reference", 5, 2, 4, {});
+    want("an empty one", 0, 2, 4, {});
+    // One frame over: thirds of 4, 4 and 5 frames, each segment at its start
+    // but the last, half a frame in (rounded down).
+    want("a reference one frame over", 13, 2, 4, { 0, 4, 8 });
+    // Thirds of 12: each segment centred, 4 frames in.
+    want("a reference of three times three segments", 36, 2, 4, { 4, 16, 28 });
+    // Thirds of 12, 12 and 14: the last centred in its 14.
+    want("a reference whose last third is longer", 38, 2, 4, { 4, 16, 29 });
+    want("latents, 64 floats a frame", 30, 64, 2, { 4, 14, 24 });
+    // Upstream's 10 s: 480000 samples, 250 latent frames.
+    if (ACE_TIMBRE_SEGMENT_SAMPLES != 480000 || ACE_TIMBRE_SEGMENT_FRAMES != 250) {
+        fprintf(stderr, "[Test] FAIL: the segment is %d samples, %d frames, want 480000, 250\n",
+                ACE_TIMBRE_SEGMENT_SAMPLES, ACE_TIMBRE_SEGMENT_FRAMES);
+        rc = 1;
+    }
+    return rc;
 }
 
 // Scenario 12: what the one predicate the hand-out and the decode share,
@@ -1867,8 +1936,9 @@ int main(int argc, char ** argv) {
         } else if (!strcmp(argv[i], "--scenarios") && i + 1 < argc) {
             which = argv[++i];
             if (strcmp(which, "all") && strcmp(which, "store") && strcmp(which, "encodes") && strcmp(which, "splice") &&
-                strcmp(which, "tasks")) {
-                fprintf(stderr, "[CLI] ERROR: --scenarios takes all, store, encodes, splice or tasks, not %s\n", which);
+                strcmp(which, "tasks") && strcmp(which, "timbre")) {
+                fprintf(stderr, "[CLI] ERROR: --scenarios takes all, store, encodes, splice, tasks or timbre, not %s\n",
+                        which);
                 return 1;
             }
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
@@ -1881,9 +1951,11 @@ int main(int argc, char ** argv) {
         }
     }
 
-    // Scenarios 12 and 13 read no model: run alone, they need no --models.
-    if (!strcmp(which, "splice") || !strcmp(which, "tasks")) {
-        const int rc = !strcmp(which, "splice") ? scenario_splice_rule() : scenario_task_table();
+    // Scenarios 12, 13 and 14 read no model: run alone, they need no --models.
+    if (!strcmp(which, "splice") || !strcmp(which, "tasks") || !strcmp(which, "timbre")) {
+        const int rc = !strcmp(which, "splice") ? scenario_splice_rule() :
+                       !strcmp(which, "tasks")  ? scenario_task_table() :
+                                                  scenario_timbre_crop();
         fprintf(stderr, rc == 0 ? "[Test] ALL PASS\n" : "[Test] FAIL\n");
         return rc;
     }
@@ -1936,6 +2008,7 @@ int main(int argc, char ** argv) {
     if (strcmp(which, "all") == 0) {
         rc |= scenario_splice_rule();
         rc |= scenario_task_table();
+        rc |= scenario_timbre_crop();
     }
     if (encodes) {
         // Scenario 11 runs the synth, which needs a text encoder too: without one

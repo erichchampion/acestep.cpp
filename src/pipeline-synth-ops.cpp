@@ -12,6 +12,7 @@
 #include "task-types.h"
 #include "vae-enc.h"
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <cstdio>
@@ -397,6 +398,21 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s) {
     return 0;
 }
 
+bool timbre_crop(const float * in, int n, int width, int seg, std::vector<float> & out) {
+    if (!in || width <= 0 || seg <= 0 || n <= 3 * seg) {
+        return false;
+    }
+    // Upstream's thirds: the first two n / 3 frames each, the last the rest.
+    const int third    = n / 3;
+    const int starts[] = { (third - seg) / 2, third + (third - seg) / 2, 2 * third + ((n - 2 * third) - seg) / 2 };
+    out.resize((size_t) 3 * seg * width);
+    for (int i = 0; i < 3; i++) {
+        std::copy(in + (size_t) starts[i] * width, in + (size_t) (starts[i] + seg) * width,
+                  out.begin() + (size_t) i * seg * width);
+    }
+    return true;
+}
+
 // 0 on success (including the deliberate fall-back to silence when a ref_audio
 // encode *fails*), -1 if the run was cancelled during the ref encode -- so the
 // caller aborts rather than silently generating with silence timbre.
@@ -406,7 +422,17 @@ int ops_encode_timbre(const AceSynth * ctx, const SynthInput & ref, SynthState &
     // VAE encoder entirely, raw audio takes the encoder path. Latents win
     // when both are set. Without either input the timbre falls back to a
     // single silence frame, disabling timbre conditioning.
+    // Either is cropped first to what the timbre path reads (#1147): an
+    // hour's reference costs 30 s of encode, not an hour's.
     if (ref.has_latents()) {
+        std::vector<float> cropped;
+        if (timbre_crop(ref.latents, ref.T_latent, 64, ACE_TIMBRE_SEGMENT_FRAMES, cropped)) {
+            s.S_ref_timbre = 3 * ACE_TIMBRE_SEGMENT_FRAMES;
+            s.timbre_feats = std::move(cropped);
+            fprintf(stderr, "[Encode-Timbre] Latents in: %d frames (%.1fs), cropped to %d, VAE encode skipped\n",
+                    ref.T_latent, latent_frames_sec(ref.T_latent), s.S_ref_timbre);
+            return 0;
+        }
         s.S_ref_timbre = ref.T_latent;
         s.timbre_feats.assign(ref.latents, ref.latents + (size_t) ref.T_latent * 64);
         fprintf(stderr, "[Encode-Timbre] Latents in: %d frames (%.1fs), VAE encode skipped\n", ref.T_latent,
@@ -424,10 +450,19 @@ int ops_encode_timbre(const AceSynth * ctx, const SynthInput & ref, SynthState &
         }
         ModelHandle ref_vae_guard(ctx->store, ref_vae);
 
-        int                max_T_ref = (ref.len / ACE_LATENT_HOP) + 64;
+        std::vector<float> cropped;
+        const float *      audio = ref.audio;
+        int                len   = ref.len;
+        if (timbre_crop(ref.audio, ref.len, 2, ACE_TIMBRE_SEGMENT_SAMPLES, cropped)) {
+            audio = cropped.data();
+            len   = 3 * ACE_TIMBRE_SEGMENT_SAMPLES;
+            fprintf(stderr, "[Encode-Timbre] ref_audio: %.1fs, cropped to %.1fs\n", samples_sec(ref.len),
+                    samples_sec(len));
+        }
+        int                max_T_ref = (len / ACE_LATENT_HOP) + 64;
         std::vector<float> ref_lat_buf(max_T_ref * 64);
-        int                T_ref = vae_enc_encode_tiled(ref_vae, ref.audio, ref.len, ref_lat_buf.data(), max_T_ref,
-                                                        ctx->params.vae_chunk, ctx->params.vae_overlap, progress);
+        int T_ref = vae_enc_encode_tiled(ref_vae, audio, len, ref_lat_buf.data(), max_T_ref, ctx->params.vae_chunk,
+                                         ctx->params.vae_overlap, progress);
         if (T_ref < 0) {
             // vae_enc_encode_tiled returns -1 for both a cancel and a real encode
             // failure. A cancel must abort; only a genuine failure falls back to

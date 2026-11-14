@@ -6,8 +6,11 @@
 // orchestrator in pipeline-synth.cpp calls them in sequence. SynthState and
 // AceSynth are defined in pipeline-synth-impl.h.
 
+#include "audio-frames.h"
 #include "pipeline-synth.h"
 #include "progress.h"
+
+#include <vector>
 
 struct AceSynth;
 struct SynthInput;
@@ -38,8 +41,23 @@ void ops_build_schedule(SynthState & s);
 // Resolve T (latent frame count) and S (patch count).
 int ops_resolve_T(const AceSynth * ctx, SynthState & s);
 
+// The part of a reference the timbre path reads, as upstream ACE-Step 1.5
+// samples it (process_reference_audio): three segments of `seg` frames, one
+// from each third of the reference -- upstream's 3 x 10 s. Upstream places
+// each at random in its third; here each is centred, so a take is the same
+// from its seed (cadenza-audio #1147). `in` holds `n` frames of `width`
+// floats (2 for interleaved stereo samples, 64 for latents). A reference
+// longer than 3 * seg frames is cropped into `out`, and true returned; a
+// shorter one is read whole: false, `out` untouched.
+bool timbre_crop(const float * in, int n, int width, int seg, std::vector<float> & out);
+
+// Upstream's segment: 10 s, in samples and in latent frames.
+inline constexpr int ACE_TIMBRE_SEGMENT_SAMPLES = 10 * ACE_SAMPLE_RATE;
+inline constexpr int ACE_TIMBRE_SEGMENT_FRAMES  = ACE_TIMBRE_SEGMENT_SAMPLES / ACE_LATENT_HOP;
+
 // Encode timbre from the reference: its latents when given, else its audio
-// via VAE, else silence. Sets s.timbre_feats and s.S_ref_timbre.
+// via VAE, else silence, either cropped by timbre_crop first. Sets
+// s.timbre_feats and s.S_ref_timbre.
 int ops_encode_timbre(const AceSynth * ctx, const SynthInput & ref, SynthState & s, AceProgress progress = {});
 
 // Per-batch text + lyric encoding (main pass + optional non-cover pass).
