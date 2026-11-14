@@ -25,7 +25,8 @@ int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s,
 int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s);
 
 // Whether `codes` parse to any code, as ops_resolve_params reads them: a
-// string of commas and spaces alone is none (cadenza-audio #1159).
+// string of commas and spaces alone is none. The batch rule refuses a
+// text2music's codes that are not empty yet hold none (cadenza-audio #1159).
 bool ops_codes_given(const std::string & codes);
 
 // Resolve shared DiT params (steps, guidance, shift) and scan audio_codes.

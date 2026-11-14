@@ -1172,27 +1172,37 @@ static int scenario_task_table() {
             }
         }
         // A text2music's codes are its own, but having any is the batch's:
-        // codes then none (either order, commas alone none) is refused; two
-        // sets of codes run.
-        for (const auto & [first, second, mixed] : std::vector<std::tuple<const char *, const char *, bool>>{
-                 { "1,2,3", "",      true  },
-                 { "",      "1,2,3", true  },
-                 { "1,2,3", " , ",   true  },
-                 { " ",     "",      false },
-                 { "1,2,3", "4,5",   false }
+        // codes then none (either order) is refused; two sets of codes run.
+        // Codes that are not empty yet hold no code are refused as that, for
+        // the first request with them: the LM would read them as given.
+        struct CodesCase {
+            const char * first;
+            const char * second;
+            int          want_request;  // -1: runs
+            const char * want_reason;
+        };
+
+        for (const CodesCase & c : std::vector<CodesCase>{
+                 { "1,2,3", "",      1,  "mix codes"     },
+                 { "",      "1,2,3", 1,  "mix codes"     },
+                 { "1,2,3", " , ",   1,  "holds no code" },
+                 { " ",     "",      0,  "holds no code" },
+                 { "abc",   "abc",   0,  "holds no code" },
+                 { "1,2,3", "4,5",   -1, nullptr         },
         }) {
             std::vector<AceRequest> b(2);
             for (AceRequest & r : b) {
                 request_init(&r);
                 r.caption = "a song";
             }
-            b[0].audio_codes = first;
-            b[1].audio_codes = second;
+            b[0].audio_codes = c.first;
+            b[1].audio_codes = c.second;
             AceSynthBatchRefusal why;
             const bool           refused = ace_synth_batch_refused(b.data(), 2, &why);
-            if (refused != mixed || (refused && (why.request != 1 || !why.reason || !strstr(why.reason, "codes")))) {
-                fprintf(stderr, "[Test] FAIL: text2music codes '%s' then '%s': refused %d (%s), want %d\n", first,
-                        second, refused, why.reason ? why.reason : "no reason", mixed);
+            if (refused != (c.want_request >= 0) ||
+                (refused && (why.request != c.want_request || !why.reason || !strstr(why.reason, c.want_reason)))) {
+                fprintf(stderr, "[Test] FAIL: text2music codes '%s' then '%s': refused %d for %d (%s), want %d\n",
+                        c.first, c.second, refused, why.request, why.reason ? why.reason : "no reason", c.want_request);
                 rc = 1;
             }
         }
@@ -1615,11 +1625,13 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         for (const char * task : { "repaint", "lego" }) {
             for (const bool nan_start : { true, false }) {
                 AceSynthEncodes nan_bound;
-                const int       before = ace_test_region_nonfinite();
+                // Refused by the batch rule, which run_task asks first
+                // (#1159); the per-task check is a backstop behind it.
+                const int       before = ace_test_batch_refusals();
                 const float     rs     = nan_start ? std::nanf("") : 0.5f;
                 const float     re     = nan_start ? 1.0f : std::nanf("");
                 if (!run(task, source.data(), NULL, nan_bound, true, 0, nullptr, rs, re) ||
-                    ace_test_region_nonfinite() != before + 1 || !nan_bound.src_latents.empty()) {
+                    ace_test_batch_refusals() != before + 1 || !nan_bound.src_latents.empty()) {
                     fprintf(stderr, "[Test] FAIL: the %s with a NaN %s was not refused before its encode\n", task,
                             nan_start ? "start" : "end");
                     rc = 1;

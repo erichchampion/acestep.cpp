@@ -1031,7 +1031,8 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     }
     // The engine's batch rule, for every request, not only the first: an
     // unknown task (said as that), requests that mix tasks, a request short
-    // of its caption (#1123).
+    // of its caption (#1123), a region bound or codes that are no such
+    // thing, a setting the batch shares asked differently (#1159).
     {
         AceSynthBatchRefusal why;
         const int            run = ace_synth_requests_run(ace_reqs.data(), (int) ace_reqs.size());

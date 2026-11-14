@@ -133,7 +133,9 @@ static int synth_main(int argc, char ** argv) {
         }
     }
     // The engine's batch rule, before any model is loaded: an unknown task,
-    // requests that mix tasks, a request short of its caption (#1123).
+    // requests that mix tasks, a request short of its caption (#1123), a
+    // region bound or codes that are no such thing, a setting the batch
+    // shares asked differently (#1159).
     {
         AceSynthBatchRefusal why;
         if (ace_synth_batch_refused(reqs.data(), ace_synth_requests_run(reqs.data(), batch_n), &why)) {

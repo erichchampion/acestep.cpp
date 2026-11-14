@@ -218,7 +218,8 @@ int ace_test_region_nonfinite() {
 // True, said and counted, for a region bound that is no number -- a NaN
 // through the C API, an infinity -- which would read as frame 0 and repaint
 // from the start, unsaid, or pad without end (#1129, #1138, #1144). Every
-// task that reads a region asks it first, before any pad or encode.
+// task that reads a region asks it first, before any pad or encode -- a
+// backstop: run_task's batch rule refuses such a bound first (#1159).
 static bool refuse_nonfinite_region(const AceRequest & r) {
     if (std::isfinite(r.repainting_start) && std::isfinite(r.repainting_end)) {
         return false;
@@ -561,7 +562,7 @@ static int run_text2music(AceSynth *          ctx,
     // audio_codes from the LM produce a latent context; empty codes fall back
     // to silence (DiT-only). The DiT was trained with the cover instruction on
     // latent context, so the two flags cascade from the same condition.
-    s.use_source_context = ops_codes_given(reqs[0].audio_codes);
+    s.use_source_context = !reqs[0].audio_codes.empty();
     s.instruction_str    = s.use_source_context ? DIT_INSTR_COVER : DIT_INSTR_TEXT2MUSIC;
 
     if (!pinned_encode_src_and_timbre(ctx, SynthInput{}, in.ref, s, progress)) {
@@ -846,7 +847,8 @@ static const char * shared_field_differs(const AceRequest & a, const AceRequest 
     // A text2music's codes are a take's own, but whether it has any is the
     // batch's: the first's set the instruction and the context for all
     // (run_text2music), so a take with codes and one without cannot share.
-    if (!task.needs_source && ops_codes_given(a.audio_codes) != ops_codes_given(b.audio_codes)) {
+    // The caller refused codes that hold no code, so emptiness says it.
+    if (!task.needs_source && a.audio_codes.empty() != b.audio_codes.empty()) {
         return "requests mix codes and none: a batch runs as its first request's";
     }
     ACE_SHARED(audio_cover_strength, task.cover_knobs)
@@ -907,12 +909,17 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
     // are allowed: its seed, caption, lyrics, metas and codes, its
     // synth_batch_size and mp3_bitrate, and the LM's fields synth never reads.
     const SynthTask & task = *find_synth_task(reqs[0].task_type);
-    // Any request's region bound that is no number is said as that, up
-    // front -- the first's too, so a tool answers it as it answers a later
-    // one's -- and counted as refuse_nonfinite_region counts it.
-    for (int i = 0; i < batch_n && task.reads_region; i++) {
-        if (refuse_nonfinite_region(reqs[i])) {
+    // Each request on its own first, so a fault of one is said as that, not
+    // as a difference: a region bound that is no number -- the first's too,
+    // so a tool answers it as it answers a later one's -- and a text2music's
+    // codes that hold no code, which the LM reads as codes given (it skips
+    // its own) and the synth would read as none.
+    for (int i = 0; i < batch_n; i++) {
+        if (task.reads_region && !(std::isfinite(reqs[i].repainting_start) && std::isfinite(reqs[i].repainting_end))) {
             return refuse(i, "a region bound is not a finite number");
+        }
+        if (!task.needs_source && !reqs[i].audio_codes.empty() && !ops_codes_given(reqs[i].audio_codes)) {
+            return refuse(i, "audio_codes holds no code");
         }
     }
     for (int i = 1; i < batch_n; i++) {

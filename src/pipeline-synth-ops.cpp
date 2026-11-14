@@ -122,7 +122,14 @@ template <typename T> static std::vector<T> parse_csv(const std::string & s) {
 }
 
 bool ops_codes_given(const std::string & codes) {
-    return !parse_csv<int>(codes).empty();
+    // The first code is enough: parse_csv's scan, stopped at it.
+    const char * first = codes.data();
+    const char * last  = first + codes.size();
+    while (first < last && (*first == ',' || *first == ' ')) {
+        first++;
+    }
+    int v = 0;
+    return first < last && scan_num(first, last, v) != first;
 }
 
 int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s, AceProgress progress) {

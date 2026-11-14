@@ -228,8 +228,10 @@ int ace_test_source_ignores();
 // after the encode (cadenza-audio #1139, #1144).
 int ace_test_source_too_long();
 
-// Tests only: how many runs have been refused for a region bound that is no
-// number, before its pad or its source's encode (cadenza-audio #1144).
+// Tests only: how many runs the per-task backstop has refused for a region
+// bound that is no number, before its pad or its source's encode
+// (cadenza-audio #1144). Through run_task the batch rule refuses one first
+// (ace_test_batch_refusals, #1159).
 int ace_test_region_nonfinite();
 
 // Tests only: how many runs have been refused for a region that ends at or
