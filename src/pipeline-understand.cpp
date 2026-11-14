@@ -143,6 +143,7 @@ void ace_understand_default_call(AceUnderstandCall * c) {
     c->metadata_only  = -1;
     c->decode_reserve = 0;
     c->metadata_tokens = 0;
+    c->window_only       = false;
     c->codes_total    = 0;
     c->codes_start    = 0;
     c->codes_used     = 0;
@@ -194,6 +195,34 @@ int ace_understand_generate(AceUnderstand *      ctx,
     int   top_k       = req->lm_top_k;
 
     std::vector<int> codes;
+
+    // The window the LM reads, alone (#1149): past what the context holds,
+    // the prompt keeps the middle codes (the clip below), so a caller that
+    // asks for no more is spared encoding the rest. Cut on whole codes -- 5
+    // latent frames, 5 * 1920 samples -- so its codes are the whole's.
+    const bool have_latents_in = (src_latents && src_T_latent > 0);
+    int        window_start    = 0;   // the whole's codes before the window
+    int        window_total    = -1;  // the whole's codes, when windowed
+    if (call->window_only) {
+        const int fit   = ace_understand_code_capacity(ctx, metadata_only, call->decode_reserve);
+        const int total = have_latents_in ? (src_T_latent + 4) / 5 :
+                                            (src_audio && src_len > 0 ? (src_len / ACE_LATENT_HOP + 4) / 5 : 0);
+        if (fit > 0 && total > fit) {
+            window_start = (total - fit) / 2;
+            window_total = total;
+            if (have_latents_in) {
+                const int f0 = window_start * 5;
+                src_latents += (size_t) f0 * 64;
+                src_T_latent = std::min(fit * 5, src_T_latent - f0);
+            } else {
+                const int s0 = window_start * 5 * ACE_LATENT_HOP;
+                src_audio += (size_t) s0 * 2;
+                src_len = std::min(fit * 5 * ACE_LATENT_HOP, src_len - s0);
+            }
+            fprintf(stderr, "[Understand-Window] codes %d..%d of %d (%.1fs of %.1fs), the rest not encoded\n",
+                    window_start, window_start + fit, total, (float) fit / 5.0f, (float) total / 5.0f);
+        }
+    }
 
     // Step 1: produce 25Hz latents [T_25Hz, 64]. Two paths converge here:
     // pre-encoded latents come from a previous run (or any client cache)
@@ -281,7 +310,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
         return -1;
     }
     codes.resize(T_5Hz);
-    call->codes_total = T_5Hz;
+    call->codes_total = window_total >= 0 ? window_total : T_5Hz;
     call->codes_used  = T_5Hz;
     fprintf(stderr, "[Understand-Tok] %d codes (%.2fs @ 5Hz), %.0fms\n", T_5Hz, (float) T_5Hz / 5.0f, t_tok.ms());
 
@@ -380,7 +409,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
         fprintf(stderr, "[Understand-Clip] %d of %zu codes from %d (%.1fs of %.1fs), %d tokens kept for the decode\n",
                 used, codes.size(), start, (float) used / 5.0f, (float) codes.size() / 5.0f, reserve);
     }
-    call->codes_start = start;
+    call->codes_start = window_start + start;
     call->codes_used  = used;
 
     std::vector<int> prompt = build_understand_prompt(*bpe, codes.data() + start, used);

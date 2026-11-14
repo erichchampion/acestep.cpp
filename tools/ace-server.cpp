@@ -1104,7 +1104,8 @@ static void understand_worker(std::shared_ptr<Job> job,
                               float *              src_interleaved,
                               int                  src_len,
                               std::vector<float>   src_latents,
-                              int                  src_T_latent) {
+                              int                  src_T_latent,
+                              bool                 window_only) {
     if (job->cancel.load()) {
         free(src_interleaved);
         job->status.store(JobStatus::CANCELLED);
@@ -1143,9 +1144,12 @@ static void understand_worker(std::shared_ptr<Job> job,
     std::vector<float> captured_latent;
     int                captured_T_latent = 0;
     const float *      src_lat_ptr       = src_latents.empty() ? nullptr : src_latents.data();
-    int rc = ace_understand_generate(ctx, src_interleaved, src_len, src_lat_ptr, src_T_latent, &ace_req, &out,
-                                     &captured_latent, &captured_T_latent,
-                                     AceProgress{ server_progress, (void *) &job->cancel });
+    AceUnderstandCall  call;
+    ace_understand_default_call(&call);
+    call.window_only = window_only;  // cadenza-audio #1149
+    int rc           = ace_understand_generate(ctx, src_interleaved, src_len, src_lat_ptr, src_T_latent, &ace_req, &out,
+                                               &captured_latent, &captured_T_latent,
+                                               AceProgress{ server_progress, (void *) &job->cancel }, &call);
     ace_understand_free(ctx);
     free(src_interleaved);
 
@@ -1178,6 +1182,9 @@ static void understand_worker(std::shared_ptr<Job> job,
 //   part "request":     JSON text (optional, for model selection and sampling params)
 //   part "audio":       WAV or MP3 file (required unless src_latents provided)
 //   part "src_latents": pre-encoded latent bytes (raw f32, [T*64])
+//   field "window_only": "1" or "true" to encode only the window the LM reads
+//                        (cadenza-audio #1149); the result's audio_codes and
+//                        latent part then hold that window, not the whole
 // returns: JSON {"id":"N"} immediately. Result is multipart/mixed of one
 // JSON part and one optional latent part.
 static void handle_understand(const httplib::Request & req, httplib::Response & res) {
@@ -1262,10 +1269,15 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
 
     request_resolve_lm_seed(&ace_req);
 
-    work_push_job(job,
-                  [job, ace_req, src_interleaved, src_len, latents = std::move(src_latents), src_T_latent]() mutable {
-                      understand_worker(job, ace_req, src_interleaved, src_len, std::move(latents), src_T_latent);
-                  });
+    // Opt-in (cadenza-audio #1149): the default hands back every code and
+    // latent of the input, whatever its length.
+    const std::string window    = req.form.has_field("window_only") ? req.form.get_field("window_only") : "";
+    const bool        window_on = window == "1" || window == "true";
+
+    work_push_job(job, [job, ace_req, src_interleaved, src_len, latents = std::move(src_latents), src_T_latent,
+                        window_on]() mutable {
+        understand_worker(job, ace_req, src_interleaved, src_len, std::move(latents), src_T_latent, window_on);
+    });
 
     std::string body = "{\"id\":\"" + job->id + "\"}";
     res.set_content(body, "application/json");

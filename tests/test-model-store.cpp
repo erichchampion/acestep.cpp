@@ -331,6 +331,16 @@ static int scenario_refcount(const char * vae_path) {
 //
 // We simulate the exact propagation block from ace-server main() and compare
 // the two keys by hand. The test must fail loudly when keys drift.
+// Cancels an understand call at its LM's first poll: what it encoded and
+// reported is known by then, and the decode is not waited for.
+static bool cancel_at_lm(void * data, AceStage stage, int, int) {
+    if (stage != ACE_STAGE_LM) {
+        return false;
+    }
+    ++*(int *) data;
+    return true;
+}
+
 static int scenario_integration(const char * lm_path, const char * dit_path, const char * vae_path) {
     fprintf(stderr, "[Test] scenario 7: ace-server integration\n");
     ModelStore * s = store_create(EVICT_NEVER);
@@ -404,6 +414,59 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
         ace_lm_free(lm);
         store_free(s);
         return 1;
+    }
+
+    // window_only (cadenza-audio #1149): 30 s of audio, a reserve leaving the
+    // context 50 codes (10 s). Windowed, only those 10 s -- the middle -- are
+    // encoded: 250 latent frames, codes 50..100 of 150. Whole, all 750 frames
+    // and every code, the report the same but for codes_start's base. Each
+    // call is cancelled at its LM's first poll.
+    {
+        const int          n = 30 * 48000;
+        std::vector<float> audio((size_t) n * 2);
+        for (int i = 0; i < n; i++) {
+            audio[(size_t) i * 2] = audio[(size_t) i * 2 + 1] = 0.3f * sinf(2.0f * 3.14159265f * 220.0f * i / 48000.0f);
+        }
+        AceRequest req;
+        request_init(&req);
+        req.lm_seed       = 1;
+        const int reserve = 4096 - framing - 1 - 50;
+        auto      call    = [&](bool window, AceUnderstandCall & c, std::vector<float> & lat, int & T) {
+            ace_understand_default_call(&c);
+            c.metadata_only  = 1;
+            c.decode_reserve = reserve;
+            c.window_only    = window;
+            int        polls = 0;
+            AceRequest out;
+            const int  rc = ace_understand_generate(und, audio.data(), n, nullptr, 0, &req, &out, &lat, &T,
+                                                    AceProgress{ cancel_at_lm, &polls }, &c);
+            return rc != 0 && polls == 1;
+        };
+        AceUnderstandCall  windowed, whole;
+        std::vector<float> w_lat, h_lat;
+        int                w_T = 0, h_T = 0;
+        bool               failed = false;
+        if (!call(true, windowed, w_lat, w_T) || !call(false, whole, h_lat, h_T)) {
+            fprintf(stderr, "[Test] FAIL: an understand call was not cancelled at its LM's first poll\n");
+            failed = true;
+        } else if (w_T != 250 || (int) w_lat.size() != 250 * 64 || windowed.codes_total != whole.codes_total ||
+                   whole.codes_total != 150 || windowed.codes_start != 50 || windowed.codes_used != 50) {
+            fprintf(stderr,
+                    "[Test] FAIL: windowed: %d frames, codes %d..+%d of %d; want 250 frames, codes 50..+50 of the "
+                    "whole's %d\n",
+                    w_T, windowed.codes_start, windowed.codes_used, windowed.codes_total, whole.codes_total);
+            failed = true;
+        } else if (h_T < 748 || h_T > 752 || whole.codes_start != 50 || whole.codes_used != 50) {
+            fprintf(stderr, "[Test] FAIL: whole: %d frames, codes %d..+%d of %d; want ~750 frames, codes 50..+50\n",
+                    h_T, whole.codes_start, whole.codes_used, whole.codes_total);
+            failed = true;
+        }
+        if (failed) {
+            ace_understand_free(und);
+            ace_lm_free(lm);
+            store_free(s);
+            return 1;
+        }
     }
 
     ace_understand_free(und);

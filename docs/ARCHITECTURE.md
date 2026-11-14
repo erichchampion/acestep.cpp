@@ -958,7 +958,10 @@ POST /synth                     Submit synth generation, returns job ID
         ace-synth refuses the same before loading a model.
 
 POST /understand                Submit understand, returns job ID
-  body: multipart/form-data (audio or src_latents required, optional request JSON)
+  body: multipart/form-data (audio or src_latents required, optional request JSON,
+        optional field window_only=1: encode only the window the LM reads, the
+        middle of an input longer than its context holds; the result's
+        audio_codes and latent part then hold that window -- cadenza-audio #1149)
   response: {"id":"3"}
 
 POST /vae                       Submit VAE encode or decode, returns job ID

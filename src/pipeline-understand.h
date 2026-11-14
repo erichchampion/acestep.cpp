@@ -43,6 +43,17 @@ struct AceUnderstandCall {
                           // leaves this much room are clipped, keeping the middle of
                           // the track, so a long input runs instead of failing.
                           // <= 0: 256 for a metadata-only call, 1024 otherwise.
+    bool window_only;     // encode only the window the LM reads (cadenza-audio #1149):
+                          // the middle codes_used codes of a longer input, cut
+                          // before its VAE encode (or from its latents) rather
+                          // than after. Then out->audio_codes and latent_out hold
+                          // the window alone, not every code and latent; the
+                          // report still counts the whole -- codes_total its
+                          // codes (from its length: one code each 5 latent
+                          // frames of 1920 samples), codes_start the window's
+                          // first among them. False (the default): everything
+                          // is encoded and handed back, whatever its length.
+                          // No effect without an LM (a dump run reads all).
     int  metadata_tokens; // the metadata block's cap (cadenza-audio #648): a block
                           // still open after this many tokens is closed. <= 0:
                           // ACE_UNDERSTAND_METADATA_TOKENS. A test sets it low.
@@ -96,7 +107,8 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
 // latent_out / T_latent_out: optional capture of the latents that fed the
 //   FSQ tokenizer when produced by the VAE encoder. Skipped when the
 //   client supplied src_latents: the buffer would be byte-identical to
-//   what was just uploaded, no point shipping it back. Pass NULL to skip
+//   what was just uploaded, no point shipping it back. Under
+//   call->window_only it holds the window's latents alone. Pass NULL to skip
 //   the capture. On the audio-in path, the buffer is filled (assigned)
 //   with [T_latent * 64] f32 and *T_latent_out is set; on any error path
 //   before tokenize, the buffer is left empty.
@@ -104,7 +116,8 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
 // ACE_STAGE_VAE_ENCODE while encoding input reference audio. Default {} = never
 // cancel, no progress. Returns 0 on success, -1 on error or cancellation.
 // call: this call's choices, filled with what it did; NULL = the defaults.
-// out->audio_codes carries every code the audio made, clipped or not.
+// out->audio_codes carries every code the audio made, clipped or not -- or,
+// under call->window_only, the window's alone (cadenza-audio #1149).
 int ace_understand_generate(AceUnderstand *      ctx,
                             const float *        src_audio,
                             int                  src_len,

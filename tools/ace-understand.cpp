@@ -33,6 +33,9 @@ static void usage(const char * prog) {
             "  --request <json>        Request JSON carrying model selection and\n"
             "                          sampling params (lm_model, synth_model,\n"
             "                          lm_temperature, lm_top_p, lm_top_k)\n"
+            "  --window-only           Encode only the window the LM reads: the\n"
+            "                          middle of a track longer than its context\n"
+            "                          holds; audio_codes then holds that window\n"
             "\n"
             "When no --request is given, understand defaults apply\n"
             "(temperature 0.3, top_p disabled).\n"
@@ -57,6 +60,7 @@ static int understand_main(int argc, char ** argv) {
     const char * models_dir     = NULL;
     const char * src_audio_path = NULL;
     const char * request_path   = NULL;
+    bool         window_only    = false;
     const char * output_path    = NULL;
     const char * dump_dir       = NULL;
 
@@ -87,6 +91,8 @@ static int understand_main(int argc, char ** argv) {
             params.vae_chunk = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--vae-overlap") && i + 1 < argc) {
             params.vae_overlap = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--window-only")) {
+            window_only = true;
         } else if (!strcmp(argv[i], "--no-fsm")) {
             params.use_fsm = false;
         } else if (!strcmp(argv[i], "--no-fa")) {
@@ -192,8 +198,12 @@ static int understand_main(int argc, char ** argv) {
     // NULL/NULL for capture, NULL/NULL for cancel. The server reuses the
     // same entry point with the full latent IO surface.
     request_resolve_lm_seed(&req);
-    AceRequest out;
-    int rc = ace_understand_generate(ctx, src_interleaved, src_len, nullptr, 0, &req, &out, nullptr, nullptr, {});
+    AceRequest        out;
+    AceUnderstandCall call;
+    ace_understand_default_call(&call);
+    call.window_only = window_only;  // cadenza-audio #1149
+    int rc =
+        ace_understand_generate(ctx, src_interleaved, src_len, nullptr, 0, &req, &out, nullptr, nullptr, {}, &call);
     free(src_interleaved);
     ace_understand_free(ctx);
     store_free(store);
