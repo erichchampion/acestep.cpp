@@ -86,22 +86,21 @@ add_test(NAME test-splice-rule COMMAND test-model-store --scenarios splice)
 # Scenario 13, the task table as the tools read it, needs none either
 # (cadenza-audio #1094).
 add_test(NAME test-task-table COMMAND test-model-store --scenarios tasks)
-# ace-synth leaves a source the task ignores unread, and says so before any
+# ace-synth says it leaves a source the task ignores unread, before any
 # model loads (cadenza-audio #1157): a text2music given a --src-audio that
-# does not exist warns, a cover does not; both then stop at the missing
-# --models, so no model is needed.
-if(TARGET ace-synth)
-    add_test(NAME test-synth-ignored-source
-             COMMAND ace-synth --request ${CMAKE_CURRENT_SOURCE_DIR}/request-text2music.json
-                     --src-audio /nonexistent/source.wav --models /nonexistent)
-    set_tests_properties(test-synth-ignored-source PROPERTIES
-        PASS_REGULAR_EXPRESSION "task 'text2music' ignores the given source: --src-audio not read")
-    add_test(NAME test-synth-read-source
-             COMMAND ace-synth --request ${CMAKE_CURRENT_SOURCE_DIR}/request-cover.json
-                     --src-audio /nonexistent/source.wav --models /nonexistent)
-    set_tests_properties(test-synth-read-source PROPERTIES
-        PASS_REGULAR_EXPRESSION "cannot scan --models" FAIL_REGULAR_EXPRESSION "ignores the given source")
-endif()
+# does not exist warns, a cover does not. Both then stop at the missing
+# --models, before the source would be read, so no model is needed -- and
+# the read itself is not reached: these hold the decision, not the decode.
+add_test(NAME test-synth-ignored-source
+         COMMAND ace-synth --request ${CMAKE_CURRENT_SOURCE_DIR}/request-text2music.json
+                 --src-audio /nonexistent/source.wav --models /nonexistent)
+set_tests_properties(test-synth-ignored-source PROPERTIES
+    PASS_REGULAR_EXPRESSION "task 'text2music' ignores the given source: --src-audio not read")
+add_test(NAME test-synth-cover-keeps-source
+         COMMAND ace-synth --request ${CMAKE_CURRENT_SOURCE_DIR}/request-cover.json
+                 --src-audio /nonexistent/source.wav --models /nonexistent)
+set_tests_properties(test-synth-cover-keeps-source PROPERTIES
+    PASS_REGULAR_EXPRESSION "cannot scan --models" FAIL_REGULAR_EXPRESSION "ignores the given source")
 set(ACESTEP_TEST_MODELS "" CACHE PATH "Directory of GGUFs for the tests that read them (empty: not run)")
 if(ACESTEP_TEST_MODELS)
     add_test(NAME test-audio-layout COMMAND test-audio-layout --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)

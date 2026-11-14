@@ -921,8 +921,8 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     int                     ref_len         = 0;
     std::vector<float>      ref_latents;
     int                     ref_T_latent = 0;
-    // The task's source parts, sent to a task that takes none: not read.
-    std::string             src_dropped_task;
+    // Source parts sent to a task that takes none: not read (#1157).
+    bool                    src_dropped  = false;
 
     // The decoded audio is this handler's until the worker is handed it: an
     // answer before then -- a refused batch, a bad output_format -- frees it,
@@ -946,14 +946,22 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             json_error(res, 400, "Multipart: invalid JSON in 'request' part");
             return;
         }
+        // The batch rule before any part is read: a request it refuses costs
+        // no decode (cadenza-audio #1157). The JSON path runs it below.
+        {
+            AceSynthBatchRefusal why;
+            if (ace_synth_batch_refused(&ace_req, ace_synth_requests_run(&ace_req, 1), &why)) {
+                const std::string which = why.request >= 0 ? "Request 0: " : "";
+                json_error(res, 400, (which + why.reason).c_str());
+                return;
+            }
+        }
         // A task that takes no source would drop one with a warning: its
         // parts are not read -- not checked, not decoded, a whole song's
         // worth of floats -- as the engine runs the task without them
-        // (cadenza-audio #1157). The warning is said once the batch passes.
+        // (cadenza-audio #1157). The warning is said once the job is made.
         const bool src_ignored = ace_synth_task_ignores_source(ace_req.task_type.c_str());
-        if (src_ignored && (req.form.has_file("src_latents") || req.form.has_file("audio"))) {
-            src_dropped_task = ace_req.task_type;
-        }
+        src_dropped            = src_ignored && (req.form.has_file("src_latents") || req.form.has_file("audio"));
 
         // src_latents wins over audio when both are sent: a client that
         // already cached the latent skips the VAE encode regardless of
@@ -1052,9 +1060,6 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             return;
         }
     }
-    if (!src_dropped_task.empty()) {
-        fprintf(stderr, "[Server] WARNING: task '%s' ignores the given source: not read\n", src_dropped_task.c_str());
-    }
 
     // Output format from AceRequest.output_format. Converts the string to
     // (output_wav, wav_fmt) using the same parser the CLI uses.
@@ -1071,6 +1076,10 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     int peak_clip = ace_reqs[0].peak_clip;
 
     // create job, spawn worker, return ID
+    if (src_dropped) {
+        fprintf(stderr, "[Server] WARNING: task '%s' ignores the given source: not read\n",
+                ace_reqs[0].task_type.c_str());
+    }
     auto job = job_create();
     fprintf(stderr, "[Server] Job %s created (%d requests)\n", job->id.c_str(), (int) ace_reqs.size());
 
