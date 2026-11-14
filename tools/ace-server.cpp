@@ -921,6 +921,8 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     int                     ref_len         = 0;
     std::vector<float>      ref_latents;
     int                     ref_T_latent = 0;
+    // The task's source parts, sent to a task that takes none: not read.
+    std::string             src_dropped_task;
 
     // The decoded audio is this handler's until the worker is handed it: an
     // answer before then -- a refused batch, a bad output_format -- frees it,
@@ -944,19 +946,19 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             json_error(res, 400, "Multipart: invalid JSON in 'request' part");
             return;
         }
-        // A task that takes no source would drop one with a warning: the
-        // parts are still checked as sent, but not decoded or kept, a whole
-        // song's worth of floats (cadenza-audio #1157).
+        // A task that takes no source would drop one with a warning: its
+        // parts are not read -- not checked, not decoded, a whole song's
+        // worth of floats -- as the engine runs the task without them
+        // (cadenza-audio #1157). The warning is said once the batch passes.
         const bool src_ignored = ace_synth_task_ignores_source(ace_req.task_type.c_str());
         if (src_ignored && (req.form.has_file("src_latents") || req.form.has_file("audio"))) {
-            fprintf(stderr, "[Server] WARNING: task '%s' ignores the given source: not decoded\n",
-                    ace_req.task_type.c_str());
+            src_dropped_task = ace_req.task_type;
         }
 
         // src_latents wins over audio when both are sent: a client that
         // already cached the latent skips the VAE encode regardless of
         // whether it also attached the original audio for fallback.
-        if (req.form.has_file("src_latents")) {
+        if (!src_ignored && req.form.has_file("src_latents")) {
             const auto & file      = req.form.get_file("src_latents");
             int          http_code = 0;
             int          T         = latent_payload_validate(file.content.size(), &http_code);
@@ -966,24 +968,19 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                                               "src_latents size not a multiple of 64*4 bytes");
                 return;
             }
-            if (!src_ignored) {
-                src_latents.assign(reinterpret_cast<const float *>(file.content.data()),
-                                   reinterpret_cast<const float *>(file.content.data()) + (size_t) T * LATENT_CHANNELS);
-                src_T_latent = T;
-                fprintf(stderr, "[Server] Source latents: %d frames (%.2fs), VAE encode skipped\n", T,
-                        (float) T * 1920.0f / 48000.0f);
-            }
+            src_latents.assign(reinterpret_cast<const float *>(file.content.data()),
+                               reinterpret_cast<const float *>(file.content.data()) + (size_t) T * LATENT_CHANNELS);
+            src_T_latent = T;
+            fprintf(stderr, "[Server] Source latents: %d frames (%.2fs), VAE encode skipped\n", T,
+                    (float) T * 1920.0f / 48000.0f);
         }
 
-        if (req.form.has_file("audio")) {
+        if (!src_ignored && req.form.has_file("audio")) {
             auto file = req.form.get_file("audio");
             if (file.content.empty()) {
                 json_error(res, 400, "Multipart: empty 'audio' part");
                 return;
             }
-        }
-        if (req.form.has_file("audio") && !src_ignored) {
-            auto    file    = req.form.get_file("audio");
             int     T_audio = 0;
             float * planar  = audio_read_48k_buf((const uint8_t *) file.content.data(), file.content.size(), &T_audio);
             if (!planar || T_audio <= 0) {
@@ -1054,6 +1051,9 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             json_error(res, 400, (which + why.reason).c_str());
             return;
         }
+    }
+    if (!src_dropped_task.empty()) {
+        fprintf(stderr, "[Server] WARNING: task '%s' ignores the given source: not read\n", src_dropped_task.c_str());
     }
 
     // Output format from AceRequest.output_format. Converts the string to

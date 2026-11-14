@@ -146,8 +146,9 @@ static int synth_main(int argc, char ** argv) {
     }
     fprintf(stderr, "[Ace-Synth] Batch: %d request(s)\n", batch_n);
     // A task that takes no source would drop one with a warning: say so now,
-    // before any model loads, and skip the decode, a whole song's worth of
-    // floats (cadenza-audio #1157).
+    // before any model loads, and leave --src-audio unread -- not checked,
+    // not decoded, a whole song's worth of floats -- as the engine runs the
+    // task without it (cadenza-audio #1157). ace-server does the same.
     if (src_audio_path && ace_synth_task_ignores_source(reqs[0].task_type.c_str())) {
         fprintf(stderr, "[Ace-Synth] WARNING: task '%s' ignores the given source: --src-audio not read\n",
                 reqs[0].task_type.c_str());
