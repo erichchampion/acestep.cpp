@@ -946,6 +946,23 @@ static AceSynthJob * run_task(AceSynth *          ctx,
         }
         s.rr.audio_cover_strength = def.audio_cover_strength;
         s.rr.cover_noise_strength = def.cover_noise_strength;
+    } else {
+        // A cover's knobs are fractions: one out of [0, 1] is clamped to it,
+        // and one that is no number runs at its default, either said -- a
+        // noise past 1 left no noise level, a strength below 0 built a switch
+        // no step used (cadenza-audio #1152, owner decision).
+        AceRequest def;
+        request_init(&def);
+        auto in_range = [&](float & knob, float fallback, const char * name) {
+            const float asked = knob;
+            knob              = std::isfinite(knob) ? std::clamp(knob, 0.0f, 1.0f) : fallback;
+            if (!(knob == asked)) {
+                fprintf(stderr, "[Synth-Run] WARNING: task '%s' runs at %s %g, not the %g asked: it is in [0, 1]\n",
+                        task.c_str(), name, knob, asked);
+            }
+        };
+        in_range(s.rr.audio_cover_strength, def.audio_cover_strength, "audio_cover_strength");
+        in_range(s.rr.cover_noise_strength, def.cover_noise_strength, "cover_noise_strength");
     }
 
     // What the run made of the request, written however it ends -- a throw

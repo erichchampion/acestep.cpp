@@ -618,6 +618,9 @@ diffusion starts. `0.0` = pure noise (default). `1.0` = start nearly identical
 to the source. The schedule is truncated to the nearest timestep matching the
 noise level. `cover_steps` is recalculated against the remaining steps.
 
+Both cover knobs are fractions: a value out of [0, 1] is clamped to it, and
+one that is no number runs at its default, each with a warning.
+
 **`repainting_start`** (float seconds, default `0`)
 **`repainting_end`** (float seconds, default `-1`)
 Region boundaries for `repaint` and `lego` modes. Default end (`-1`, or any

@@ -1418,6 +1418,40 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             }
         }
     }
+    // A cover's knobs out of [0, 1] are clamped to it, said; one that is no
+    // number runs at its default -- a strength of 1.5 is 1, a noise of 1.5
+    // (no noise level left, a one-step run) is 1, a NaN strength 1 and a NaN
+    // noise 0 (cadenza-audio #1152, owner decision).
+    {
+        const float nan = std::nanf("");
+
+        struct Case {
+            float strength, noise, want_strength, want_noise;
+        };
+
+        for (const Case & c : {
+                 Case{ 1.5f,  0.0f,  1.0f, 0.0f },
+                 Case{ -0.5f, 0.0f,  0.0f, 0.0f },
+                 Case{ nan,   0.0f,  1.0f, 0.0f },
+                 Case{ 0.5f,  1.5f,  0.5f, 1.0f },
+                 Case{ 0.5f,  -0.5f, 0.5f, 0.0f },
+                 Case{ 0.5f,  nan,   0.5f, 0.0f }
+        }) {
+            AceSynthEncodes kept;
+            if (!run("cover", source.data(), NULL, kept, false, 1, nullptr, 0.5f, 1.5f, 0, c.strength, c.noise)) {
+                fprintf(stderr, "[Test] FAIL: a cover asked %g, %g returned a job, or failed before its DiT\n",
+                        c.strength, c.noise);
+                rc = 1;
+                continue;
+            }
+            const AceTestCoverRecord got = ace_test_last_cover();
+            if (got.strength != c.want_strength || got.noise != c.want_noise) {
+                fprintf(stderr, "[Test] FAIL: a cover asked %g, %g ran at %g, %g, want %g, %g\n", c.strength, c.noise,
+                        got.strength, got.noise, c.want_strength, c.want_noise);
+                rc = 1;
+            }
+        }
+    }
     // A cover whose FSQ roundtrip cannot run fails before its DiT, and still
     // hands out its clean encode -- the one a cover-nofsq hands out (#1056).
     AceSynthEncodes failed;
