@@ -992,7 +992,9 @@ static int scenario_task_table() {
     // runs (#1159). Every field request_to_json writes is held to the table,
     // so a field added unclassified fails here.
     {
-        enum Kind { PER_TAKE, SHARED, TASK };
+        // OPEN: shared, but not yet held -- a batch of differing durations
+        // is #1162's -- so it runs as today.
+        enum Kind { PER_TAKE, SHARED, TASK, OPEN };
 
         struct Field {
             const char * key;
@@ -1005,7 +1007,7 @@ static int scenario_task_table() {
             { "caption",              PER_TAKE, "text2music", nullptr      },
             { "lyrics",               PER_TAKE, "text2music", nullptr      },
             { "bpm",                  PER_TAKE, "text2music", nullptr      },
-            { "duration",             SHARED,   "text2music", "cover"      },
+            { "duration",             OPEN,     "text2music", nullptr      },
             { "keyscale",             PER_TAKE, "text2music", nullptr      },
             { "timesignature",        PER_TAKE, "text2music", nullptr      },
             { "vocal_language",       PER_TAKE, "text2music", nullptr      },
@@ -1062,7 +1064,16 @@ static int scenario_task_table() {
                 continue;
             }
             const size_t value = json.find_first_not_of(" \n", colon + 1);
-            const size_t end   = json[value] == '"' ? json.find('"', value + 1) + 1 : json.find_first_of(",\n}", value);
+            const size_t quote =
+                value == std::string::npos || json[value] != '"' ? std::string::npos : json.find('"', value + 1);
+            const size_t end = quote != std::string::npos ? quote + 1 :
+                               value == std::string::npos ? std::string::npos :
+                                                            json.find_first_of(",\n}", value);
+            if (end == std::string::npos) {
+                fprintf(stderr, "[Test] FAIL: request_to_json's output does not scan as flat key/value JSON\n");
+                rc = 1;
+                break;
+            }
             written[json.substr(at + 1, close - at - 1)] = json.substr(value, end - value);
             at                                           = end;
         }
@@ -1115,12 +1126,10 @@ static int scenario_task_table() {
             std::vector<AceRequest> b       = batch_of(f.reads, differing(f.reads, key));
             const bool              refused = ace_synth_batch_refused(b.data(), 2, &why);
             const std::string       said    = "differ in " + key + ":";
-            if (f.kind == PER_TAKE ?
-                    refused :
-                    (!refused || why.request != 1 || !why.reason || !strstr(why.reason, said.c_str()))) {
+            const bool              runs    = f.kind == PER_TAKE || f.kind == OPEN;
+            if (runs ? refused : (!refused || why.request != 1 || !why.reason || !strstr(why.reason, said.c_str()))) {
                 fprintf(stderr, "[Test] FAIL: two %s requests differing in %s: refused %d (%s), want %s\n", f.reads,
-                        key.c_str(), refused, why.reason ? why.reason : "no reason",
-                        f.kind == PER_TAKE ? "none" : said.c_str());
+                        key.c_str(), refused, why.reason ? why.reason : "no reason", runs ? "none" : said.c_str());
                 rc = 1;
             }
             if (f.kind == SHARED && f.ignores) {
@@ -1133,33 +1142,59 @@ static int scenario_task_table() {
                 }
             }
         }
-        // duration sets no length where codes do: a text2music batch whose
-        // first request carries codes differs in it harmlessly.
-        {
-            std::vector<AceRequest> b = batch_of("text2music", differing("text2music", "duration"));
-            b[0].audio_codes          = "1,2,3";
-            AceSynthBatchRefusal why;
-            if (ace_synth_batch_refused(b.data(), 2, &why)) {
-                fprintf(stderr, "[Test] FAIL: a batch with codes differing in duration refused (%s)\n",
-                        why.reason ? why.reason : "no reason");
-                rc = 1;
-            }
-        }
-        // A NaN region asked by both is no difference: each is refused for
-        // the NaN itself when it runs, not as two settings.
-        {
+        // A later request's region bound that is no number is said as that,
+        // not as a difference, whether or not the first's is one too.
+        for (const bool first_nan : { false, true }) {
             std::vector<AceRequest> b(2);
             for (AceRequest & r : b) {
                 request_init(&r);
                 r.task_type        = "repaint";
                 r.caption          = "a song";
-                r.repainting_start = std::numeric_limits<float>::quiet_NaN();
+                r.repainting_start = first_nan ? std::numeric_limits<float>::quiet_NaN() : 1.0f;
             }
+            b[1].repainting_end = std::numeric_limits<float>::quiet_NaN();
             AceSynthBatchRefusal why;
-            if (ace_synth_batch_refused(b.data(), 2, &why)) {
-                fprintf(stderr, "[Test] FAIL: two repaints of one NaN region refused as differing (%s)\n",
-                        why.reason ? why.reason : "no reason");
+            if (!ace_synth_batch_refused(b.data(), 2, &why) || why.request != 1 || !why.reason ||
+                !strstr(why.reason, "finite")) {
+                fprintf(stderr, "[Test] FAIL: a second repaint's NaN bound (first's %s) refused for %d as '%s'\n",
+                        first_nan ? "NaN" : "finite", why.request, why.reason ? why.reason : "nothing");
                 rc = 1;
+            }
+        }
+        // A lego that asks no region asks the whole song, whichever unset
+        // bounds it sends -- the webui's (0, 0), the default (0, -1), an end
+        // at or before its start -- so those differ in nothing; against a
+        // region asked, they differ.
+        {
+            struct Bounds {
+                float start, end;
+            };
+
+            const std::vector<std::tuple<Bounds, Bounds, bool>> pairs = {
+                { { 0.0f, 0.0f },  { 0.0f, -1.0f }, false },
+                { { 0.0f, -1.0f }, { 5.0f, 3.0f },  false },
+                { { 0.0f, 0.0f },  { 2.0f, 5.0f },  true  },
+                { { 2.0f, 5.0f },  { 0.0f, -1.0f }, true  },
+                { { 2.0f, 5.0f },  { 2.0f, 6.0f },  true  },
+            };
+            for (const auto & [first, second, differ] : pairs) {
+                std::vector<AceRequest> b(2);
+                for (AceRequest & r : b) {
+                    request_init(&r);
+                    r.task_type = "lego";
+                }
+                b[0].repainting_start = first.start;
+                b[0].repainting_end   = first.end;
+                b[1].repainting_start = second.start;
+                b[1].repainting_end   = second.end;
+                AceSynthBatchRefusal why;
+                const bool           refused = ace_synth_batch_refused(b.data(), 2, &why);
+                if (refused != differ || (refused && (!why.reason || !strstr(why.reason, "differ in repainting_")))) {
+                    fprintf(stderr, "[Test] FAIL: legos of %g..%g then %g..%g: refused %d (%s), want %d\n", first.start,
+                            first.end, second.start, second.end, refused, why.reason ? why.reason : "no reason",
+                            differ);
+                    rc = 1;
+                }
             }
         }
         // Only the first difference is said, at the first request with one.

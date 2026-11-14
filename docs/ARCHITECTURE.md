@@ -231,12 +231,12 @@ per batch item, producing genuinely different songs.
 ace-synth takes all request files as CLI arguments and runs them in a
 single GPU batch. A batch shares its first request's settings, so its
 requests must agree in them: a batch that differs in one -- the steps,
-schedule, solver, models, output format and peak clip, the region, track
-and cover knobs of a task that reads them, or the duration of a batch with
-neither source nor codes -- is refused, naming the field. Each take keeps
-its own seed, caption, lyrics, metas, codes, synth_batch_size and
-mp3_bitrate; the longest codes set the batch's length. The LM's generate outputs
-above carry codes, so they batch.
+schedule, solver, models, output format and peak clip, or the region,
+track and cover knobs of a task that reads them (a lego asking no region
+asks the whole song, whichever unset bounds it sends) -- is refused, naming
+the field. Each take keeps its own seed, caption, lyrics, metas, codes,
+synth_batch_size and mp3_bitrate; the longest codes set the batch's length.
+A batch still runs at its first request's duration (cadenza-audio #1162).
 
 Transform an existing song with `--src-audio` (no LLM needed):
 

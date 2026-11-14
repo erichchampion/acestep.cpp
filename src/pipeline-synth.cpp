@@ -813,9 +813,8 @@ bool ace_synth_request_missing_caption(const AceRequest * req) {
     return !entry || entry->needs_caption;
 }
 
-// Whether two floats are the same setting: NaN is NaN, so a batch whose
-// requests all ask a NaN region differs in nothing, and is refused for the
-// NaN itself (refuse_nonfinite_region).
+// Whether two floats are the same setting: NaN is NaN, so knobs asked alike
+// differ in nothing.
 static bool same_setting(float a, float b) {
     return a == b || (std::isnan(a) && std::isnan(b));
 }
@@ -826,20 +825,24 @@ template <typename T> static bool same_setting(const T & a, const T & b) {
 
 // The first field the engine or the tools read from a batch's first request
 // alone in which `b` differs from `a`, said as the reason a batch with them
-// is refused; NULL when they agree (#1159). The task's own: the region, the
-// track and the cover knobs only for a task that reads them, duration only
-// where it sets the length.
-static const char * shared_field_differs(const AceRequest & a,
-                                         const AceRequest & b,
-                                         const SynthTask &  task,
-                                         bool               reads_duration) {
+// is refused; NULL when they agree (#1159). The task's own -- the region, the
+// track and the cover knobs -- only for a task that reads them. A lego that
+// asks no region asks the whole song, whichever unset bounds it sends.
+// duration is not held here: a batch's takes of differing durations is
+// #1162's.
+static const char * shared_field_differs(const AceRequest & a, const AceRequest & b, const SynthTask & task) {
 #define ACE_SHARED(field, read)                                                      \
     if ((read) && !same_setting(a.field, b.field)) {                                 \
         return "requests differ in " #field ": a batch runs as its first request's"; \
     }
-    ACE_SHARED(duration, reads_duration)
-    ACE_SHARED(repainting_start, task.reads_region)
-    ACE_SHARED(repainting_end, task.reads_region)
+    const bool lego          = task.name == std::string_view(TASK_LEGO);
+    // a's bounds are finite before lego_asks_region reads them; b's were
+    // checked by the caller, and a NaN of a's is refused when it runs.
+    const bool region_unread = lego && std::isfinite(a.repainting_start) && std::isfinite(a.repainting_end) &&
+                               !lego_asks_region(a.repainting_start, a.repainting_end) &&
+                               !lego_asks_region(b.repainting_start, b.repainting_end);
+    ACE_SHARED(repainting_start, task.reads_region && !region_unread)
+    ACE_SHARED(repainting_end, task.reads_region && !region_unread)
     ACE_SHARED(track, task.reads_track)
     ACE_SHARED(audio_cover_strength, task.cover_knobs)
     ACE_SHARED(cover_noise_strength, task.cover_knobs)
@@ -898,16 +901,15 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
     // first's. Refused, by the first field that differs (#1159). A take's own
     // are allowed: its seed, caption, lyrics, metas and codes, its
     // synth_batch_size and mp3_bitrate, and the LM's fields synth never reads.
-    const SynthTask & task  = *find_synth_task(reqs[0].task_type);
-    // duration sets the length only of a batch with neither a source nor
-    // codes: a source's length, or the longest codes, set it otherwise.
-    bool              codes = false;
-    for (int i = 0; i < batch_n; i++) {
-        codes = codes || !reqs[i].audio_codes.empty();
-    }
-    const bool reads_duration = !task.needs_source && !codes;
+    const SynthTask & task = *find_synth_task(reqs[0].task_type);
     for (int i = 1; i < batch_n; i++) {
-        if (const char * reason = shared_field_differs(reqs[0], reqs[i], task, reads_duration)) {
+        // A later request's bound that is no number is said as that, as the
+        // first's is when it runs (refuse_nonfinite_region), not as a
+        // difference.
+        if (task.reads_region && !(std::isfinite(reqs[i].repainting_start) && std::isfinite(reqs[i].repainting_end))) {
+            return refuse(i, "a region bound is not a finite number");
+        }
+        if (const char * reason = shared_field_differs(reqs[0], reqs[i], task)) {
             return refuse(i, reason);
         }
     }
