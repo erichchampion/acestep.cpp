@@ -242,7 +242,7 @@ lyrics, metas, codes, synth_batch_size and mp3_bitrate; the longest codes
 set the batch's length.
 A batch still runs at its first request's duration (cadenza-audio #1162).
 
-Transform an existing song with `--src-audio` (no LLM needed):
+Transform an existing song with `--src-audio` (no LLM needed). A task that takes no source (text2music) runs without one: `ace-synth` warns and skips reading `--src-audio`, and `ace-server`'s `/synth` warns in its log and decodes neither an `audio` nor a `src_latents` part, though an empty `audio` part or a malformed `src_latents` is still refused (cadenza-audio #1157):
 
 ```bash
 cat > /tmp/cover.json << 'EOF'

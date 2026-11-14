@@ -166,6 +166,11 @@ struct AceSynthTaskInfo {
 
 bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
 
+// Whether a known task takes no source, so a tool can skip decoding one it
+// was sent (cadenza-audio #1157): the engine would drop it with a warning.
+// False for a task the engine does not know, which its run refuses.
+bool ace_synth_task_ignores_source(const char * task);
+
 // Whether a request (non-NULL) is short of the caption its task needs: by
 // the table (a caption of white space alone being none), and for a task the
 // engine does not know, as if it needed one. ace_synth_batch_refused asks it

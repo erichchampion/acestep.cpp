@@ -838,14 +838,26 @@ static int scenario_task_table() {
                     w.cover_knobs);
             rc = 1;
         }
+        // What a tool reads to skip decoding a source the task drops
+        // (cadenza-audio #1157): the table's no-source tasks alone.
+        if (ace_synth_task_ignores_source(w.task) != !w.needs_source) {
+            fprintf(stderr, "[Test] FAIL: %s ignores a source %d, want %d\n", w.task,
+                    ace_synth_task_ignores_source(w.task), !w.needs_source);
+            rc = 1;
+        }
     }
     // A task it does not know -- misspelt, empty, none -- is said as that,
-    // the caller's info left as it was.
+    // the caller's info left as it was; nor does it ignore a source, so a
+    // tool decodes it and the run refuses the task by name.
     for (const char * task : { "covers", "", (const char *) nullptr }) {
         AceSynthTaskInfo info{ true, false };
         if (ace_synth_task_info(task, &info) || !info.needs_source || info.needs_caption) {
             fprintf(stderr, "[Test] FAIL: the task table knows '%s', or wrote to the info of a task it does not\n",
                     task ? task : "(null)");
+            rc = 1;
+        }
+        if (ace_synth_task_ignores_source(task)) {
+            fprintf(stderr, "[Test] FAIL: an unknown task '%s' ignores a source\n", task ? task : "(null)");
             rc = 1;
         }
     }

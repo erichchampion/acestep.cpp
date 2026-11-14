@@ -145,6 +145,14 @@ static int synth_main(int argc, char ** argv) {
         }
     }
     fprintf(stderr, "[Ace-Synth] Batch: %d request(s)\n", batch_n);
+    // A task that takes no source would drop one with a warning: say so now,
+    // before any model loads, and skip the decode, a whole song's worth of
+    // floats (cadenza-audio #1157).
+    if (src_audio_path && ace_synth_task_ignores_source(reqs[0].task_type.c_str())) {
+        fprintf(stderr, "[Ace-Synth] WARNING: task '%s' ignores the given source: --src-audio not read\n",
+                reqs[0].task_type.c_str());
+        src_audio_path = NULL;
+    }
 
     // Scan the registry and resolve model paths from the first request.
     ModelRegistry registry;
@@ -213,7 +221,7 @@ static int synth_main(int argc, char ** argv) {
         return 1;
     }
 
-    // Read source audio (cover/lego mode)
+    // Read source audio (cover/lego mode).
     float * src_interleaved = NULL;
     int     src_len         = 0;
     if (src_audio_path) {

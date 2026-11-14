@@ -944,6 +944,14 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             json_error(res, 400, "Multipart: invalid JSON in 'request' part");
             return;
         }
+        // A task that takes no source would drop one with a warning: the
+        // parts are still checked as sent, but not decoded or kept, a whole
+        // song's worth of floats (cadenza-audio #1157).
+        const bool src_ignored = ace_synth_task_ignores_source(ace_req.task_type.c_str());
+        if (src_ignored && (req.form.has_file("src_latents") || req.form.has_file("audio"))) {
+            fprintf(stderr, "[Server] WARNING: task '%s' ignores the given source: not decoded\n",
+                    ace_req.task_type.c_str());
+        }
 
         // src_latents wins over audio when both are sent: a client that
         // already cached the latent skips the VAE encode regardless of
@@ -958,11 +966,13 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                                               "src_latents size not a multiple of 64*4 bytes");
                 return;
             }
-            src_latents.assign(reinterpret_cast<const float *>(file.content.data()),
-                               reinterpret_cast<const float *>(file.content.data()) + (size_t) T * LATENT_CHANNELS);
-            src_T_latent = T;
-            fprintf(stderr, "[Server] Source latents: %d frames (%.2fs), VAE encode skipped\n", T,
-                    (float) T * 1920.0f / 48000.0f);
+            if (!src_ignored) {
+                src_latents.assign(reinterpret_cast<const float *>(file.content.data()),
+                                   reinterpret_cast<const float *>(file.content.data()) + (size_t) T * LATENT_CHANNELS);
+                src_T_latent = T;
+                fprintf(stderr, "[Server] Source latents: %d frames (%.2fs), VAE encode skipped\n", T,
+                        (float) T * 1920.0f / 48000.0f);
+            }
         }
 
         if (req.form.has_file("audio")) {
@@ -971,6 +981,9 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                 json_error(res, 400, "Multipart: empty 'audio' part");
                 return;
             }
+        }
+        if (req.form.has_file("audio") && !src_ignored) {
+            auto    file    = req.form.get_file("audio");
             int     T_audio = 0;
             float * planar  = audio_read_48k_buf((const uint8_t *) file.content.data(), file.content.size(), &T_audio);
             if (!planar || T_audio <= 0) {

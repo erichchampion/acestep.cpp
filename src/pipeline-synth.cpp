@@ -806,6 +806,11 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
     return true;
 }
 
+bool ace_synth_task_ignores_source(const char * task) {
+    AceSynthTaskInfo info;
+    return ace_synth_task_info(task, &info) && !info.needs_source;
+}
+
 bool ace_synth_request_missing_caption(const AceRequest * req) {
     if (request_caption_given(req->caption)) {
         return false;
