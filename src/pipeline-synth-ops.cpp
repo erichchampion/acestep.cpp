@@ -411,9 +411,13 @@ bool timbre_crop(const float * in, int n, int width, int seg, std::vector<float>
     const int starts[] = { (third - seg) / 2, third + (third - seg) / 2, 2 * third + ((total - 2 * third) - seg) / 2 };
     out.resize((size_t) 3 * seg * width);
     for (int i = 0; i < 3; i++) {
-        for (int f = 0; f < seg; f++) {
-            const float * frame = in + (size_t) ((starts[i] + f) % n) * width;
-            std::copy(frame, frame + width, out.begin() + ((size_t) i * seg + f) * width);
+        // In runs that don't wrap: one copy each for a long reference, one a
+        // repeat for a short one.
+        for (int f = 0; f < seg;) {
+            const int pos = (starts[i] + f) % n, run = std::min(seg - f, n - pos);
+            std::copy(in + (size_t) pos * width, in + (size_t) (pos + run) * width,
+                      out.begin() + ((size_t) i * seg + f) * width);
+            f += run;
         }
     }
     return true;
@@ -456,8 +460,8 @@ int ops_encode_timbre(const AceSynth * ctx, const SynthInput & ref, SynthState &
         if (timbre_crop(ref.audio, ref.len, 2, ACE_TIMBRE_SEGMENT_SAMPLES, cropped)) {
             audio = cropped.data();
             len   = 3 * ACE_TIMBRE_SEGMENT_SAMPLES;
-            fprintf(stderr, "[Encode-Timbre] ref_audio: %.1fs, cropped to %.1fs\n", samples_sec(ref.len),
-                    samples_sec(len));
+            fprintf(stderr, "[Encode-Timbre] ref_audio: %.1fs, %s to %.1fs\n", samples_sec(ref.len),
+                    ref.len < len ? "repeated" : "cropped", samples_sec(len));
         }
         int                max_T_ref = (len / ACE_LATENT_HOP) + 64;
         std::vector<float> ref_lat_buf(max_T_ref * 64);

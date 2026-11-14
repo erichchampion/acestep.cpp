@@ -848,7 +848,11 @@ are cropped by the same rule in frames, 250 a segment; the audio is cut in
 samples and then encoded, so the two forms of one reference agree to within
 a frame and the encoder's context at the joins. A shorter one is first
 repeated until it is 30 s long at least, as upstream repeats it, then read
-the same way (cadenza-audio #1147, #1172).
+the same way (cadenza-audio #1147, #1172). Its two forms agree less: audio
+is repeated in samples, then encoded across the repeats' joins, while
+latents are repeated in whole frames, so a reference whose length is no
+whole number of frames, or whose last frame is partial, repeats a slightly
+different period as latents.
 
 Batching comes from two sources: multiple `--request` files on the CLI
 (or JSON array on the server), and `synth_batch_size` inside each request.
