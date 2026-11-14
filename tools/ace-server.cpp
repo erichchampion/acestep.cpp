@@ -646,7 +646,7 @@ static void handle_lm(const httplib::Request & req, httplib::Response & res) {
         json_error(res, 400, "Invalid JSON");
         return;
     }
-    if (ace_req.caption.empty()) {
+    if (!request_caption_given(ace_req.caption)) {
         json_error(res, 400, "Caption is required");
         return;
     }
@@ -914,6 +914,15 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     std::vector<float>      ref_latents;
     int                     ref_T_latent = 0;
 
+    // The decoded audio is this handler's until the worker is handed it: an
+    // answer before then -- a refused batch, a bad output_format -- frees it,
+    // not leaks it, 230 MB for 600 s of source (cadenza-audio #1123).
+    struct DecodedAudio {
+        float *& p;
+
+        ~DecodedAudio() { free(p); }
+    } own_src{ src_interleaved }, own_ref{ ref_interleaved };
+
     if (req.is_multipart_form_data()) {
         // multipart mode: single request + optional audio files or src_latents
         AceRequest ace_req;
@@ -1022,7 +1031,8 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     {
         AceSynthBatchRefusal why;
         if (ace_synth_batch_refused(ace_reqs.data(), (int) ace_reqs.size(), &why)) {
-            json_error(res, 400, (std::string("Request ") + std::to_string(why.request) + ": " + why.reason).c_str());
+            const std::string which = why.request >= 0 ? "Request " + std::to_string(why.request) + ": " : "";
+            json_error(res, 400, (which + why.reason).c_str());
             return;
         }
     }
@@ -1051,6 +1061,9 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         synth_worker(job, std::move(reqs), src_interleaved, src_len, std::move(src_lat), src_T_latent, ref_interleaved,
                      ref_len, std::move(ref_lat), ref_T_latent, output_wav, wav_fmt, peak_clip);
     });
+    // The worker owns the audio now: it frees it.
+    src_interleaved = nullptr;
+    ref_interleaved = nullptr;
 
     // return job ID immediately
     std::string body = "{\"id\":\"" + job->id + "\"}";

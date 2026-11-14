@@ -922,6 +922,11 @@ POST /synth                     Submit synth generation, returns job ID
   body: multipart/form-data (request + audio|src_latents + ref_audio|ref_latents)
         latents win over audio when both are sent on the same side
   response: {"id":"2"}
+  400 "Request <i>: <reason>" for a batch the engine refuses up front, every
+        request checked: "unknown task_type", "requests mix tasks: a batch
+        runs as its first request's task" (a batch is one task), or
+        "caption is required" (a task that needs one sent none, or white
+        space alone). ace-synth refuses the same before loading a model.
 
 POST /understand                Submit understand, returns job ID
   body: multipart/form-data (audio or src_latents required, optional request JSON)

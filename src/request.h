@@ -128,6 +128,13 @@ struct AceRequest {
 // Initialize all fields to defaults (matches Python GenerationParams defaults)
 void request_init(AceRequest * r);
 
+// Whether a caption is one: not empty, and not white space alone -- the white
+// space the app's models trim (Swift's .whitespacesAndNewlines: ASCII tab to
+// carriage return, U+0085, and the Unicode space and line separators, Zs, Zl,
+// Zp), read from the caption's UTF-8 (cadenza-audio #1123). Every caption
+// check reads it: the synth's batch rule, the LM's, the server's.
+bool request_caption_given(const std::string & caption);
+
 // Parse JSON file into struct. Missing fields keep their defaults.
 // Returns false on file error or malformed JSON.
 bool request_parse(AceRequest * r, const char * path);

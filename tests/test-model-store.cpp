@@ -870,6 +870,13 @@ static int scenario_task_table() {
     // A caption of whitespace alone is none (the app's models trim it too).
     missing("text2music", " \t\n", true);
     missing("lego", " ", false);
+    // The app's trim is Unicode's: no-break, ideographic and line-separator
+    // spaces are white space too; a zero-width space is not (nor is it in
+    // Swift's set), so a caption of it is given.
+    missing("text2music", "\xC2\xA0", true);
+    missing("text2music", "\xE3\x80\x80 \xE2\x80\xA8", true);
+    missing("text2music", "\xE2\x80\x8B", false);
+    missing("text2music", "\xC2\xA0song", false);
     // A batch is refused up front, by request and reason, for a task the
     // engine does not know (said as that, before any caption), requests that
     // mix tasks, or a request short of its caption -- any of them, not only
@@ -895,6 +902,7 @@ static int scenario_task_table() {
             { "a text2music then a cover",        { { "text2music", "a song" }, { "cover", "a song" } },       1  },
             { "a second request with no caption", { { "text2music", "a song" }, { "text2music", "" } },        1  },
             { "a second request of whitespace",   { { "cover", "a song" }, { "cover", "  " } },                1  },
+            { "an unknown task second",           { { "text2music", "a song" }, { "covr", "a song" } },        1  },
         };
         for (const Case & c : cases) {
             std::vector<AceRequest> reqs(c.batch.size());
@@ -917,6 +925,25 @@ static int scenario_task_table() {
         request_init(&unknown);
         unknown.task_type = "covers";
         AceSynthBatchRefusal why;
+        AceRequest second[2];
+        request_init(&second[0]);
+        request_init(&second[1]);
+        second[0].caption   = "a song";
+        second[1].caption   = "a song";
+        second[1].task_type = "covr";
+        AceSynthBatchRefusal second_why;
+        if (!ace_synth_batch_refused(second, 2, &second_why) || !second_why.reason ||
+            !strstr(second_why.reason, "unknown")) {
+            fprintf(stderr, "[Test] FAIL: an unknown task second in a batch is refused as '%s', not as unknown\n",
+                    second_why.reason ? second_why.reason : "nothing");
+            rc = 1;
+        }
+        // An empty batch is refused, not read past.
+        AceSynthBatchRefusal empty_why;
+        if (!ace_synth_batch_refused(&unknown, 0, &empty_why) || empty_why.request != -1) {
+            fprintf(stderr, "[Test] FAIL: an empty batch was not refused as one\n");
+            rc = 1;
+        }
         if (!ace_synth_batch_refused(&unknown, 1, &why) || !why.reason || !strstr(why.reason, "unknown")) {
             fprintf(stderr, "[Test] FAIL: an unknown task with no caption is refused as '%s', not as unknown\n",
                     why.reason ? why.reason : "nothing");

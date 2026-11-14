@@ -606,8 +606,8 @@ int ace_lm_generate(AceLm *            ctx,
         fprintf(stderr, "[Ace-LM] ERROR: lm_batch_size %d > max_batch %d\n", lm_batch_size, ctx->params.max_batch);
         return -1;
     }
-    if (req->caption.empty()) {
-        fprintf(stderr, "[Ace-LM] ERROR: caption is empty\n");
+    if (!request_caption_given(req->caption)) {
+        fprintf(stderr, "[Ace-LM] ERROR: caption is empty, or white space alone\n");
         return -1;
     }
 

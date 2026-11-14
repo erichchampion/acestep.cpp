@@ -15,6 +15,39 @@ static const yyjson_write_flag WRITE_FLAGS =
     YYJSON_WRITE_PRETTY | YYJSON_WRITE_PRETTY_TWO_SPACES | YYJSON_WRITE_FP_TO_FIXED(2);
 
 // Defaults (aligned with Python GenerationParams)
+// A code point the app trims as white space (Swift's .whitespacesAndNewlines).
+static bool trimmed_space(uint32_t cp) {
+    return (cp >= 0x09 && cp <= 0x0D) || cp == 0x20 || cp == 0x85 || cp == 0xA0 || cp == 0x1680 ||
+           (cp >= 0x2000 && cp <= 0x200A) || cp == 0x2028 || cp == 0x2029 || cp == 0x202F || cp == 0x205F ||
+           cp == 0x3000;
+}
+
+bool request_caption_given(const std::string & caption) {
+    const unsigned char * p   = (const unsigned char *) caption.data();
+    const unsigned char * end = p + caption.size();
+    while (p < end) {
+        // One UTF-8 code point; a byte that starts none is a character, so a
+        // caption of it is given.
+        uint32_t cp  = *p;
+        int      len = 1;
+        if (cp >= 0xF0 && end - p >= 4) {
+            cp  = ((cp & 0x07) << 18) | ((p[1] & 0x3F) << 12) | ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+            len = 4;
+        } else if (cp >= 0xE0 && end - p >= 3) {
+            cp  = ((cp & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+            len = 3;
+        } else if (cp >= 0xC0 && end - p >= 2) {
+            cp  = ((cp & 0x1F) << 6) | (p[1] & 0x3F);
+            len = 2;
+        }
+        if (!trimmed_space(cp)) {
+            return true;
+        }
+        p += len;
+    }
+    return false;
+}
+
 void request_init(AceRequest * r) {
     r->caption = "";
     r->lyrics  = "";

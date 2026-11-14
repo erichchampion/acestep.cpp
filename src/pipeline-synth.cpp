@@ -801,18 +801,8 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
     return true;
 }
 
-// Whether a caption is one: whitespace alone is none (#1123).
-static bool caption_given(const std::string & caption) {
-    for (unsigned char c : caption) {
-        if (!std::isspace(c)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 bool ace_synth_request_missing_caption(const AceRequest * req) {
-    if (caption_given(req->caption)) {
+    if (request_caption_given(req->caption)) {
         return false;
     }
     const SynthTask * entry = find_synth_task(req->task_type);
@@ -827,10 +817,15 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
         }
         return true;
     };
-    // The task first, so a misspelt one is said as that, not as the caption
-    // an unknown task is short of.
-    if (!find_synth_task(reqs[0].task_type)) {
-        return refuse(0, "unknown task_type");
+    if (!reqs || batch_n < 1) {
+        return refuse(-1, "a batch holds one request at least");
+    }
+    // Each request's task first, so a misspelt one -- at any index -- is said
+    // as that, not as a mix or the caption an unknown task is short of.
+    for (int i = 0; i < batch_n; i++) {
+        if (!find_synth_task(reqs[i].task_type)) {
+            return refuse(i, "unknown task_type");
+        }
     }
     for (int i = 0; i < batch_n; i++) {
         // A batch runs as its first request's task: another's would run as

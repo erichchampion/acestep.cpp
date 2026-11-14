@@ -137,7 +137,8 @@ static int synth_main(int argc, char ** argv) {
     {
         AceSynthBatchRefusal why;
         if (ace_synth_batch_refused(reqs.data(), batch_n, &why)) {
-            fprintf(stderr, "[Ace-Synth] FATAL: %s: %s\n", request_paths[why.request], why.reason);
+            fprintf(stderr, "[Ace-Synth] FATAL: %s: %s\n", why.request >= 0 ? request_paths[why.request] : "the batch",
+                    why.reason);
             return 1;
         }
     }
