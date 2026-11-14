@@ -675,7 +675,7 @@ static int run_lego(AceSynth *          ctx,
     // An end of its own at or before the start asks no region a lego can
     // run -- a repaint refuses it -- so the lego runs the whole song, said.
     // (0, 0) is a client's unset range -- the webui resets to it -- not one.
-    if (!s.is_lego_region && s.rr.repainting_end >= 0.0f && s.rr.repainting_end <= s.rr.repainting_start &&
+    if (s.rr.repainting_end >= 0.0f && s.rr.repainting_end <= s.rr.repainting_start &&
         !(s.rr.repainting_start == 0.0f && s.rr.repainting_end == 0.0f)) {
         fprintf(stderr, "[Region] WARNING: lego region %.1f..%.1f s ends at or before its start: the whole song\n",
                 s.rr.repainting_start, s.rr.repainting_end);

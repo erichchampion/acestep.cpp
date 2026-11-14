@@ -713,7 +713,8 @@ static int scenario_splice_rule() {
         };
 
         // A start within the frame slack of 0 is 0: float noise about it asks
-        // the whole song, not an outpaint of no frame before the source.
+        // the whole song, not an outpaint of no frame before the source; a
+        // start inside the first frame (0.02 s) is the whole song in frames.
         for (const Case & c : {
                  Case{ 10.0f,    20.0f, true  },
                  Case{ 10.0f,    -1.0f, true  },
@@ -723,7 +724,9 @@ static int scenario_splice_rule() {
                  Case{ 0.0f,     0.0f,  false },
                  Case{ -0.0001f, -1.0f, false },
                  Case{ 0.0001f,  -1.0f, false },
-                 Case{ -0.001f,  -1.0f, true  }
+                 Case{ -0.001f,  -1.0f, true  },
+                 Case{ 0.02f,    -1.0f, false },
+                 Case{ 0.05f,    -1.0f, true  }
         }) {
             if (lego_asks_region(c.rs, c.re) != c.want) {
                 fprintf(stderr, "[Test] FAIL: a lego from %.4fs to %.1fs asks %s region, want %s\n", c.rs, c.re,

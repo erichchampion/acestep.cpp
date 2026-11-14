@@ -205,12 +205,18 @@ inline bool splices_source_after_decode(const SynthState & s) {
 // (cadenza-audio #1134): an end of its own, after the start; or the -1
 // sentinel (any negative end, as asked_region_end reads it) -- the source's
 // end, or for a start before the source the source's start -- with a start
-// other than 0 -- by more than the frame slack, so float noise about 0 is 0,
-// not an outpaint of no frame before the source. The defaults, 0 and -1, ask
-// the whole song, which a lego runs as no region: a region of all of it would
-// be the same song, spliced.
+// whose region is not the whole song in frames: a start past 0 whose first
+// frame is past frame 0 (sec_latent_frame, as resolve_region_frames reads
+// it), or a start before 0 whose pad is a frame at least (as the latent pad
+// rounds it). So float noise about 0 is 0, and a start inside the first frame
+// is the whole song too. The defaults, 0 and -1, ask the whole song, which a
+// lego runs as no region: a region of all of it would be the same song,
+// spliced.
 inline bool lego_asks_region(float rs, float re) {
-    return re >= 0.0f ? re > rs : sec_latent_frame_end(rs < 0.0f ? -rs : rs) > 0;
+    if (re >= 0.0f) {
+        return re > rs;
+    }
+    return rs > 0.0f ? sec_latent_frame(rs) > 0 : sec_latent_frame_end(-rs) > 0;
 }
 
 // The region's latent frames, [repaint_t0, repaint_t1) with
