@@ -166,6 +166,10 @@ struct AceSynthTaskInfo {
     // Whether the task reads audio_cover_strength and cover_noise_strength;
     // every other runs at their defaults (cadenza-audio #1135).
     bool cover_knobs   = false;
+    // Whether the task reads the region (repainting_start/_end): the batch
+    // rule refuses such a task's request whose bound is no number, before
+    // its pad or encode (cadenza-audio #1150).
+    bool reads_region  = false;
 };
 
 bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
@@ -236,12 +240,6 @@ int ace_test_source_ignores();
 // run -- so a test can tell that refusal from ops_resolve_T's, which comes
 // after the encode (cadenza-audio #1139, #1144).
 int ace_test_source_too_long();
-
-// Tests only: how many runs the per-task backstop has refused for a region
-// bound that is no number, before its pad or its source's encode
-// (cadenza-audio #1144). Through run_task the batch rule refuses one first
-// (ace_test_batch_refusals, #1159).
-int ace_test_region_nonfinite();
 
 // Tests only: how many runs have been refused for a region that ends at or
 // before its start -- by the check before its pad and its source's encode, or

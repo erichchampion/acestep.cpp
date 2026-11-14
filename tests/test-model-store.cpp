@@ -1010,27 +1010,29 @@ static int scenario_task_table() {
 
     struct Want {
         const char * task;
-        bool         needs_source, needs_caption, cover_knobs;
+        bool         needs_source, needs_caption, cover_knobs, reads_region;
     };
 
     for (const Want & w : {
-             Want{ "text2music",  false, true,  false },
-             Want{ "cover",       true,  true,  true  },
-             Want{ "cover-nofsq", true,  true,  true  },
-             Want{ "repaint",     true,  true,  false },
-             Want{ "lego",        true,  false, false },
-             Want{ "extract",     true,  false, false },
-             Want{ "complete",    true,  false, false }
+             Want{ "text2music",  false, true,  false, false },
+             Want{ "cover",       true,  true,  true,  false },
+             Want{ "cover-nofsq", true,  true,  true,  false },
+             Want{ "repaint",     true,  true,  false, true  },
+             Want{ "lego",        true,  false, false, true  },
+             Want{ "extract",     true,  false, false, false },
+             Want{ "complete",    true,  false, false, false }
     }) {
-        AceSynthTaskInfo info{ !w.needs_source, !w.needs_caption, !w.cover_knobs };
+        AceSynthTaskInfo info{ !w.needs_source, !w.needs_caption, !w.cover_knobs, !w.reads_region };
         if (!ace_synth_task_info(w.task, &info)) {
             fprintf(stderr, "[Test] FAIL: the task table does not know %s\n", w.task);
             rc = 1;
         } else if (info.needs_source != w.needs_source || info.needs_caption != w.needs_caption ||
-                   info.cover_knobs != w.cover_knobs) {
-            fprintf(stderr, "[Test] FAIL: %s needs_source %d needs_caption %d cover_knobs %d, want %d %d %d\n", w.task,
-                    info.needs_source, info.needs_caption, info.cover_knobs, w.needs_source, w.needs_caption,
-                    w.cover_knobs);
+                   info.cover_knobs != w.cover_knobs || info.reads_region != w.reads_region) {
+            fprintf(
+                stderr,
+                "[Test] FAIL: %s needs_source %d needs_caption %d cover_knobs %d reads_region %d, want %d %d %d %d\n",
+                w.task, info.needs_source, info.needs_caption, info.cover_knobs, info.reads_region, w.needs_source,
+                w.needs_caption, w.cover_knobs, w.reads_region);
             rc = 1;
         }
         // What a tool reads to skip decoding a source the task drops
@@ -1860,21 +1862,30 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 rc = 1;
             }
         }
-        // Nor a region whose bound is no number: refused, not read as 0 s --
-        // before its pad and its source's encode, by a repaint and a lego
-        // alike; a lego's would else read as no region and run whole (#1144).
+
+        // Nor a region whose bound is no number -- a NaN, an infinity:
+        // refused, not read as 0 s or padded without end -- before its pad
+        // and its source's encode, by a repaint and a lego alike; a lego's
+        // would else read as no region and run whole (#1144). The batch
+        // rule, which run_task asks first, is the one check (#1159, #1150).
+        struct Bounds {
+            float        rs, re;
+            const char * said;
+        };
+
+        const float inf = std::numeric_limits<float>::infinity();
         for (const char * task : { "repaint", "lego" }) {
-            for (const bool nan_start : { true, false }) {
-                AceSynthEncodes nan_bound;
-                // Refused by the batch rule, which run_task asks first
-                // (#1159); the per-task check is a backstop behind it.
+            for (const Bounds & b : {
+                     Bounds{ std::nanf(""), 1.0f,          "a NaN start"       },
+                     Bounds{ 0.5f,          std::nanf(""), "a NaN end"         },
+                     Bounds{ 0.5f,          inf,           "an infinite end"   },
+                     Bounds{ -inf,          1.0f,          "an infinite start" }
+            }) {
+                AceSynthEncodes bad_bound;
                 const int       before = ace_test_batch_refusals();
-                const float     rs     = nan_start ? std::nanf("") : 0.5f;
-                const float     re     = nan_start ? 1.0f : std::nanf("");
-                if (!run(task, source.data(), NULL, nan_bound, true, 0, nullptr, rs, re) ||
-                    ace_test_batch_refusals() != before + 1 || !nan_bound.src_latents.empty()) {
-                    fprintf(stderr, "[Test] FAIL: the %s with a NaN %s was not refused before its encode\n", task,
-                            nan_start ? "start" : "end");
+                if (!run(task, source.data(), NULL, bad_bound, true, 0, nullptr, b.rs, b.re) ||
+                    ace_test_batch_refusals() != before + 1 || !bad_bound.src_latents.empty()) {
+                    fprintf(stderr, "[Test] FAIL: the %s with %s was not refused before its encode\n", task, b.said);
                     rc = 1;
                 }
             }

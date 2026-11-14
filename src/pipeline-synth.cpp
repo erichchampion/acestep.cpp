@@ -207,28 +207,6 @@ static RegionFrames asked_region_frames(float rs_raw, float re_raw, float src_du
              sec_latent_frame_end(asked_region_end(rs_raw, re_raw, src_dur) + left_pad_sec) };
 }
 
-// The runs refused for a region bound that is no number, before its pad or
-// its source's encode (ace_test_region_nonfinite).
-static std::atomic<int> g_test_region_nonfinite{ 0 };
-
-int ace_test_region_nonfinite() {
-    return g_test_region_nonfinite.load();
-}
-
-// True, said and counted, for a region bound that is no number -- a NaN
-// through the C API, an infinity -- which would read as frame 0 and repaint
-// from the start, unsaid, or pad without end (#1129, #1138, #1144). Every
-// task that reads a region asks it first, before any pad or encode -- a
-// backstop: run_task's batch rule refuses such a bound first (#1159).
-static bool refuse_nonfinite_region(const AceRequest & r) {
-    if (std::isfinite(r.repainting_start) && std::isfinite(r.repainting_end)) {
-        return false;
-    }
-    g_test_region_nonfinite.fetch_add(1);
-    fprintf(stderr, "[Region] ERROR: a region bound is not a finite number\n");
-    return true;
-}
-
 // The runs refused for a region that ends at or before its start, once its
 // -1 end is read (ace_test_region_empty).
 static std::atomic<int> g_test_region_empty{ 0 };
@@ -291,10 +269,9 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
                                       const SynthInput & src,
                                       SynthState &       s,
                                       SynthInput &       enc) {
+    // Both bounds are finite: run_task's batch rule refused a request whose
+    // task reads a region and a bound of it is no number (#1150).
     enc = src;
-    if (refuse_nonfinite_region(r)) {
-        return false;
-    }
 
     float src_dur  = src.duration_sec();
     float rs_raw   = r.repainting_start;
@@ -406,13 +383,8 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
 // src_dur is the unpadded source duration in seconds, agnostic of audio vs
 // latent input. Returns false when the resolved range is empty or inverted.
 static bool adjust_region_coords(SynthState & s, float src_dur) {
-    // A bound that is no number was refused by refuse_nonfinite_region before
-    // any pad or encode (#1144); kept here too, so a caller that skips it
-    // still never reads NaN as frame 0 and repaints from the start (#1129).
-    if (!std::isfinite(s.rs) || !std::isfinite(s.re)) {
-        fprintf(stderr, "[Region] ERROR: a region bound is not a finite number\n");
-        return false;
-    }
+    // Both bounds are finite (run_task's batch rule, #1150): a NaN would read
+    // as frame 0 and repaint from the start, unsaid (#1129).
     s.rs += s.left_pad_sec;
     s.re = asked_region_end(s.rr.repainting_start, s.re, src_dur) + s.left_pad_sec;
     if (refuse_empty_region(s.re, s.rs)) {
@@ -667,11 +639,9 @@ static int run_lego(AceSynth *          ctx,
                     int                 batch_n,
                     SynthState &        s,
                     AceProgress         progress) {
-    // A bound that is no number is refused, not read as a region or none:
-    // lego_asks_region has no right answer for one (#1144).
-    if (refuse_nonfinite_region(reqs[0])) {
-        return -1;
-    }
+    // A bound that is no number was refused by run_task's batch rule, not
+    // read as a region or none: lego_asks_region has no right answer for one
+    // (#1144, #1150).
     s.is_lego_region        = lego_asks_region(s.rr.repainting_start, s.rr.repainting_end);
     // An end of its own at or before the start asks no region a lego can
     // run -- a repaint refuses it -- so the lego runs the whole song, said.
@@ -802,6 +772,7 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
         info->needs_source  = entry->needs_source;
         info->needs_caption = entry->needs_caption;
         info->cover_knobs   = entry->cover_knobs;
+        info->reads_region  = entry->reads_region;
     }
     return true;
 }
