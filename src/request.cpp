@@ -64,8 +64,8 @@ bool request_caption_given(const std::string & caption) {
     while (p < end) {
         uint32_t  cp  = 0;
         const int len = utf8_code_point(p, end, &cp);
-        // Bytes that start no code point are a character: a caption of them
-        // is given, as the engine's tokenizer would take them.
+        // Bytes that start no well-formed code point are a character, never
+        // white space: a caption of them is given.
         if (len == 0 || !trimmed_space(cp)) {
             return true;
         }
