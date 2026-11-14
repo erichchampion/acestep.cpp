@@ -1021,7 +1021,7 @@ static int scenario_task_table() {
             { "lm_negative_prompt",   PER_TAKE, "text2music", nullptr      },
             { "lm_seed",              PER_TAKE, "text2music", nullptr      },
             { "use_cot_caption",      PER_TAKE, "text2music", nullptr      },
-            { "audio_codes",          PER_TAKE, "text2music", nullptr      },
+            { "audio_codes",          PER_TAKE, "cover",      nullptr      }, // text2music: below
             { "inference_steps",      SHARED,   "text2music", nullptr      },
             { "guidance_scale",       SHARED,   "text2music", nullptr      },
             { "shift",                SHARED,   "text2music", nullptr      },
@@ -1158,6 +1158,46 @@ static int scenario_task_table() {
                 !strstr(why.reason, "finite")) {
                 fprintf(stderr, "[Test] FAIL: a second repaint's NaN bound (first's %s) refused for %d as '%s'\n",
                         first_nan ? "NaN" : "finite", why.request, why.reason ? why.reason : "nothing");
+                rc = 1;
+            }
+        }
+        // A first request's bound that is no number is no difference: the
+        // batch passes, and its run refuses request 0 for the NaN itself.
+        {
+            std::vector<AceRequest> b(2);
+            for (AceRequest & r : b) {
+                request_init(&r);
+                r.task_type = "repaint";
+                r.caption   = "a song";
+            }
+            b[0].repainting_start = std::numeric_limits<float>::quiet_NaN();
+            AceSynthBatchRefusal why;
+            if (ace_synth_batch_refused(b.data(), 2, &why)) {
+                fprintf(stderr,
+                        "[Test] FAIL: a first repaint's NaN bound refused for %d as '%s', not left to its run\n",
+                        why.request, why.reason ? why.reason : "nothing");
+                rc = 1;
+            }
+        }
+        // A text2music's codes are its own, but having any is the batch's:
+        // codes then none (either order) is refused; two sets of codes run.
+        for (const auto & [first, second, mixed] : std::vector<std::tuple<const char *, const char *, bool>>{
+                 { "1,2,3", "",      true  },
+                 { "",      "1,2,3", true  },
+                 { "1,2,3", "4,5",   false }
+        }) {
+            std::vector<AceRequest> b(2);
+            for (AceRequest & r : b) {
+                request_init(&r);
+                r.caption = "a song";
+            }
+            b[0].audio_codes = first;
+            b[1].audio_codes = second;
+            AceSynthBatchRefusal why;
+            const bool           refused = ace_synth_batch_refused(b.data(), 2, &why);
+            if (refused != mixed || (refused && (why.request != 1 || !why.reason || !strstr(why.reason, "codes")))) {
+                fprintf(stderr, "[Test] FAIL: text2music codes '%s' then '%s': refused %d (%s), want %d\n", first,
+                        second, refused, why.reason ? why.reason : "no reason", mixed);
                 rc = 1;
             }
         }

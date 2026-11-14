@@ -836,14 +836,21 @@ static const char * shared_field_differs(const AceRequest & a, const AceRequest 
         return "requests differ in " #field ": a batch runs as its first request's"; \
     }
     const bool lego          = task.name == std::string_view(TASK_LEGO);
-    // a's bounds are finite before lego_asks_region reads them; b's were
-    // checked by the caller, and a NaN of a's is refused when it runs.
-    const bool region_unread = lego && std::isfinite(a.repainting_start) && std::isfinite(a.repainting_end) &&
-                               !lego_asks_region(a.repainting_start, a.repainting_end) &&
-                               !lego_asks_region(b.repainting_start, b.repainting_end);
+    // A first request's bound that is no number is refused as that when it
+    // runs (refuse_nonfinite_region), so its region is not compared here; a
+    // later request's was refused by the caller.
+    const bool a_finite      = std::isfinite(a.repainting_start) && std::isfinite(a.repainting_end);
+    const bool region_unread = !a_finite || (lego && !lego_asks_region(a.repainting_start, a.repainting_end) &&
+                                             !lego_asks_region(b.repainting_start, b.repainting_end));
     ACE_SHARED(repainting_start, task.reads_region && !region_unread)
     ACE_SHARED(repainting_end, task.reads_region && !region_unread)
     ACE_SHARED(track, task.reads_track)
+    // A text2music's codes are a take's own, but whether it has any is the
+    // batch's: the first's set the instruction and the context for all
+    // (run_text2music), so a take with codes and one without cannot share.
+    if (!task.needs_source && a.audio_codes.empty() != b.audio_codes.empty()) {
+        return "requests mix codes and none: a batch runs as its first request's";
+    }
     ACE_SHARED(audio_cover_strength, task.cover_knobs)
     ACE_SHARED(cover_noise_strength, task.cover_knobs)
     ACE_SHARED(inference_steps, true)

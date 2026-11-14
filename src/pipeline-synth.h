@@ -185,12 +185,12 @@ struct AceSynthBatchRefusal {
 // caption its task needs -- a caption of whitespace alone is none -- or
 // requests that differ in a setting the batch shares, read from its first
 // request alone: the steps, schedule, solver, models, output and the like,
-// and the region, track and cover knobs where the task reads them (#1159);
-// a later request's region bound that is no number is said as that. A
-// take's own may differ: seed, caption, lyrics, metas, codes,
-// synth_batch_size, mp3_bitrate, and the LM's fields; duration is #1162's.
-// run_task
-// asks it first, and the tools before a run, so each says the same refusal.
+// and the region, track and cover knobs where the task reads them, and for
+// a text2music whether it has codes (#1159); a later request's region bound
+// that is no number is said as that. A take's own may differ: seed, caption,
+// lyrics, metas, its codes, synth_batch_size, mp3_bitrate, and the LM's
+// fields; duration is #1162's. run_task asks it first, and the tools before
+// a run, so each says the same refusal.
 // `why`, when given, says which and why; it is left as it was for a batch
 // that passes.
 bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why);
