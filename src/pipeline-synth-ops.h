@@ -47,8 +47,10 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s);
 // each at random in its third; here each is centred, so a take is the same
 // from its seed (cadenza-audio #1147). `in` holds `n` frames of `width`
 // floats (2 for interleaved stereo samples, 64 for latents). A reference
-// longer than 3 * seg frames is cropped into `out`, and true returned; a
-// shorter one is read whole: false, `out` untouched.
+// longer than 3 * seg frames is cropped into `out`; a shorter one is first
+// repeated until it is that long at least, as upstream repeats it (#1172);
+// either way true is returned. One exactly 3 * seg frames long is read
+// whole -- its crop is itself -- as is an empty one: false, `out` untouched.
 bool timbre_crop(const float * in, int n, int width, int seg, std::vector<float> & out);
 
 // Upstream's segment: 10 s, in samples and in latent frames.

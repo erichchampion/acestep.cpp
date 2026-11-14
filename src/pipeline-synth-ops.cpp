@@ -399,16 +399,22 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s) {
 }
 
 bool timbre_crop(const float * in, int n, int width, int seg, std::vector<float> & out) {
-    if (!in || width <= 0 || seg <= 0 || n <= 3 * seg) {
+    // Exactly three segments long is read whole: its crop is itself.
+    if (!in || n <= 0 || width <= 0 || seg <= 0 || n == 3 * seg) {
         return false;
     }
-    // Upstream's thirds: the first two n / 3 frames each, the last the rest.
-    const int third    = n / 3;
-    const int starts[] = { (third - seg) / 2, third + (third - seg) / 2, 2 * third + ((n - 2 * third) - seg) / 2 };
+    // Shorter, it is repeated until it is three segments long at least, as
+    // upstream repeats it (#1172): frame i of the repeat is in's i % n.
+    const int total    = n < 3 * seg ? n * ((3 * seg + n - 1) / n) : n;
+    // Upstream's thirds: the first two total / 3 frames each, the last the rest.
+    const int third    = total / 3;
+    const int starts[] = { (third - seg) / 2, third + (third - seg) / 2, 2 * third + ((total - 2 * third) - seg) / 2 };
     out.resize((size_t) 3 * seg * width);
     for (int i = 0; i < 3; i++) {
-        std::copy(in + (size_t) starts[i] * width, in + (size_t) (starts[i] + seg) * width,
-                  out.begin() + (size_t) i * seg * width);
+        for (int f = 0; f < seg; f++) {
+            const float * frame = in + (size_t) ((starts[i] + f) % n) * width;
+            std::copy(frame, frame + width, out.begin() + ((size_t) i * seg + f) * width);
+        }
     }
     return true;
 }

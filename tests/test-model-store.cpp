@@ -768,8 +768,9 @@ static bool cancel_at_dit(void * data, AceStage stage, int, int) {
 }
 
 // Scenario 14: the part of a timbre reference the encode reads (cadenza-audio
-// #1147): upstream's three segments, one from each third, centred here, and
-// a reference no longer than the three read whole. Frame i holds i in each of
+// #1147): upstream's three segments, one from each third, centred here, a
+// shorter reference repeated first as upstream repeats it (#1172), and one
+// exactly as long as the three read whole. Frame i holds i in each of
 // its floats, so the frames kept are read off the output. No model needed:
 // `--scenarios timbre` runs it alone, with no --models.
 static int scenario_timbre_crop() {
@@ -803,9 +804,10 @@ static int scenario_timbre_crop() {
             for (int f = 0; f < seg; f++) {
                 for (int c = 0; c < width; c++) {
                     const float got = out[((size_t) k * seg + f) * width + c];
-                    if (got != (float) (starts[k] + f)) {
+                    // A repeated reference's frame i is the reference's i % n.
+                    if (got != (float) ((starts[k] + f) % n)) {
                         fprintf(stderr, "[Test] FAIL: %s segment %d frame %d is frame %.0f, want %d\n", what, k, f, got,
-                                starts[k] + f);
+                                (starts[k] + f) % n);
                         rc = 1;
                         return;
                     }
@@ -814,7 +816,15 @@ static int scenario_timbre_crop() {
         }
     };
     want("a reference of three segments exactly", 12, 2, 4, {});
-    want("a shorter reference", 5, 2, 4, {});
+    // Shorter, repeated as upstream does (#1172): 5 frames three times over,
+    // 15, thirds of 5, each segment at its third's start -- frames 0..3 of
+    // the reference each time.
+    want("a shorter reference", 5, 2, 4, { 0, 5, 10 });
+    // 7 frames twice over, 14: thirds of 4, 4 and 6, the last centred in its
+    // 6 -- frames 9..12 of the repeat, the reference's 2..5.
+    want("a reference half as long", 7, 2, 4, { 0, 4, 9 });
+    // One frame, repeated to 12: every frame is the reference's only one.
+    want("a reference of one frame", 1, 2, 4, { 0, 4, 8 });
     want("an empty one", 0, 2, 4, {});
     // The length rule, not the null guard: a buffer given, of no frames.
     {
@@ -1539,11 +1549,14 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 cover.src_latents.size(), cover.ref_latents.size(), frames);
         rc = 1;
     }
-    if (!text.src_latents.empty() || !near(text.ref_latents)) {
+    // The 2 s reference is repeated to 30 s before its encode, as upstream
+    // repeats a short one (#1172): 750 frames of it, not the 50 of its own.
+    const size_t reference_frames = 3 * ACE_TIMBRE_SEGMENT_FRAMES;
+    if (!text.src_latents.empty() || text.ref_latents.size() != reference_frames * 64) {
         fprintf(stderr,
                 "[Test] FAIL: a cancelled text2music with a reference kept %zu source and %zu reference "
-                "values, want the reference's only (~%zu frames)\n",
-                text.src_latents.size(), text.ref_latents.size(), frames);
+                "values, want the reference's only (%zu frames)\n",
+                text.src_latents.size(), text.ref_latents.size(), reference_frames);
         rc = 1;
     }
     // A reference past 30 s is cropped before its encode (#1147): 32 s of it
