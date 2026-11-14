@@ -199,10 +199,15 @@ int ace_understand_generate(AceUnderstand *      ctx,
     // The window the LM reads, alone (#1149): past what the context holds,
     // the prompt keeps the middle codes (the clip below), so a caller that
     // asks for no more is spared encoding the rest. Cut on whole codes -- 5
-    // latent frames, 5 * 1920 samples -- so its codes are the whole's.
+    // latent frames, 5 * 1920 samples. Latents in are cut exactly; audio is
+    // encoded with the encoder's overlap of real audio each side, trimmed
+    // after, so the window's edges are encoded with their neighbours as the
+    // whole's are (a tile seam may still fall elsewhere).
     const bool have_latents_in = (src_latents && src_T_latent > 0);
     int        window_start    = 0;   // the whole's codes before the window
     int        window_total    = -1;  // the whole's codes, when windowed
+    int        trim_front      = 0;   // latent frames of margin before the window
+    int        window_frames   = 0;   // the window's latent frames, margins off
     if (call->window_only) {
         const int fit   = ace_understand_code_capacity(ctx, metadata_only, call->decode_reserve);
         const int total = have_latents_in ? (src_T_latent + 4) / 5 :
@@ -215,9 +220,15 @@ int ace_understand_generate(AceUnderstand *      ctx,
                 src_latents += (size_t) f0 * 64;
                 src_T_latent = std::min(fit * 5, src_T_latent - f0);
             } else {
-                const int s0 = window_start * 5 * ACE_LATENT_HOP;
-                src_audio += (size_t) s0 * 2;
-                src_len = std::min(fit * 5 * ACE_LATENT_HOP, src_len - s0);
+                const int margin = std::max(0, ctx->params.vae_overlap) * ACE_LATENT_HOP;
+                const int s0     = window_start * 5 * ACE_LATENT_HOP;
+                const int s1     = std::min(src_len, (window_start + fit) * 5 * ACE_LATENT_HOP);
+                const int a0     = std::max(0, s0 - margin);
+                const int a1     = std::min(src_len, s1 + margin);
+                trim_front       = (s0 - a0) / ACE_LATENT_HOP;
+                window_frames    = std::max(1, (s1 - s0) / ACE_LATENT_HOP);
+                src_audio += (size_t) a0 * 2;
+                src_len = a1 - a0;
             }
             fprintf(stderr, "[Understand-Window] codes %d..%d of %d (%.1fs of %.1fs), the rest not encoded\n",
                     window_start, window_start + fit, total, (float) fit / 5.0f, (float) total / 5.0f);
@@ -270,6 +281,13 @@ int ace_understand_generate(AceUnderstand *      ctx,
         }
         fprintf(stderr, "[Understand-VAE] Encoded: %d latent frames (%.2fs), %.0fms\n", T_25Hz,
                 latent_frames_sec(T_25Hz), t_vae.ms());
+        // A window's margins off: the window's own frames, as the whole's.
+        if (window_frames > 0) {
+            const int keep = std::max(0, std::min(window_frames, T_25Hz - trim_front));
+            latents.erase(latents.begin(), latents.begin() + (size_t) trim_front * 64);
+            latents.resize((size_t) keep * 64);
+            T_25Hz = keep;
+        }
     }
 
     // Expose freshly encoded latents to the caller. When the client supplied

@@ -49,9 +49,12 @@ struct AceUnderstandCall {
                           // than after. Then out->audio_codes and latent_out hold
                           // the window alone, not every code and latent; the
                           // report still counts the whole -- codes_total its
-                          // codes (from its length: one code each 5 latent
-                          // frames of 1920 samples), codes_start the window's
-                          // first among them. False (the default): everything
+                          // codes, counted from its length (one code each 5
+                          // latent frames of 1920 samples: a full encode may
+                          // make one more or fewer), codes_start the window's
+                          // first among them. Audio is encoded with the
+                          // encoder's overlap of real audio each side, so the
+                          // window's codes are near the whole's, not exact. False (the default): everything
                           // is encoded and handed back, whatever its length.
                           // No effect without an LM (a dump run reads all).
     int  metadata_tokens; // the metadata block's cap (cadenza-audio #648): a block

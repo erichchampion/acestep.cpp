@@ -1170,7 +1170,16 @@ static void understand_worker(std::shared_ptr<Job> job,
         g_loaded_vae.clear();
     }
 
-    std::string json_part = "[" + request_to_json(&out) + "]";
+    std::string request_json = request_to_json(&out);
+    // Which window a windowed result holds (#1149): its codes' first and
+    // count among the whole's. An extra key the request parser ignores.
+    if (window_only && !request_json.empty() && request_json.back() == '}') {
+        request_json.pop_back();
+        request_json += ",\"understand_window\":{\"codes_start\":" + std::to_string(call.codes_start) +
+                        ",\"codes_used\":" + std::to_string(call.codes_used) +
+                        ",\"codes_total\":" + std::to_string(call.codes_total) + "}}";
+    }
+    std::string json_part = "[" + request_json + "]";
     job->result_body      = multipart_build_json_latent(json_part, captured_latent, captured_T_latent);
     job->result_mime      = MULTIPART_MIME;
     job->status.store(JobStatus::DONE);
@@ -1182,9 +1191,12 @@ static void understand_worker(std::shared_ptr<Job> job,
 //   part "request":     JSON text (optional, for model selection and sampling params)
 //   part "audio":       WAV or MP3 file (required unless src_latents provided)
 //   part "src_latents": pre-encoded latent bytes (raw f32, [T*64])
-//   field "window_only": "1" or "true" to encode only the window the LM reads
-//                        (cadenza-audio #1149); the result's audio_codes and
-//                        latent part then hold that window, not the whole
+//   field "window_only": "1"/"true"/"yes"/"on" (any case) to encode only the
+//                        window the LM reads (cadenza-audio #1149); "0"/
+//                        "false"/"no"/"off" or none, the whole. The result's
+//                        audio_codes and latent part then hold that window,
+//                        and its JSON says which: understand_window
+//                        {codes_start, codes_used, codes_total}
 // returns: JSON {"id":"N"} immediately. Result is multipart/mixed of one
 // JSON part and one optional latent part.
 static void handle_understand(const httplib::Request & req, httplib::Response & res) {
@@ -1217,6 +1229,20 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
             json_error(res, 400, "Multipart: invalid JSON in 'request' part");
             return;
         }
+    }
+
+    // Opt-in (cadenza-audio #1149): the default hands back every code and
+    // latent of the input, whatever its length.
+    std::string window = req.form.has_field("window_only") ? req.form.get_field("window_only") :
+                         req.form.has_file("window_only")  ? req.form.get_file("window_only").content :
+                                                             "";
+    for (char & c : window) {
+        c = (char) tolower((unsigned char) c);
+    }
+    const bool window_on = window == "1" || window == "true" || window == "yes" || window == "on";
+    if (!window_on && !window.empty() && window != "0" && window != "false" && window != "no" && window != "off") {
+        json_error(res, 400, "window_only takes 1, true, yes or on (or 0, false, no, off)");
+        return;
     }
 
     std::vector<float> src_latents;
@@ -1269,10 +1295,6 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
 
     request_resolve_lm_seed(&ace_req);
 
-    // Opt-in (cadenza-audio #1149): the default hands back every code and
-    // latent of the input, whatever its length.
-    const std::string window    = req.form.has_field("window_only") ? req.form.get_field("window_only") : "";
-    const bool        window_on = window == "1" || window == "true";
 
     work_push_job(job, [job, ace_req, src_interleaved, src_len, latents = std::move(src_latents), src_T_latent,
                         window_on]() mutable {

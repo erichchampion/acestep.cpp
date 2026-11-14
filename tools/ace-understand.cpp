@@ -211,6 +211,10 @@ static int understand_main(int argc, char ** argv) {
     if (rc != 0) {
         return 1;
     }
+    if (window_only) {
+        fprintf(stderr, "[Ace-Understand] window: codes %d..%d of %d\n", call.codes_start,
+                call.codes_start + call.codes_used, call.codes_total);
+    }
 
     // write output JSON
     if (output_path) {

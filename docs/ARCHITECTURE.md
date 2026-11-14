@@ -961,7 +961,8 @@ POST /understand                Submit understand, returns job ID
   body: multipart/form-data (audio or src_latents required, optional request JSON,
         optional field window_only=1: encode only the window the LM reads, the
         middle of an input longer than its context holds; the result's
-        audio_codes and latent part then hold that window -- cadenza-audio #1149)
+        audio_codes and latent part then hold that window, and its JSON gives
+        understand_window {codes_start, codes_used, codes_total} -- cadenza-audio #1149)
   response: {"id":"3"}
 
 POST /vae                       Submit VAE encode or decode, returns job ID

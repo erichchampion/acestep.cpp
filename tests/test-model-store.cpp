@@ -321,16 +321,6 @@ static int scenario_refcount(const char * vae_path) {
     return 0;
 }
 
-// Scenario 7: ace-server integration invariant.
-//
-// The whole shared-LM guarantee depends on ace_lm and ace_understand building
-// byte-identical LM ModelKeys from user params. If a future flag is wired into
-// AceLmParams but forgotten in the AceUnderstandParams mirror that ace-server
-// maintains, the two contexts will build divergent keys and the store will
-// quietly load the LM twice under --keep-loaded.
-//
-// We simulate the exact propagation block from ace-server main() and compare
-// the two keys by hand. The test must fail loudly when keys drift.
 // Cancels an understand call at its LM's first poll: what it encoded and
 // reported is known by then, and the decode is not waited for.
 static bool cancel_at_lm(void * data, AceStage stage, int, int) {
@@ -341,6 +331,16 @@ static bool cancel_at_lm(void * data, AceStage stage, int, int) {
     return true;
 }
 
+// Scenario 7: ace-server integration invariant.
+//
+// The whole shared-LM guarantee depends on ace_lm and ace_understand building
+// byte-identical LM ModelKeys from user params. If a future flag is wired into
+// AceLmParams but forgotten in the AceUnderstandParams mirror that ace-server
+// maintains, the two contexts will build divergent keys and the store will
+// quietly load the LM twice under --keep-loaded.
+//
+// We simulate the exact propagation block from ace-server main() and compare
+// the two keys by hand. The test must fail loudly when keys drift.
 static int scenario_integration(const char * lm_path, const char * dit_path, const char * vae_path) {
     fprintf(stderr, "[Test] scenario 7: ace-server integration\n");
     ModelStore * s = store_create(EVICT_NEVER);
@@ -431,15 +431,19 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
         request_init(&req);
         req.lm_seed       = 1;
         const int reserve = 4096 - framing - 1 - 50;
-        auto      call    = [&](bool window, AceUnderstandCall & c, std::vector<float> & lat, int & T) {
+        auto      call    = [&](bool window, AceUnderstandCall & c, std::vector<float> & lat, int & T,
+                                const std::vector<float> * latents_in = nullptr) {
             ace_understand_default_call(&c);
             c.metadata_only  = 1;
             c.decode_reserve = reserve;
             c.window_only    = window;
             int        polls = 0;
             AceRequest out;
-            const int  rc = ace_understand_generate(und, audio.data(), n, nullptr, 0, &req, &out, &lat, &T,
-                                                    AceProgress{ cancel_at_lm, &polls }, &c);
+            const int  rc = latents_in ? ace_understand_generate(und, nullptr, 0, latents_in->data(),
+                                                                 (int) (latents_in->size() / 64), &req, &out, &lat, &T,
+                                                                 AceProgress{ cancel_at_lm, &polls }, &c) :
+                                         ace_understand_generate(und, audio.data(), n, nullptr, 0, &req, &out, &lat, &T,
+                                                                 AceProgress{ cancel_at_lm, &polls }, &c);
             return rc != 0 && polls == 1;
         };
         AceUnderstandCall  windowed, whole;
@@ -459,6 +463,18 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
         } else if (h_T < 748 || h_T > 752 || whole.codes_start != 50 || whole.codes_used != 50) {
             fprintf(stderr, "[Test] FAIL: whole: %d frames, codes %d..+%d of %d; want ~750 frames, codes 50..+50\n",
                     h_T, whole.codes_start, whole.codes_used, whole.codes_total);
+            failed = true;
+        }
+        // Latents in, windowed: cut exactly, the same report.
+        AceUnderstandCall  from_latents;
+        std::vector<float> l_lat;
+        int                l_T = 0;
+        if (!failed && (!call(true, from_latents, l_lat, l_T, &h_lat) || from_latents.codes_total != (h_T + 4) / 5 ||
+                        from_latents.codes_start != 50 || from_latents.codes_used != 50 || l_T != 0)) {
+            fprintf(stderr,
+                    "[Test] FAIL: latents in, windowed: codes %d..+%d of %d, %d frames handed back; want "
+                    "codes 50..+50 of %d, none\n",
+                    from_latents.codes_start, from_latents.codes_used, from_latents.codes_total, l_T, (h_T + 4) / 5);
             failed = true;
         }
         if (failed) {
