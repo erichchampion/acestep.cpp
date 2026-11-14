@@ -153,6 +153,56 @@ export function batchRequest(r: AceRequest, shared: Partial<AceRequest>): AceReq
 	return { ...out, ...shared } as AceRequest;
 }
 
+// a /synth batch: what is sent, and the takes it makes, one per seed.
+export interface SynthBatch {
+	toSend: AceRequest[];
+	expanded: AceRequest[];
+}
+
+// build a /synth batch from the pending requests and the form, or say why
+// it cannot be sent (cadenza-audio #1175). Every request takes the form's
+// synth sections (batchRequest); each its own seed, `seed()` when the form
+// sets none, and the form's batch size, which the server expands to
+// seed, seed+1, ... and `expanded` predicts for the take list. An adapter
+// the server does not list is dropped. A text2music batch whose requests
+// mix audio codes and none is refused: the server runs every request as
+// its first's (cadenza-audio #1159).
+export function buildSynthBatch(
+	pending: AceRequest[],
+	form: AceRequest,
+	adapters: readonly string[],
+	seed: () => number
+): SynthBatch | string {
+	const synthBatch = Math.max(1, num(form.synth_batch_size) || 1);
+	const userSeed = num(form.seed);
+	const hasSeed = userSeed != null && userSeed >= 0;
+	const shared = pickSections(form, SYNTH_SECTIONS);
+	// seed and synth_batch_size are per request, set below
+	delete shared.seed;
+	delete shared.synth_batch_size;
+	if (shared.adapter && !adapters.includes(String(shared.adapter))) delete shared.adapter;
+
+	const task = String(shared.task_type || 'text2music');
+	const hasCodes = (r: AceRequest) => String(r.audio_codes ?? '').trim() !== '';
+	if (task === 'text2music' && pending.some(hasCodes) && !pending.every(hasCodes)) {
+		return 'Some compositions carry audio codes and some do not: give every one its codes, or clear them all.';
+	}
+
+	const toSend: AceRequest[] = [];
+	const expanded: AceRequest[] = [];
+	for (const p of pending) {
+		const r = batchRequest(p, shared);
+		const base = hasSeed ? (userSeed as number) : seed();
+		toSend.push({ ...r, seed: base, synth_batch_size: synthBatch });
+		// each take's song keeps the batch size it was made at, so loading
+		// it sets the toolbar's again
+		for (let i = 0; i < synthBatch; i++) {
+			expanded.push({ ...r, seed: base + i, synth_batch_size: synthBatch });
+		}
+	}
+	return { toSend, expanded };
+}
+
 // extract non-null fields from specified sections.
 // caller removes per-expansion fields (seed, synth_batch_size) and injects srcRange.
 export function pickSections(

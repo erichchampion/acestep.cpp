@@ -36,13 +36,10 @@
 		TRACK_NAMES
 	} from '../lib/config.js';
 	import {
-		num,
 		buildSparse,
 		clearSection,
 		withCurrentSettings,
-		pickSections,
-		batchRequest,
-		SYNTH_SECTIONS
+		buildSynthBatch
 	} from '../lib/fields.js';
 	import type { AceRequest, Song } from '../lib/types.js';
 	import Dialog from './Dialog.svelte';
@@ -438,36 +435,20 @@
 			const reqs: AceRequest[] =
 				app.pendingRequests.length > 0 ? $state.snapshot(app.pendingRequests) : [buildRequest()];
 
-			// read synth params from the form (global, not per-pending).
-			const synthBatch = Math.max(1, Number(app.request.synth_batch_size) || 1);
-			const userSeed = num(app.request.seed);
-			const hasSeed = userSeed != null && userSeed >= 0;
 			// the form's synth sections are the batch's: every request sends
 			// exactly them, a field cleared after Compose included, not the
 			// copy the LM echoed into a pending request -- a server refuses a
-			// batch whose requests differ in a setting it shares (#1164).
-			const synthParams = pickSections(app.request, SYNTH_SECTIONS);
-			// seed and synth_batch_size are per-expansion, handled below
-			delete synthParams.seed;
-			delete synthParams.synth_batch_size;
-			if (synthParams.adapter && !adapterList.includes(String(synthParams.adapter)))
-				delete synthParams.adapter;
-
-			// resolve seeds, build server payload and local expanded list for SongCard mapping.
-			// server receives synth_batch_size and expands internally (groups by T for GPU batch).
-			// webui predicts the same expansion: seed, seed+1, ..., seed+N-1.
-			const toSend: AceRequest[] = [];
-			const expanded: AceRequest[] = [];
-			for (const pending of reqs) {
-				const r = batchRequest(pending, synthParams);
-				const base = hasSeed ? userSeed : Math.floor(Math.random() * 0x100000000);
-				toSend.push({ ...r, seed: base, synth_batch_size: synthBatch });
-				// each take's song keeps the batch size it was made at, so
-				// loading it sets the toolbar's again
-				for (let i = 0; i < synthBatch; i++) {
-					expanded.push({ ...r, seed: base + i, synth_batch_size: synthBatch });
-				}
+			// batch whose requests differ in a setting it shares (#1164). The
+			// server expands each by synth_batch_size; `expanded` predicts
+			// the takes, for the song cards (#1175).
+			const batch = buildSynthBatch(reqs, app.request, adapterList, () =>
+				Math.floor(Math.random() * 0x100000000)
+			);
+			if (typeof batch === 'string') {
+				toast(batch);
+				return;
 			}
+			const { toSend, expanded } = batch;
 
 			// find source audio (cover/lego/repaint) and reference audio (timbre)
 			const srcSong = app.srcSongId != null ? app.songs.find((s) => s.id === app.srcSongId) : null;
