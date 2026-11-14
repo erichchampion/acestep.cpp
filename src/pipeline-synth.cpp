@@ -930,12 +930,13 @@ static AceSynthJob * run_task(AceSynth *          ctx,
     // frees it, handing out its encodes first (JobOwner).
     JobOwner     job_owner(ctx, alloc_job(ctx, reqs, batch_n));
     SynthState & s = job_owner.get()->state;
+    // The cover knobs' defaults, which both rules below run a knob at.
+    AceRequest   def;
+    request_init(&def);
     // The cover knobs are a cover's alone: every other task runs at their
     // defaults, said when a task with a source -- one they would have
     // reached -- was asked otherwise; text2music never read them (#1135).
     if (!entry->cover_knobs) {
-        AceRequest def;
-        request_init(&def);
         if (entry->needs_source && (s.rr.audio_cover_strength != def.audio_cover_strength ||
                                     s.rr.cover_noise_strength != def.cover_noise_strength)) {
             fprintf(stderr,
@@ -947,16 +948,21 @@ static AceSynthJob * run_task(AceSynth *          ctx,
         s.rr.audio_cover_strength = def.audio_cover_strength;
         s.rr.cover_noise_strength = def.cover_noise_strength;
     } else {
-        // A cover's knobs are fractions: one out of [0, 1] is clamped to it,
-        // and one that is no number runs at its default, either said -- a
-        // noise past 1 left no noise level, a strength below 0 built a switch
-        // no step used (cadenza-audio #1152, owner decision).
-        AceRequest def;
-        request_init(&def);
-        auto in_range = [&](float & knob, float fallback, const char * name) {
+        // A cover's knobs are fractions: one out of [0, 1] -- an infinity
+        // too -- is clamped to it, and a NaN, which no clamp can place, runs
+        // at its default; either said (cadenza-audio #1152, owner decision).
+        // A strength below 0 built a switch no step used; a noise past 1 runs
+        // as 1, the shortest schedule the knob allows.
+        auto in_range = [&task](float & knob, float fallback, const char * name) {
             const float asked = knob;
-            knob              = std::isfinite(knob) ? std::clamp(knob, 0.0f, 1.0f) : fallback;
-            if (!(knob == asked)) {
+            if (std::isnan(asked)) {
+                knob = fallback;
+                fprintf(stderr, "[Synth-Run] WARNING: task '%s' runs at %s %g, its default: %g is no number\n",
+                        task.c_str(), name, knob, asked);
+                return;
+            }
+            knob = std::clamp(asked, 0.0f, 1.0f);
+            if (knob != asked) {
                 fprintf(stderr, "[Synth-Run] WARNING: task '%s' runs at %s %g, not the %g asked: it is in [0, 1]\n",
                         task.c_str(), name, knob, asked);
             }
