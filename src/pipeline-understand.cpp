@@ -540,7 +540,9 @@ int ace_understand_generate(AceUnderstand *      ctx,
 
     // Step 7: write output JSON (reusable as ace-synth input with codes)
     request_init(out);
-    out->caption        = parsed.caption;
+    // A caption of white space is none (request_caption_given, #1123): this
+    // request is reusable ace-synth input, which would refuse it.
+    out->caption        = request_caption_given(parsed.caption) ? parsed.caption : std::string();
     out->lyrics         = parsed.lyrics;
     out->bpm            = parsed.bpm;
     out->duration       = parsed.duration;

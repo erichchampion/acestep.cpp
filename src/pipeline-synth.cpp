@@ -840,6 +840,17 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
     return false;
 }
 
+int ace_synth_requests_run(const AceRequest * reqs, int batch_n) {
+    int takes = 0;
+    int run   = 0;
+    for (int i = 0; i < batch_n && takes < 9; i++) {
+        const int sbs = reqs[i].synth_batch_size;
+        takes += sbs < 1 ? 1 : (sbs > 9 ? 9 : sbs);
+        run++;
+    }
+    return run;
+}
+
 static std::atomic<int> g_test_batch_refusals{ 0 };
 
 int ace_test_batch_refusals() {
@@ -886,13 +897,12 @@ static AceSynthJob * run_task(AceSynth *          ctx,
                               const SynthInputs & in,
                               int                 batch_n,
                               AceProgress         progress) {
-    // A batch the batch rule refuses (an unknown task, mixed tasks, a missing
-    // caption), and a task that works from a source given none (the table's
-    // needs_source), are refused before the job is made. A task that takes no
-    // source given one is warned of.
+    // Refused before the job is made: a batch the batch rule refuses -- an
+    // unknown task, mixed tasks, a request short of its caption; the rule the
+    // tools ask too (#1123) -- and a task that works from a source given none
+    // (the table's needs_source). A task that takes no source given one is
+    // warned of.
     set_test_last_cover(kCoverRecordUnset);
-    // The batch rule the tools ask too: an unknown task, mixed tasks, a
-    // request short of its caption -- refused before the job (#1123).
     AceSynthBatchRefusal refusal;
     if (ace_synth_batch_refused(reqs, batch_n, &refusal)) {
         g_test_batch_refusals.fetch_add(1);

@@ -533,7 +533,6 @@ static bool server_progress(void * data, AceStage /*stage*/, int /*step*/, int /
     return flag && flag->load(std::memory_order_relaxed);
 }
 
-// helper: set a JSON error response
 // Frees a malloc'd buffer when its scope ends, by reference: a holder that
 // hands the buffer on nulls its pointer first, and nothing is freed.
 struct malloc_guard {
@@ -542,6 +541,7 @@ struct malloc_guard {
     ~malloc_guard() { free(p); }
 };
 
+// helper: set a JSON error response
 static void json_error(httplib::Response & res, int status, const char * msg) {
     yyjson_mut_doc * doc  = yyjson_mut_doc_new(NULL);
     yyjson_mut_val * root = yyjson_mut_obj(doc);
@@ -1034,7 +1034,8 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     // of its caption (#1123).
     {
         AceSynthBatchRefusal why;
-        if (ace_synth_batch_refused(ace_reqs.data(), (int) ace_reqs.size(), &why)) {
+        const int            run = ace_synth_requests_run(ace_reqs.data(), (int) ace_reqs.size());
+        if (ace_synth_batch_refused(ace_reqs.data(), run, &why)) {
             const std::string which = why.request >= 0 ? "Request " + std::to_string(why.request) + ": " : "";
             json_error(res, 400, (which + why.reason).c_str());
             return;

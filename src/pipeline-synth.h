@@ -166,8 +166,9 @@ struct AceSynthTaskInfo {
 bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
 
 // Whether a request (non-NULL) is short of the caption its task needs: by
-// the table, and for a task the engine does not know, which run_task refuses
-// by name, as if it needed one -- the tools' check before a run (#1094).
+// the table (a caption of white space alone being none), and for a task the
+// engine does not know, as if it needed one. ace_synth_batch_refused asks it
+// of every request (#1094, #1123).
 bool ace_synth_request_missing_caption(const AceRequest * req);
 
 // Why a batch is refused before any run: the request it is refused for, and
@@ -185,6 +186,12 @@ struct AceSynthBatchRefusal {
 // `why`, when given, says which and why; it is left as it was for a batch
 // that passes.
 bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why);
+
+// How many of a batch's requests (reqs non-NULL) the tools run: each expands
+// to its synth_batch_size takes (1..9), and the batch is clamped to the DiT's
+// 9, so the requests past the 9th take never run. The tools ask the batch
+// rule of these alone -- a request that never runs refuses nothing.
+int ace_synth_requests_run(const AceRequest * reqs, int batch_n);
 
 // Tests only: how many runs run_task has refused by ace_synth_batch_refused.
 int ace_test_batch_refusals();

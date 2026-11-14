@@ -901,6 +901,11 @@ static int scenario_task_table() {
             int              want_request;  // -1: not refused
         };
 
+        // The reason each refusal is said with: the case's name says which.
+        auto want_reason = [](const char * name) {
+            return strstr(name, "unknown") ? "unknown" : strstr(name, " then ") ? "mix" : "caption";
+        };
+
         const std::vector<Case> cases = {
             { "one text2music",                   { { "text2music", "a song" } },                              -1 },
             { "two text2music",                   { { "text2music", "a song" }, { "text2music", "another" } }, -1 },
@@ -921,7 +926,8 @@ static int scenario_task_table() {
             }
             AceSynthBatchRefusal why;
             const bool           refused = ace_synth_batch_refused(reqs.data(), (int) reqs.size(), &why);
-            if (refused != (c.want_request >= 0) || (refused && (why.request != c.want_request || !why.reason))) {
+            if (refused != (c.want_request >= 0) || (refused && (why.request != c.want_request || !why.reason ||
+                                                                 !strstr(why.reason, want_reason(c.name))))) {
                 fprintf(stderr, "[Test] FAIL: %s: refused %d for request %d (%s), want %s request %d\n", c.name,
                         refused, why.request, why.reason ? why.reason : "no reason",
                         c.want_request >= 0 ? "for" : "none,", c.want_request);
@@ -945,6 +951,25 @@ static int scenario_task_table() {
             fprintf(stderr, "[Test] FAIL: an unknown task second in a batch is refused as '%s', not as unknown\n",
                     second_why.reason ? second_why.reason : "nothing");
             rc = 1;
+        }
+        // The requests the tools run: each its synth_batch_size takes, the
+        // batch clamped to 9 -- so a request past the 9th take refuses nothing.
+        {
+            std::vector<AceRequest> batch(10);
+            for (AceRequest & r : batch) {
+                request_init(&r);
+            }
+            const int ten_of_one      = ace_synth_requests_run(batch.data(), 10);
+            batch[0].synth_batch_size = 9;
+            const int after_nine      = ace_synth_requests_run(batch.data(), 10);
+            batch[0].synth_batch_size = 4;
+            batch[1].synth_batch_size = 4;
+            const int after_eight     = ace_synth_requests_run(batch.data(), 10);
+            if (ten_of_one != 9 || after_nine != 1 || after_eight != 3) {
+                fprintf(stderr, "[Test] FAIL: the tools run %d, %d, %d requests, want 9, 1, 3\n", ten_of_one,
+                        after_nine, after_eight);
+                rc = 1;
+            }
         }
         // An empty batch is refused, not read past.
         AceSynthBatchRefusal empty_why;

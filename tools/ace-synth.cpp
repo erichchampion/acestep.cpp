@@ -136,7 +136,7 @@ static int synth_main(int argc, char ** argv) {
     // requests that mix tasks, a request short of its caption (#1123).
     {
         AceSynthBatchRefusal why;
-        if (ace_synth_batch_refused(reqs.data(), batch_n, &why)) {
+        if (ace_synth_batch_refused(reqs.data(), ace_synth_requests_run(reqs.data(), batch_n), &why)) {
             fprintf(stderr, "[Ace-Synth] FATAL: %s: %s\n", why.request >= 0 ? request_paths[why.request] : "the batch",
                     why.reason);
             return 1;

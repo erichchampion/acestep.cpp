@@ -534,8 +534,10 @@ picks the audio encoder: `"mp3"`, `"wav16"`, `"wav24"`, `"wav32"`.
 Natural language description of the music style, mood, instruments, etc.
 Fed to both the LLM and the DiT text encoder. Lego, extract and complete
 are told what to make by their `track`, and may leave it empty: the task
-table's `needs_caption` column, which the tools read through
-`ace_synth_request_missing_caption`.
+table's `needs_caption` column. A caption of white space alone (the Unicode
+spaces the app trims) is none. The engine's batch rule,
+`ace_synth_batch_refused`, refuses a request short of its caption up front;
+the tools ask it of the requests they run (the first 9 takes).
 
 **`lyrics`** (string, default `""`)
 Controls vocal generation. Three valid states:
