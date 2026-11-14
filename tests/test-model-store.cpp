@@ -424,8 +424,13 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
     {
         const int          n = 30 * 48000;
         std::vector<float> audio((size_t) n * 2);
+        // A chirp, 110 Hz rising to 880 Hz: no stretch repeats, so a window
+        // cut from the wrong place encodes different audio. (A steady tone
+        // repeats each code -- 9600 samples -- and would hide it.)
         for (int i = 0; i < n; i++) {
-            audio[(size_t) i * 2] = audio[(size_t) i * 2 + 1] = 0.3f * sinf(2.0f * 3.14159265f * 220.0f * i / 48000.0f);
+            const double t = (double) i / 48000.0, f0 = 110.0, k = (880.0 - 110.0) / 30.0;
+            audio[(size_t) i * 2] = audio[(size_t) i * 2 + 1] =
+                0.3f * (float) sin(2.0 * 3.14159265358979 * (f0 * t + 0.5 * k * t * t));
         }
         AceRequest req;
         request_init(&req);
@@ -460,10 +465,34 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
                     "whole's %d\n",
                     w_T, windowed.codes_start, windowed.codes_used, windowed.codes_total, whole.codes_total);
             failed = true;
-        } else if (h_T < 748 || h_T > 752 || whole.codes_start != 50 || whole.codes_used != 50) {
-            fprintf(stderr, "[Test] FAIL: whole: %d frames, codes %d..+%d of %d; want ~750 frames, codes 50..+50\n",
-                    h_T, whole.codes_start, whole.codes_used, whole.codes_total);
+        } else if ((h_T + 4) / 5 != 150 || whole.codes_start != 50 || whole.codes_used != 50) {
+            fprintf(stderr,
+                    "[Test] FAIL: whole: %d frames, codes %d..+%d of %d; want 150 codes' frames, codes 50..+50\n", h_T,
+                    whole.codes_start, whole.codes_used, whole.codes_total);
             failed = true;
+        } else {
+            // Where the window is: its latents are the whole's frames
+            // 250..500, near enough -- the margin gives its edges their
+            // neighbours, a tile seam may fall elsewhere -- and far from the
+            // first 250 frames, which a window cut from the start would be.
+            auto cosine = [&](int offset) {
+                double dot = 0, a = 0, b = 0;
+                for (size_t j = 0; j < w_lat.size(); j++) {
+                    const double x = w_lat[j], y = h_lat[(size_t) offset * 64 + j];
+                    dot += x * y;
+                    a += x * x;
+                    b += y * y;
+                }
+                return dot / (sqrt(a * b) + 1e-30);
+            };
+            const double here = cosine(250), first = cosine(0);
+            if (here < 0.98 || first > here - 0.05) {
+                fprintf(stderr,
+                        "[Test] FAIL: the window's latents match the whole's frames 250..500 at %.4f and 0..250 "
+                        "at %.4f; want the middle, near 1\n",
+                        here, first);
+                failed = true;
+            }
         }
         // Latents in, windowed: cut exactly, the same report.
         AceUnderstandCall  from_latents;

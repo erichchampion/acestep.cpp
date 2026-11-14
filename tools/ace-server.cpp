@@ -1236,6 +1236,13 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
     std::string window = req.form.has_field("window_only") ? req.form.get_field("window_only") :
                          req.form.has_file("window_only")  ? req.form.get_file("window_only").content :
                                                              "";
+    // Trimmed, as a file part ends with its newline; then any case.
+    while (!window.empty() && isspace((unsigned char) window.back())) {
+        window.pop_back();
+    }
+    while (!window.empty() && isspace((unsigned char) window.front())) {
+        window.erase(window.begin());
+    }
     for (char & c : window) {
         c = (char) tolower((unsigned char) c);
     }
