@@ -1462,8 +1462,9 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             ace_synth_job_free(job);
         }
         const size_t got = kept.ref_latents.size() / 64, want = 3 * ACE_TIMBRE_SEGMENT_FRAMES;
-        if (job || dit_polls != polls + 1 || kept.ref_latents.size() % 64 || got + 2 < want || got > want + 2) {
-            fprintf(stderr, "[Test] FAIL: a text2music given 32 s of reference encoded %zu frames of it, want ~%zu\n",
+        // Exactly: 3 x 480000 samples are 750 whole frames.
+        if (job || dit_polls != polls + 1 || kept.ref_latents.size() % 64 || got != want) {
+            fprintf(stderr, "[Test] FAIL: a text2music given 32 s of reference encoded %zu frames of it, want %zu\n",
                     got, want);
             rc = 1;
         }

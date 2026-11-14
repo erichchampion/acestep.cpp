@@ -69,6 +69,10 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 //   to the matching audio buffer. When non-NULL, the corresponding VAE encoder
 //   pass is skipped. Mutually exclusive per side: when both audio and latents
 //   are provided for the same side, latents win and audio is ignored.
+//   A reference longer than 30 s is cropped first, audio or latents, to
+//   upstream's three 10 s segments, one centred in each third (750 latent
+//   frames); what failed_encodes hands back of it is that crop
+//   (cadenza-audio #1147).
 // batch_n: number of requests (1..9).
 // progress: abort + progress callback. Reports ACE_STAGE_DIT between DiT steps,
 // and ACE_STAGE_VAE_ENCODE while encoding the source and/or timbre reference in
