@@ -91,12 +91,19 @@ add_test(NAME test-task-table COMMAND test-model-store --scenarios tasks)
 add_test(NAME test-timbre-crop COMMAND test-model-store --scenarios timbre)
 # The webui's batch rule, run by Node's own TypeScript support with no
 # packages (cadenza-audio #1164): the form's synth sections are every
-# request's, a field cleared after Compose included. Node 22.18 or later
-# strips the types itself; a build without node does not run it.
+# request's, a field cleared after Compose included. Only a node that strips
+# the types itself (22.18 or later) runs it; a build without one does not.
 find_program(ACESTEP_NODE node)
 if(ACESTEP_NODE)
-    add_test(NAME test-webui-fields
-             COMMAND ${ACESTEP_NODE} ${PROJECT_SOURCE_DIR}/tools/webui/test/fields.test.ts)
+    execute_process(COMMAND ${ACESTEP_NODE} --version OUTPUT_VARIABLE ACESTEP_NODE_VERSION
+                    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    string(REGEX REPLACE "^v" "" ACESTEP_NODE_VERSION "${ACESTEP_NODE_VERSION}")
+    if(ACESTEP_NODE_VERSION VERSION_GREATER_EQUAL 22.18)
+        add_test(NAME test-webui-fields
+                 COMMAND ${ACESTEP_NODE} ${PROJECT_SOURCE_DIR}/tools/webui/test/fields.test.ts)
+    else()
+        message(STATUS "test-webui-fields: node ${ACESTEP_NODE_VERSION} does not strip TypeScript, not run")
+    endif()
 endif()
 # ace-synth says it leaves a source the task ignores unread, before any
 # model loads (cadenza-audio #1157): a text2music given a --src-audio that

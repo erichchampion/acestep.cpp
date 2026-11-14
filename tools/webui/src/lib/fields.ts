@@ -137,17 +137,24 @@ export function withCurrentSettings(incoming: AceRequest, current: AceRequest): 
 	return out;
 }
 
-// a copy of r without any field of the given sections, set or not.
-// spread a pickSections() result over it, and the sections are exactly
-// those values: a field cleared there is gone here too, not kept from r
-// (cadenza-audio #1164).
-export function withoutSections(r: AceRequest, sections: FieldSection[]): AceRequest {
+// the sections a /synth batch shares: the form's, for every request.
+export const SYNTH_SECTIONS: readonly FieldSection[] = ['flow', 'advanced', 'toolbar', 'routing'];
+
+// one request of a batch: r's own fields, with every field of the shared
+// sections taken from shared -- a pickSections() result -- and none kept
+// from r. A field cleared in the form is gone from every request, not left
+// as the copy the LM echoed into r (cadenza-audio #1164).
+export function batchRequest(
+	r: AceRequest,
+	shared: Partial<AceRequest>,
+	sections: readonly FieldSection[] = SYNTH_SECTIONS
+): AceRequest {
 	const out = { ...r } as Rec;
 	const drop = new Set(sections);
 	for (const f of FIELDS) {
 		if (drop.has(f.section)) delete out[f.key];
 	}
-	return out as AceRequest;
+	return { ...out, ...shared } as AceRequest;
 }
 
 // extract non-null fields from specified sections.
