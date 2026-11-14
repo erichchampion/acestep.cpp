@@ -137,6 +137,19 @@ export function withCurrentSettings(incoming: AceRequest, current: AceRequest): 
 	return out;
 }
 
+// a copy of r without any field of the given sections, set or not.
+// spread a pickSections() result over it, and the sections are exactly
+// those values: a field cleared there is gone here too, not kept from r
+// (cadenza-audio #1164).
+export function withoutSections(r: AceRequest, sections: FieldSection[]): AceRequest {
+	const out = { ...r } as Rec;
+	const drop = new Set(sections);
+	for (const f of FIELDS) {
+		if (drop.has(f.section)) delete out[f.key];
+	}
+	return out as AceRequest;
+}
+
 // extract non-null fields from specified sections.
 // caller removes per-expansion fields (seed, synth_batch_size) and injects srcRange.
 export function pickSections(r: AceRequest, sections: FieldSection[]): Partial<AceRequest> {

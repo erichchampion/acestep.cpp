@@ -40,7 +40,9 @@
 		buildSparse,
 		clearSection,
 		withCurrentSettings,
-		pickSections
+		pickSections,
+		withoutSections,
+		type FieldSection
 	} from '../lib/fields.js';
 	import type { AceRequest, Song } from '../lib/types.js';
 	import Dialog from './Dialog.svelte';
@@ -440,7 +442,12 @@
 			const synthBatch = Math.max(1, Number(app.request.synth_batch_size) || 1);
 			const userSeed = num(app.request.seed);
 			const hasSeed = userSeed != null && userSeed >= 0;
-			const synthParams = pickSections(app.request, ['flow', 'advanced', 'toolbar', 'routing']);
+			// the form's synth sections are the batch's: every request sends
+			// exactly them, a field cleared after Compose included, not the
+			// copy the LM echoed into a pending request -- a server refuses a
+			// batch whose requests differ in a setting it shares (#1164).
+			const synthSections: FieldSection[] = ['flow', 'advanced', 'toolbar', 'routing'];
+			const synthParams = pickSections(app.request, synthSections);
 			// seed and synth_batch_size are per-expansion, handled below
 			delete synthParams.seed;
 			delete synthParams.synth_batch_size;
@@ -452,7 +459,8 @@
 			// webui predicts the same expansion: seed, seed+1, ..., seed+N-1.
 			const toSend: AceRequest[] = [];
 			const expanded: AceRequest[] = [];
-			for (const r of reqs) {
+			for (const pending of reqs) {
+				const r = withoutSections(pending, synthSections);
 				const base = hasSeed ? userSeed : Math.floor(Math.random() * 0x100000000);
 				toSend.push({ ...r, ...synthParams, seed: base, synth_batch_size: synthBatch });
 				for (let i = 0; i < synthBatch; i++) {

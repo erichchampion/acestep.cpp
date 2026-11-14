@@ -89,6 +89,15 @@ add_test(NAME test-task-table COMMAND test-model-store --scenarios tasks)
 # Scenario 14, the timbre reference's crop, needs none either (cadenza-audio
 # #1147).
 add_test(NAME test-timbre-crop COMMAND test-model-store --scenarios timbre)
+# The webui's batch rule, run by Node's own TypeScript support with no
+# packages (cadenza-audio #1164): the form's synth sections are every
+# request's, a field cleared after Compose included. Node 22.18 or later
+# strips the types itself; a build without node does not run it.
+find_program(ACESTEP_NODE node)
+if(ACESTEP_NODE)
+    add_test(NAME test-webui-fields
+             COMMAND ${ACESTEP_NODE} ${PROJECT_SOURCE_DIR}/tools/webui/test/fields.test.ts)
+endif()
 # ace-synth says it leaves a source the task ignores unread, before any
 # model loads (cadenza-audio #1157): a text2music given a --src-audio that
 # does not exist warns, a cover does not. Both then stop at the missing
