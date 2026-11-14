@@ -144,7 +144,7 @@ export const SYNTH_SECTIONS: readonly FieldSection[] = ['flow', 'advanced', 'too
 // sections taken from shared -- a pickSections() result -- and none kept
 // from r. A field cleared in the form is gone from every request, not left
 // as the copy the LM echoed into r (cadenza-audio #1164).
-export function batchRequest(r: AceRequest, shared: Partial<AceRequest>): AceRequest {
+function batchRequest(r: AceRequest, shared: Partial<AceRequest>): AceRequest {
 	const out = { ...r } as Rec;
 	const drop = new Set(SYNTH_SECTIONS);
 	for (const f of FIELDS) {
@@ -165,15 +165,17 @@ export interface SynthBatch {
 // sets none, and the form's batch size, which the server expands to
 // seed, seed+1, ... and `expanded` predicts for the take list. An adapter
 // the server does not list is dropped. A text2music batch whose requests
-// mix audio codes and none is refused: the server runs every request as
-// its first's (cadenza-audio #1159).
+// mix audio codes and none is refused, and so are codes that hold no code,
+// both as the server refuses them (cadenza-audio #1159); so is a batch past
+// the server's 9 takes, which it would cut short unsaid.
 export function buildSynthBatch(
 	pending: AceRequest[],
 	form: AceRequest,
 	adapters: readonly string[],
 	seed: () => number
 ): SynthBatch | string {
-	const synthBatch = Math.max(1, num(form.synth_batch_size) || 1);
+	// whole, as the server reads it
+	const synthBatch = Math.max(1, Math.floor(num(form.synth_batch_size) || 1));
 	const userSeed = num(form.seed);
 	const hasSeed = userSeed != null && userSeed >= 0;
 	const shared = pickSections(form, SYNTH_SECTIONS);
@@ -182,10 +184,22 @@ export function buildSynthBatch(
 	delete shared.synth_batch_size;
 	if (shared.adapter && !adapters.includes(String(shared.adapter))) delete shared.adapter;
 
+	// the server's rules, as it reads codes: given when not empty, holding
+	// one when, past leading commas and spaces, an integer starts
+	// (ops_codes_given)
 	const task = String(shared.task_type || 'text2music');
-	const hasCodes = (r: AceRequest) => String(r.audio_codes ?? '').trim() !== '';
-	if (task === 'text2music' && pending.some(hasCodes) && !pending.every(hasCodes)) {
-		return 'Some compositions carry audio codes and some do not: give every one its codes, or clear them all.';
+	const codesOf = (r: AceRequest) => String(r.audio_codes ?? '');
+	const holdsCode = (c: string) => /^-?[0-9]/.test(c.replace(/^[, ]*/, ''));
+	if (task === 'text2music') {
+		if (pending.some((r) => codesOf(r) !== '' && !holdsCode(codesOf(r)))) {
+			return "A composition's audio codes hold no code: fix them, or clear them.";
+		}
+		if (pending.some((r) => codesOf(r) !== '') && !pending.every((r) => codesOf(r) !== '')) {
+			return 'Some compositions carry audio codes and some do not: give every one its codes, or clear them all.';
+		}
+	}
+	if (pending.length * synthBatch > 9) {
+		return `A batch makes 9 takes at most, and this asks for ${pending.length * synthBatch}: lower Batch, or synthesize fewer compositions.`;
 	}
 
 	const toSend: AceRequest[] = [];

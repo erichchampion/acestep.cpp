@@ -30,10 +30,11 @@ let next = 100;
 const seed = () => (next += 1000);
 
 // The real case: Compose made two; request 0 is savePending's copy of the
-// form, Steps since cleared, and request 1 the LM's echo, Steps 8 and a
-// track. The form sets a solver, an adapter the server lists, and Batch 2.
+// form, Steps since cleared and a track still set, and request 1 the LM's
+// echo, Steps 8 and a track. The form sets a solver, an adapter the server
+// lists, and Batch 2.
 const pending = [
-	{ caption: 'one', lyrics: 'a', bpm: 120 },
+	{ caption: 'one', lyrics: 'a', bpm: 120, track: 'drums' },
 	{ caption: 'two', lyrics: 'b', bpm: 96, inference_steps: 8, track: 'guitar', lm_seed: 7 }
 ] as AceRequest[];
 const form = {
@@ -65,16 +66,17 @@ for (const [i, r] of toSend.entries()) {
 	);
 	expect(`request ${i} asks the form's batch`, r.synth_batch_size === 2, r);
 }
-expect(
-	"each request's content and metadata stay its own",
-	toSend[1].lyrics === 'b' && toSend[1].bpm === 96
-);
+const own =
+	toSend[0].caption === 'one' &&
+	toSend[0].bpm === 120 &&
+	toSend[1].caption === 'two' &&
+	toSend[1].lyrics === 'b' &&
+	toSend[1].bpm === 96;
+expect("each request's content and metadata stay its own", own, toSend);
 expect('a per-item LM seed stays', toSend[1].lm_seed === 7, toSend[1]);
 expect('each request its own seed', toSend[0].seed === 1100 && toSend[1].seed === 2100, toSend);
-expect(
-	'the takes are each seed and the next',
-	expanded.map((r) => r.seed).join() === '1100,1101,2100,2101'
-);
+const seeds = expanded.map((r) => r.seed).join();
+expect('the takes are each seed and the next', seeds === '1100,1101,2100,2101', seeds);
 expect(
 	'each take keeps the batch size',
 	expanded.every((r) => r.synth_batch_size === 2),
@@ -98,18 +100,42 @@ expect(
 	seeded.toSend
 );
 
-// Codes: all or none run; a text2music mix is refused, by a message.
+// Codes, as the server reads them: all or none run; a text2music mix is
+// refused, and so are codes that hold no code -- white space or commas
+// alone; a cover's codes are each request's own.
 const codes = (c: string[]) =>
 	c.map((a, i) => ({ caption: `c${i}`, audio_codes: a }) as AceRequest);
-expect(
-	'codes in all run',
-	typeof buildSynthBatch(codes(['1,2', '3']), form, [], seed) !== 'string'
-);
-expect('codes in none run', typeof buildSynthBatch(codes(['', ' ']), form, [], seed) !== 'string');
+const all = buildSynthBatch(codes(['1,2', ' ,3']), form, [], seed);
+expect('codes in all run', typeof all !== 'string', all);
+const none = buildSynthBatch(codes(['', '']), form, [], seed);
+expect('codes in none run', typeof none !== 'string', none);
 const mixed = buildSynthBatch(codes(['1,2', '']), form, [], seed);
-expect('a mix is refused', typeof mixed === 'string' && mixed.includes('audio codes'), mixed);
+expect('a mix is refused', typeof mixed === 'string' && mixed.includes('some do not'), mixed);
+const blank = buildSynthBatch(codes(['', ' ']), form, [], seed);
+expect(
+	'codes of a space hold no code',
+	typeof blank === 'string' && blank.includes('no code'),
+	blank
+);
+const commas = buildSynthBatch(codes([',', '']), form, [], seed);
+expect(
+	'codes of a comma hold no code',
+	typeof commas === 'string' && commas.includes('no code'),
+	commas
+);
 const cover = buildSynthBatch(codes(['1,2', '']), { ...form, task_type: 'cover' }, [], seed);
 expect("a cover's codes are each request's own", typeof cover !== 'string', cover);
+
+// The server's 9 takes: 4 compositions at Batch 3 are refused, not cut to
+// 9; a Batch of 2.5 is 2, as the server reads it.
+const many = buildSynthBatch(codes(['', '', '', '']), { ...form, synth_batch_size: 3 }, [], seed);
+expect('past 9 takes is refused', typeof many === 'string' && many.includes('9 takes'), many);
+const half = built(buildSynthBatch(pending, { ...form, synth_batch_size: 2.5 }, [], seed));
+expect(
+	'a fractional Batch is whole',
+	half.expanded.length === 4 && half.toSend[0].synth_batch_size === 2,
+	half
+);
 
 if (failed) {
 	console.error(`${failed} failed`);
