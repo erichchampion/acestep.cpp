@@ -144,13 +144,9 @@ export const SYNTH_SECTIONS: readonly FieldSection[] = ['flow', 'advanced', 'too
 // sections taken from shared -- a pickSections() result -- and none kept
 // from r. A field cleared in the form is gone from every request, not left
 // as the copy the LM echoed into r (cadenza-audio #1164).
-export function batchRequest(
-	r: AceRequest,
-	shared: Partial<AceRequest>,
-	sections: readonly FieldSection[] = SYNTH_SECTIONS
-): AceRequest {
+export function batchRequest(r: AceRequest, shared: Partial<AceRequest>): AceRequest {
 	const out = { ...r } as Rec;
-	const drop = new Set(sections);
+	const drop = new Set(SYNTH_SECTIONS);
 	for (const f of FIELDS) {
 		if (drop.has(f.section)) delete out[f.key];
 	}
@@ -159,7 +155,10 @@ export function batchRequest(
 
 // extract non-null fields from specified sections.
 // caller removes per-expansion fields (seed, synth_batch_size) and injects srcRange.
-export function pickSections(r: AceRequest, sections: FieldSection[]): Partial<AceRequest> {
+export function pickSections(
+	r: AceRequest,
+	sections: readonly FieldSection[]
+): Partial<AceRequest> {
 	const out: Partial<AceRequest> = {};
 	const allow = new Set(sections);
 	for (const f of FIELDS) {

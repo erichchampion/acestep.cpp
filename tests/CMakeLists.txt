@@ -92,13 +92,15 @@ add_test(NAME test-timbre-crop COMMAND test-model-store --scenarios timbre)
 # The webui's batch rule, run by Node's own TypeScript support with no
 # packages (cadenza-audio #1164): the form's synth sections are every
 # request's, a field cleared after Compose included. Only a node that strips
-# the types itself (22.18 or later) runs it; a build without one does not.
+# the types itself, unflagged (22.18 to 22.x, or 23.6 and later), runs it; a
+# build without one does not.
 find_program(ACESTEP_NODE node)
 if(ACESTEP_NODE)
     execute_process(COMMAND ${ACESTEP_NODE} --version OUTPUT_VARIABLE ACESTEP_NODE_VERSION
                     OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     string(REGEX REPLACE "^v" "" ACESTEP_NODE_VERSION "${ACESTEP_NODE_VERSION}")
-    if(ACESTEP_NODE_VERSION VERSION_GREATER_EQUAL 22.18)
+    if((ACESTEP_NODE_VERSION VERSION_GREATER_EQUAL 22.18 AND ACESTEP_NODE_VERSION VERSION_LESS 23)
+       OR ACESTEP_NODE_VERSION VERSION_GREATER_EQUAL 23.6)
         add_test(NAME test-webui-fields
                  COMMAND ${ACESTEP_NODE} ${PROJECT_SOURCE_DIR}/tools/webui/test/fields.test.ts)
     else()

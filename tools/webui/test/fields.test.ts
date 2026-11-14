@@ -24,7 +24,7 @@ const pending = [
 	{ caption: 'two', lyrics: 'b', bpm: 96, inference_steps: 8, track: 'guitar', lm_seed: 7 }
 ] as AceRequest[];
 const form = { caption: 'one', solver: 'euler', track: '' } as AceRequest;
-const shared = pickSections(form, [...SYNTH_SECTIONS]);
+const shared = pickSections(form, SYNTH_SECTIONS);
 const sent = pending.map((p) => batchRequest(p, shared));
 
 for (const [i, r] of sent.entries()) {
@@ -36,7 +36,7 @@ const own = sent[0].caption === 'one' && sent[1].caption === 'two';
 expect("each request's content stays its own", own && sent[1].lyrics === 'b', sent);
 expect("each request's metadata stays its own", sent[0].bpm === 120 && sent[1].bpm === 96, sent);
 expect('a per-item LM seed stays', sent[1].lm_seed === 7, sent[1]);
-const synthOf = (r: AceRequest) => JSON.stringify(pickSections(r, [...SYNTH_SECTIONS]));
+const synthOf = (r: AceRequest) => JSON.stringify(pickSections(r, SYNTH_SECTIONS));
 expect('the requests agree in every synth field', synthOf(sent[0]) === synthOf(sent[1]), sent);
 expect('the pending request is not changed', pending[0].inference_steps === 8, pending[0]);
 

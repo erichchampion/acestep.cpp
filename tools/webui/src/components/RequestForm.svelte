@@ -446,7 +446,7 @@
 			// exactly them, a field cleared after Compose included, not the
 			// copy the LM echoed into a pending request -- a server refuses a
 			// batch whose requests differ in a setting it shares (#1164).
-			const synthParams = pickSections(app.request, [...SYNTH_SECTIONS]);
+			const synthParams = pickSections(app.request, SYNTH_SECTIONS);
 			// seed and synth_batch_size are per-expansion, handled below
 			delete synthParams.seed;
 			delete synthParams.synth_batch_size;
