@@ -801,12 +801,54 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
     return true;
 }
 
+// Whether a caption is one: whitespace alone is none (#1123).
+static bool caption_given(const std::string & caption) {
+    for (unsigned char c : caption) {
+        if (!std::isspace(c)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool ace_synth_request_missing_caption(const AceRequest * req) {
-    if (!req->caption.empty()) {
+    if (caption_given(req->caption)) {
         return false;
     }
     const SynthTask * entry = find_synth_task(req->task_type);
     return !entry || entry->needs_caption;
+}
+
+bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why) {
+    auto refuse = [&](int request, const char * reason) {
+        if (why) {
+            why->request = request;
+            why->reason  = reason;
+        }
+        return true;
+    };
+    // The task first, so a misspelt one is said as that, not as the caption
+    // an unknown task is short of.
+    if (!find_synth_task(reqs[0].task_type)) {
+        return refuse(0, "unknown task_type");
+    }
+    for (int i = 0; i < batch_n; i++) {
+        // A batch runs as its first request's task: another's would run as
+        // it, unsaid -- a text2music as a cover, a cover without its source.
+        if (reqs[i].task_type != reqs[0].task_type) {
+            return refuse(i, "requests mix tasks: a batch runs as its first request's task");
+        }
+        if (ace_synth_request_missing_caption(&reqs[i])) {
+            return refuse(i, "caption is required");
+        }
+    }
+    return false;
+}
+
+static std::atomic<int> g_test_batch_refusals{ 0 };
+
+int ace_test_batch_refusals() {
+    return g_test_batch_refusals.load();
 }
 
 // The runs run_task has refused for want of a source (ace_test_source_refusals).
@@ -849,17 +891,22 @@ static AceSynthJob * run_task(AceSynth *          ctx,
                               const SynthInputs & in,
                               int                 batch_n,
                               AceProgress         progress) {
-    // An unknown task, and a task that works from a source given none (the
-    // table's needs_source), are refused before the job is made -- the name
-    // first, so a misspelt task is said as that. A task that takes no source
-    // given one is warned of.
+    // A batch the batch rule refuses (an unknown task, mixed tasks, a missing
+    // caption), and a task that works from a source given none (the table's
+    // needs_source), are refused before the job is made. A task that takes no
+    // source given one is warned of.
     set_test_last_cover(kCoverRecordUnset);
-    const std::string & task  = reqs[0].task_type;
-    const SynthTask *   entry = find_synth_task(task);
-    if (!entry) {
-        fprintf(stderr, "[Synth-Run] ERROR: unknown task_type '%s'\n", task.c_str());
+    const std::string &  task = reqs[0].task_type;
+    // The batch rule the tools ask too: an unknown task, mixed tasks, a
+    // request short of its caption -- refused before the job (#1123).
+    AceSynthBatchRefusal refusal;
+    if (ace_synth_batch_refused(reqs, batch_n, &refusal)) {
+        g_test_batch_refusals.fetch_add(1);
+        fprintf(stderr, "[Synth-Run] ERROR: request %d (task '%s'): %s\n", refusal.request,
+                reqs[refusal.request].task_type.c_str(), refusal.reason);
         return NULL;
     }
+    const SynthTask * entry = find_synth_task(task);
     if (entry->needs_source && !in.src.given()) {
         g_test_source_refusals.fetch_add(1);
         fprintf(stderr, "[Synth-Run] ERROR: task '%s' requires source audio or latents\n", task.c_str());

@@ -125,15 +125,20 @@ static int synth_main(int argc, char ** argv) {
             return 1;
         }
         request_dump(&reqs[ri], stderr);
-        if (ace_synth_request_missing_caption(&reqs[ri])) {
-            fprintf(stderr, "[Ace-Synth] FATAL: caption is empty in %s\n", rpath);
-            return 1;
-        }
         // output basename: strip .json suffix
         basenames[ri] = rpath;
         size_t dot    = basenames[ri].rfind(".json");
         if (dot != std::string::npos) {
             basenames[ri] = basenames[ri].substr(0, dot);
+        }
+    }
+    // The engine's batch rule, before any model is loaded: an unknown task,
+    // requests that mix tasks, a request short of its caption (#1123).
+    {
+        AceSynthBatchRefusal why;
+        if (ace_synth_batch_refused(reqs.data(), batch_n, &why)) {
+            fprintf(stderr, "[Ace-Synth] FATAL: %s: %s\n", request_paths[why.request], why.reason);
+            return 1;
         }
     }
     fprintf(stderr, "[Ace-Synth] Batch: %d request(s)\n", batch_n);

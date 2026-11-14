@@ -867,6 +867,62 @@ static int scenario_task_table() {
     missing("complete", "", false);
     missing("text2music", "a song", false);
     missing("covers", "a song", false);
+    // A caption of whitespace alone is none (the app's models trim it too).
+    missing("text2music", " \t\n", true);
+    missing("lego", " ", false);
+    // A batch is refused up front, by request and reason, for a task the
+    // engine does not know (said as that, before any caption), requests that
+    // mix tasks, or a request short of its caption -- any of them, not only
+    // the first (cadenza-audio #1123).
+    {
+        struct Req {
+            const char * task;
+            const char * caption;
+        };
+
+        struct Case {
+            const char *     name;
+            std::vector<Req> batch;
+            int              want_request;  // -1: not refused
+        };
+
+        const std::vector<Case> cases = {
+            { "one text2music",                   { { "text2music", "a song" } },                              -1 },
+            { "two text2music",                   { { "text2music", "a song" }, { "text2music", "another" } }, -1 },
+            { "lego with no captions",            { { "lego", "" }, { "lego", "" } },                          -1 },
+            { "an unknown task, no caption",      { { "covers", "" } },                                        0  },
+            { "a cover then a text2music",        { { "cover", "a song" }, { "text2music", "a song" } },       1  },
+            { "a text2music then a cover",        { { "text2music", "a song" }, { "cover", "a song" } },       1  },
+            { "a second request with no caption", { { "text2music", "a song" }, { "text2music", "" } },        1  },
+            { "a second request of whitespace",   { { "cover", "a song" }, { "cover", "  " } },                1  },
+        };
+        for (const Case & c : cases) {
+            std::vector<AceRequest> reqs(c.batch.size());
+            for (size_t i = 0; i < c.batch.size(); i++) {
+                request_init(&reqs[i]);
+                reqs[i].task_type = c.batch[i].task;
+                reqs[i].caption   = c.batch[i].caption;
+            }
+            AceSynthBatchRefusal why;
+            const bool           refused = ace_synth_batch_refused(reqs.data(), (int) reqs.size(), &why);
+            if (refused != (c.want_request >= 0) || (refused && (why.request != c.want_request || !why.reason))) {
+                fprintf(stderr, "[Test] FAIL: %s: refused %d for request %d (%s), want %s request %d\n", c.name,
+                        refused, why.request, why.reason ? why.reason : "no reason",
+                        c.want_request >= 0 ? "for" : "none,", c.want_request);
+                rc = 1;
+            }
+        }
+        // The unknown task is said as that, not as its missing caption.
+        AceRequest unknown;
+        request_init(&unknown);
+        unknown.task_type = "covers";
+        AceSynthBatchRefusal why;
+        if (!ace_synth_batch_refused(&unknown, 1, &why) || !why.reason || !strstr(why.reason, "unknown")) {
+            fprintf(stderr, "[Test] FAIL: an unknown task with no caption is refused as '%s', not as unknown\n",
+                    why.reason ? why.reason : "nothing");
+            rc = 1;
+        }
+    }
     if (rc == 0) {
         fprintf(stderr, "[Test] scenario 13 PASS\n");
     }
@@ -1012,6 +1068,38 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 ace_test_region_empty() != before + 1 || !empty.src_latents.empty()) {
                 fprintf(stderr, "[Test] FAIL: the %s from %.1f s to %.1f s was not refused before its encode\n", c.task,
                         c.rs, c.re);
+                rc = 1;
+            }
+        }
+    }
+    // run_task refuses a batch the engine's batch rule refuses, before its
+    // job or any encode: a cover and a text2music in one batch, which ran as
+    // a cover, and a text2music of whitespace for its caption (#1123).
+    {
+        for (const bool mixed : { true, false }) {
+            AceRequest reqs[2];
+            for (AceRequest & r : reqs) {
+                request_init(&r);
+                r.caption  = "a short test";
+                r.duration = (float) seconds;
+                r.seed     = 1;
+            }
+            reqs[0].task_type = mixed ? "cover" : "text2music";
+            reqs[1].task_type = "text2music";
+            if (!mixed) {
+                reqs[1].caption = "   ";
+            }
+            const int       before = ace_test_batch_refusals();
+            const int       polls  = dit_polls;
+            AceSynthEncodes kept;
+            AceSynthJob *   job =
+                ace_synth_job_run_dit(synth, reqs, source.data(), n, NULL, 0, NULL, 0, NULL, 0, 2, cancel, &kept);
+            if (job) {
+                ace_synth_job_free(job);
+            }
+            if (job || ace_test_batch_refusals() != before + 1 || dit_polls != polls || !kept.src_latents.empty()) {
+                fprintf(stderr, "[Test] FAIL: %s was not refused before its run\n",
+                        mixed ? "a cover and a text2music in one batch" : "a text2music of whitespace");
                 rc = 1;
             }
         }

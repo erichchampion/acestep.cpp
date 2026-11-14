@@ -170,6 +170,25 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
 // by name, as if it needed one -- the tools' check before a run (#1094).
 bool ace_synth_request_missing_caption(const AceRequest * req);
 
+// Why a batch is refused before any run: the request it is refused for, and
+// the reason, a static string a tool can answer with (cadenza-audio #1123).
+struct AceSynthBatchRefusal {
+    int          request = -1;
+    const char * reason  = nullptr;
+};
+
+// Whether a batch of batch_n requests (reqs non-NULL) is one the engine
+// refuses up front, by the task table: a task it does not know, requests that
+// mix tasks (a batch runs as its first request's), or a request short of the
+// caption its task needs -- a caption of whitespace alone is none. run_task
+// asks it first, and the tools before a run, so each says the same refusal.
+// `why`, when given, says which and why; it is left as it was for a batch
+// that passes.
+bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why);
+
+// Tests only: how many runs run_task has refused by ace_synth_batch_refused.
+int ace_test_batch_refusals();
+
 // Tests only: with `armed`, the next Cover's FSQ roundtrip fails as its
 // tokenizer could not be had (store_require_fsq_tok returning NULL), once --
 // a path no input reaches, which a test drives to see the Cover fail and

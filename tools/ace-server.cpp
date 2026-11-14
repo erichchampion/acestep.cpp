@@ -1016,9 +1016,15 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         json_error(res, 400, "Empty request");
         return;
     }
-    if (ace_synth_request_missing_caption(&ace_reqs[0])) {
-        json_error(res, 400, "Caption is required");
-        return;
+    // The engine's batch rule, for every request, not only the first: an
+    // unknown task (said as that), requests that mix tasks, a request short
+    // of its caption (#1123).
+    {
+        AceSynthBatchRefusal why;
+        if (ace_synth_batch_refused(ace_reqs.data(), (int) ace_reqs.size(), &why)) {
+            json_error(res, 400, (std::string("Request ") + std::to_string(why.request) + ": " + why.reason).c_str());
+            return;
+        }
     }
 
     // Output format from AceRequest.output_format. Converts the string to
