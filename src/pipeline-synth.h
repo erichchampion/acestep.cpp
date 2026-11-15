@@ -198,6 +198,10 @@ struct AceSynthTaskInfo {
 
 bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
 
+// The name of the table's `index`th task, NULL past the last: so a tool or a
+// test walks the engine's own tasks, not a list of its own (#1185).
+const char * ace_synth_task_name(int index);
+
 // Whether a known task takes no source, so a tool can skip decoding one it
 // was sent (cadenza-audio #1157): the engine would drop it with a warning.
 // False for a task the engine does not know, which its run refuses.
@@ -235,10 +239,10 @@ bool ace_synth_request_missing_caption(const AceRequest * req);
 // and the region, track and cover knobs where the task reads them, and for
 // a text2music whether it has codes (#1159); a region bound that is no
 // number, in any request of a task that reads a region (the table's
-// reads_region), is said as that (kAceRefusalRegionNonfinite). A take's own may differ: seed, caption,
-// lyrics, metas, its codes, synth_batch_size, mp3_bitrate, and the LM's
-// fields; duration is #1162's. run_task asks it first, and the tools before
-// a run, so each says the same refusal.
+// reads_region), is said as that (kAceRefusalRegionNonfinite). A take's own
+// may differ: seed, caption, lyrics, metas, its codes, synth_batch_size,
+// mp3_bitrate, and the LM's fields; duration is #1162's. run_task asks it
+// first, and the tools before a run, so each says the same refusal.
 // `why`, when given, says which and why; it is left as it was for a batch
 // that passes.
 bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why);

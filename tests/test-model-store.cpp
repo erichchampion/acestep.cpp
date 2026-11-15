@@ -1079,20 +1079,6 @@ static int scenario_task_table() {
                     info.reads_track, w.needs_source, w.needs_caption, w.cover_knobs, w.reads_region, w.reads_track);
             rc = 1;
         }
-        // A tripwire for the one region check (#1150, #1185): a task whose run
-        // can splice its source back over a region reads that region, so the
-        // batch rule refuses its bound that is no number before any pad.
-        {
-            AceRequest r;
-            request_init(&r);
-            r.task_type        = w.task;
-            r.repainting_start = 10.0f;
-            r.repainting_end   = 20.0f;
-            if (ace_synth_request_splices_source(&r) && !info.reads_region) {
-                fprintf(stderr, "[Test] FAIL: %s splices a region but does not read one\n", w.task);
-                rc = 1;
-            }
-        }
         // What a tool reads to skip decoding a source the task drops
         // (cadenza-audio #1157): the table's no-source tasks alone.
         if (ace_synth_task_ignores_source(w.task) != !w.needs_source) {
@@ -1128,6 +1114,31 @@ static int scenario_task_table() {
                         refused, refused && why.reason ? why.reason : "no reason", w.reads_region);
                 rc = 1;
             }
+        }
+    }
+    // The engine's own tasks, walked: each is a row above -- a task added to
+    // the table and not here fails -- and, a tripwire for the one region
+    // check (#1150, #1185), a task whose run can splice its source back over
+    // a region reads that region, so the batch rule refuses its bound that is
+    // no number before any pad.
+    {
+        int tasks = 0;
+        for (const char * task; (task = ace_synth_task_name(tasks)) != nullptr; tasks++) {
+            AceSynthTaskInfo info;
+            ace_synth_task_info(task, &info);
+            AceRequest r;
+            request_init(&r);
+            r.task_type        = task;
+            r.repainting_start = 10.0f;
+            r.repainting_end   = 20.0f;
+            if (ace_synth_request_splices_source(&r) && !info.reads_region) {
+                fprintf(stderr, "[Test] FAIL: %s splices a region but does not read one\n", task);
+                rc = 1;
+            }
+        }
+        if (tasks != 7 || ace_synth_task_name(-1) || ace_synth_task_name(tasks)) {
+            fprintf(stderr, "[Test] FAIL: the table walks %d tasks, want the 7 rows above\n", tasks);
+            rc = 1;
         }
     }
     // A task it does not know -- misspelt, empty, none -- is said as that,

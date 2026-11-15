@@ -782,6 +782,11 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
     return true;
 }
 
+const char * ace_synth_task_name(int index) {
+    const int n = (int) (sizeof(kSynthTasks) / sizeof(kSynthTasks[0]));
+    return index >= 0 && index < n ? kSynthTasks[index].name : nullptr;
+}
+
 bool ace_synth_task_ignores_source(const char * task) {
     AceSynthTaskInfo info;
     return ace_synth_task_info(task, &info) && !info.needs_source;
