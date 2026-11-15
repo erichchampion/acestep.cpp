@@ -402,9 +402,9 @@ static const char * job_status_str(JobStatus s) {
     return "unknown";
 }
 
-// {"status":...}, and "error" for a failed job the engine said why of (#1193).
-static std::string job_status_json(const Job & job) {
-    const JobStatus  status = job.status.load();
+// {"status":...} for `status` -- the job's, or what a cancel makes it -- and
+// "error" for a failed job the engine said why of (#1193).
+static std::string job_status_json(const Job & job, JobStatus status) {
     yyjson_mut_doc * doc    = yyjson_mut_doc_new(NULL);
     yyjson_mut_val * root   = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
@@ -809,6 +809,10 @@ static void synth_worker(std::shared_ptr<Job>    job,
     // synth_batch_size is expanded into per-seed variants in groups[0].
     std::vector<std::vector<AceRequest>> groups(1);
     groups[0].reserve(total_alloc);
+    // Which request the client sent each take came from: a refusal names
+    // that, not the take's place in the expanded batch (#1193).
+    std::vector<int> take_request;
+    take_request.reserve(total_alloc);
     int off = 0;
     for (int ri = 0; ri < batch_n && off < total_alloc; ri++) {
         auto & r   = ace_reqs[ri];
@@ -829,6 +833,7 @@ static void synth_worker(std::shared_ptr<Job>    job,
             AceRequest v = r;
             v.seed       = base_seed + i;
             groups[0].push_back(v);
+            take_request.push_back(ri);
         }
         off += sbs;
     }
@@ -852,8 +857,9 @@ static void synth_worker(std::shared_ptr<Job>    job,
                                    AceProgress{ server_progress, (void *) &job->cancel }, &refused);
     if (rc != 0 && refused.reason) {
         fprintf(stderr, "[Server] job %s: the engine refused the batch: %s\n", job->id.c_str(), refused.reason);
-        job->error = refused.request >= 0 ? "Request " + std::to_string(refused.request) + ": " + refused.reason :
-                                            std::string(refused.reason);
+        const bool one = refused.request >= 0 && refused.request < (int) take_request.size();
+        job->error = one ? "Request " + std::to_string(take_request[(size_t) refused.request]) + ": " + refused.reason :
+                           std::string(refused.reason);
     }
     ace_synth_free(ctx);
     free(src_interleaved);
@@ -931,6 +937,17 @@ static void synth_worker(std::shared_ptr<Job>    job,
 //   fed back to /vae decode.
 // Batch size = number of JSON objects (after synth_batch_size expansion, clamped to 9).
 // Metadata (seed, duration, etc) is already in the request JSON from /lm.
+// A 400 with the engine's reason for a task that works from a source sent
+// none (ace_synth_inputs_refused, #1193): true when it answered one.
+static bool refuse_sourceless(httplib::Response & res, const std::string & task, bool has_source) {
+    AceSynthBatchRefusal why;
+    if (!ace_synth_inputs_refused(task.c_str(), has_source, &why)) {
+        return false;
+    }
+    json_error(res, 400, (std::string(why.reason) + " (part \"audio\" or \"src_latents\")").c_str());
+    return true;
+}
+
 static void handle_synth(const httplib::Request & req, httplib::Response & res) {
     if (g_registry.dit.empty() || g_registry.text_enc.empty() || g_registry.vae.empty()) {
         json_error(res, 501, "No synth models in registry (need dit + text-encoder + vae)");
@@ -987,17 +1004,13 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         // parts are not read -- not checked, not decoded, a whole song's
         // worth of floats -- as the engine runs the task without them
         // (cadenza-audio #1157). The warning is said once the job is made.
+        const bool src_sent    = req.form.has_file("src_latents") || req.form.has_file("audio");
         const bool src_ignored = ace_synth_task_ignores_source(ace_req.task_type.c_str());
-        src_dropped            = src_ignored && (req.form.has_file("src_latents") || req.form.has_file("audio"));
+        src_dropped            = src_ignored && src_sent;
         // A task that works from a source, sent neither part: refused before
         // any part -- a reference too -- is read or decoded (#1157, #1193).
-        {
-            AceSynthBatchRefusal why;
-            if (ace_synth_inputs_refused(ace_req.task_type.c_str(),
-                                         req.form.has_file("src_latents") || req.form.has_file("audio"), &why)) {
-                json_error(res, 400, (std::string(why.reason) + " (part \"audio\" or \"src_latents\")").c_str());
-                return;
-            }
+        if (refuse_sourceless(res, ace_req.task_type, src_sent)) {
+            return;
         }
 
         // src_latents wins over audio when both are sent: a client that
@@ -1101,12 +1114,8 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     // with the run's own reason now, not a job that fails saying nothing
     // (cadenza-audio #1160, #1193). A multipart sent neither part was
     // refused before any part was read. The buffers are malloc_guard's.
-    {
-        AceSynthBatchRefusal why;
-        if (ace_synth_inputs_refused(ace_reqs[0].task_type.c_str(), src_interleaved || !src_latents.empty(), &why)) {
-            json_error(res, 400, (std::string(why.reason) + " (part \"audio\" or \"src_latents\")").c_str());
-            return;
-        }
+    if (refuse_sourceless(res, ace_reqs[0].task_type, src_interleaved || !src_latents.empty())) {
+        return;
     }
 
     // Output format from AceRequest.output_format. Converts the string to
@@ -1944,7 +1953,7 @@ static int server_main(int argc, char ** argv) {
         }
         // default: return status JSON, with the engine's reason for a
         // failed job that has one (#1193)
-        res.set_content(job_status_json(*job), "application/json");
+        res.set_content(job_status_json(*job, job->status.load()), "application/json");
     });
     svr.Post("/job", [](const httplib::Request & req, httplib::Response & res) {
         if (!req.has_param("id")) {
@@ -1964,10 +1973,7 @@ static int server_main(int argc, char ** argv) {
                 fprintf(stderr, "[Server] Cancel requested for job %s\n", job->id.c_str());
                 status = JobStatus::CANCELLED;
             }
-            std::string body = "{\"status\":\"";
-            body += job_status_str(status);
-            body += "\"}";
-            res.set_content(body, "application/json");
+            res.set_content(job_status_json(*job, status), "application/json");
             return;
         }
         json_error(res, 400, "Unknown action");

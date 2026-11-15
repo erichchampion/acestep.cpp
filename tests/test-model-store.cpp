@@ -1130,6 +1130,30 @@ static int scenario_task_table() {
             fprintf(stderr, "[Test] FAIL: an unknown task '%s' ignores a source\n", task ? task : "(null)");
             rc = 1;
         }
+        // Nor is it refused for its inputs: the batch rule refuses it by name.
+        AceSynthBatchRefusal why{ -7, "untouched" };
+        if (ace_synth_inputs_refused(task, false, &why) || why.request != -7) {
+            fprintf(stderr, "[Test] FAIL: an unknown task '%s' was refused for its inputs\n", task ? task : "(null)");
+            rc = 1;
+        }
+    }
+    // The input rule a tool asks before it loads a model, as run_task holds
+    // a run to it (#1193): a task that needs a source is refused given none,
+    // said as that, and runs given one; a task that needs none runs either way.
+    for (const char * task : { "text2music", "cover", "cover-nofsq", "repaint", "lego", "extract", "complete" }) {
+        AceSynthTaskInfo info;
+        ace_synth_task_info(task, &info);
+        for (const bool has_source : { false, true }) {
+            AceSynthBatchRefusal why;
+            const bool           refused = ace_synth_inputs_refused(task, has_source, &why);
+            const bool           want    = info.needs_source && !has_source;
+            if (refused != want ||
+                (want && (why.request != -1 || !why.reason || !strstr(why.reason, "requires source")))) {
+                fprintf(stderr, "[Test] FAIL: a %s %s a source refused %d (%s), want %d\n", task,
+                        has_source ? "given" : "without", refused, why.reason ? why.reason : "no reason", want);
+                rc = 1;
+            }
+        }
     }
     // The caption rule: a task told what to make by its caption needs one,
     // and so does a task the engine does not know, refused by name later.
