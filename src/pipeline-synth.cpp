@@ -983,11 +983,12 @@ int ace_test_cover_knob_fixes() {
 // Dispatches on reqs[0].task_type to the right task function. task_type is
 // always set: request_init defaults it to text2music, the JSON parser ignores
 // empty strings.
-static AceSynthJob * run_task(AceSynth *          ctx,
-                              const AceRequest *  reqs,
-                              const SynthInputs & in,
-                              int                 batch_n,
-                              AceProgress         progress) {
+static AceSynthJob * run_task(AceSynth *             ctx,
+                              const AceRequest *     reqs,
+                              const SynthInputs &    in,
+                              int                    batch_n,
+                              AceProgress            progress,
+                              AceSynthBatchRefusal & refused) {
     // Refused before the job is made: a batch the batch rule refuses -- an
     // unknown task, mixed tasks, a request short of its caption, a region
     // bound that is no number for a task that reads one (the table's
@@ -1001,6 +1002,7 @@ static AceSynthJob * run_task(AceSynth *          ctx,
         g_test_batch_refusals.fetch_add(1);
         fprintf(stderr, "[Synth-Run] ERROR: request %d (task '%s'): %s\n", refusal.request,
                 refusal.request >= 0 ? reqs[refusal.request].task_type.c_str() : "none", refusal.reason);
+        refused = refusal;
         return NULL;
     }
     const std::string & task  = reqs[0].task_type;
@@ -1008,6 +1010,7 @@ static AceSynthJob * run_task(AceSynth *          ctx,
     if (entry->needs_source && !in.src.given()) {
         g_test_source_refusals.fetch_add(1);
         fprintf(stderr, "[Synth-Run] ERROR: task '%s' requires source audio or latents\n", task.c_str());
+        refused = { -1, "the task requires source audio or latents, and none was given" };
         return NULL;
     }
     // A task that takes no source given one runs as asked, without it: a
@@ -1081,19 +1084,25 @@ static AceSynthJob * run_task(AceSynth *          ctx,
 }
 
 // Phase 1 entry point.
-AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
-                                    const AceRequest * reqs,
-                                    const float *      src_audio,
-                                    int                src_len,
-                                    const float *      src_latents,
-                                    int                src_T_latent,
-                                    const float *      ref_audio,
-                                    int                ref_len,
-                                    const float *      ref_latents,
-                                    int                ref_T_latent,
-                                    int                batch_n,
-                                    AceProgress        progress,
-                                    AceSynthEncodes *  failed_encodes) {
+AceSynthJob * ace_synth_job_run_dit(AceSynth *             ctx,
+                                    const AceRequest *     reqs,
+                                    const float *          src_audio,
+                                    int                    src_len,
+                                    const float *          src_latents,
+                                    int                    src_T_latent,
+                                    const float *          ref_audio,
+                                    int                    ref_len,
+                                    const float *          ref_latents,
+                                    int                    ref_T_latent,
+                                    int                    batch_n,
+                                    AceProgress            progress,
+                                    AceSynthEncodes *      failed_encodes,
+                                    AceSynthBatchRefusal * refused) {
+    // Unset, and filled only by a refusal before the job (#1160); a caller
+    // that asks for none gets one of its own to fill.
+    AceSynthBatchRefusal   none;
+    AceSynthBatchRefusal & why = refused ? *refused : none;
+    why                        = {};
     if (failed_encodes) {
         // Emptied and let go: a caller's sink reused after a failed call holds
         // nothing of it through this one.
@@ -1104,6 +1113,7 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
     // run's record (run_task resets it again for its own).
     set_test_last_cover(kCoverRecordUnset);
     if (!ctx || !reqs || batch_n < 1 || batch_n > 9) {
+        why = { -1, "a run takes a synth and 1..9 requests" };
         return NULL;
     }
     // The sink is this call's only (#975): unset however the call ends, a
@@ -1117,7 +1127,7 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
         { src_audio, src_len, src_latents, src_T_latent },
         { ref_audio, ref_len, ref_latents, ref_T_latent }
     };
-    return run_task(ctx, reqs, in, batch_n, progress);
+    return run_task(ctx, reqs, in, batch_n, progress, why);
 }
 
 // Pointer to the post-DiT latent for one track in s.output, time-major

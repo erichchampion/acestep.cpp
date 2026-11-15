@@ -89,20 +89,29 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 //   again after the encode, so latents would not make the same takes. NULL:
 //   none are kept. The synth keeps nothing of them past the call
 //   (cadenza-audio #975).
+// refused: when non-NULL, why the call was refused before its job was made
+//   -- its arguments (request -1), the batch rule (ace_synth_batch_refused:
+//   the request and its reason), or a task that works from a source given
+//   none (request -1) -- so a caller can answer an invalid request as that,
+//   not as the pipeline failing (cadenza-audio #1160). Left {-1, NULL} by a
+//   call that was not refused: one that ran, failed further in, or was
+//   cancelled.
 // Returns NULL on error or cancellation.
-AceSynthJob * ace_synth_job_run_dit(AceSynth *         ctx,
-                                    const AceRequest * reqs,
-                                    const float *      src_audio,
-                                    int                src_len,
-                                    const float *      src_latents,
-                                    int                src_T_latent,
-                                    const float *      ref_audio,
-                                    int                ref_len,
-                                    const float *      ref_latents,
-                                    int                ref_T_latent,
-                                    int                batch_n,
-                                    AceProgress        progress       = {},
-                                    AceSynthEncodes *  failed_encodes = nullptr);
+struct AceSynthBatchRefusal;
+AceSynthJob * ace_synth_job_run_dit(AceSynth *             ctx,
+                                    const AceRequest *     reqs,
+                                    const float *          src_audio,
+                                    int                    src_len,
+                                    const float *          src_latents,
+                                    int                    src_T_latent,
+                                    const float *          ref_audio,
+                                    int                    ref_len,
+                                    const float *          ref_latents,
+                                    int                    ref_T_latent,
+                                    int                    batch_n,
+                                    AceProgress            progress       = {},
+                                    AceSynthEncodes *      failed_encodes = nullptr,
+                                    AceSynthBatchRefusal * refused        = nullptr);
 
 // Access the post-DiT denoised latent for one track of the job, owned by the
 // job and valid until ace_synth_job_free. Layout is flat [T_latent * 64] f32

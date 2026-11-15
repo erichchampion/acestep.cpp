@@ -1645,7 +1645,9 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // run TASK [SOURCE] [REFERENCE] KEPT [REGION] [POLLS] [SOURCE LATENTS]:
     // the run, failed, and what it kept -- by the cancel at its DiT's first
     // poll (POLLS 1), or before its DiT (POLLS 0). REGION gives a repaint, or
-    // a lego, a region; SOURCE LATENTS gives the source as latents.
+    // a lego, a region; SOURCE LATENTS gives the source as latents. What the
+    // call said of a refusal before its job is last_refusal (#1160).
+    AceSynthBatchRefusal last_refusal{ -7, "unset" };
     auto run = [&](const char * task, const float * src, const float * ref, AceSynthEncodes & kept, bool region = false,
                    int want_polls = 1, const std::vector<float> * src_latents = nullptr, float region_start = 0.5f,
                    float region_end = 1.5f, int src_len = 0, float cover_strength = 1.0f, float cover_noise = 0.0f) {
@@ -1662,9 +1664,10 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             r.repainting_end   = region_end;
         }
         const int     polls = dit_polls;
-        AceSynthJob * job   = ace_synth_job_run_dit(
-            synth, &r, src, src ? (src_len ? src_len : n) : 0, src_latents ? src_latents->data() : NULL,
-            src_latents ? (int) (src_latents->size() / 64) : 0, ref, ref ? n : 0, NULL, 0, 1, cancel, &kept);
+        AceSynthJob * job = ace_synth_job_run_dit(synth, &r, src, src ? (src_len ? src_len : n) : 0,
+                                                  src_latents ? src_latents->data() : NULL,
+                                                  src_latents ? (int) (src_latents->size() / 64) : 0, ref, ref ? n : 0,
+                                                  NULL, 0, 1, cancel, &kept, &last_refusal);
         if (job) {
             ace_synth_job_free(job);
             return false;
@@ -1679,6 +1682,24 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         !run("repaint", source.data(), NULL, repaint, true) || !run("cover-nofsq", source.data(), NULL, nofsq)) {
         fprintf(stderr, "[Test] FAIL: a run returned a job, or failed before its DiT's first poll\n");
         rc = 1;
+    }
+    // A run cancelled at its DiT was not refused: the call says none (#1160).
+    if (last_refusal.request != -1 || last_refusal.reason) {
+        fprintf(stderr, "[Test] FAIL: a cancelled run said it was refused: request %d (%s)\n", last_refusal.request,
+                last_refusal.reason ? last_refusal.reason : "no reason");
+        rc = 1;
+    }
+    // Nor a call of no request: refused for its arguments, said as that.
+    {
+        AceRequest           r;
+        AceSynthBatchRefusal why;
+        request_init(&r);
+        if (ace_synth_job_run_dit(synth, &r, NULL, 0, NULL, 0, NULL, 0, NULL, 0, 0, {}, nullptr, &why) ||
+            why.request != -1 || !why.reason || !strstr(why.reason, "1..9 requests")) {
+            fprintf(stderr, "[Test] FAIL: a run of 0 requests was not refused for its arguments (%s)\n",
+                    why.reason ? why.reason : "no reason");
+            rc = 1;
+        }
     }
     auto near = [&](const std::vector<float> & v) {
         const size_t got = v.size() / 64;
@@ -1875,7 +1896,8 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         AceSynthEncodes none;
         const int       refused = ace_test_source_refusals();
         if (!run(task, NULL, NULL, none, false, 0) || ace_test_source_refusals() != refused + 1 ||
-            !none.src_latents.empty() || !none.ref_latents.empty()) {
+            !none.src_latents.empty() || !none.ref_latents.empty() || last_refusal.request != -1 ||
+            !last_refusal.reason || !strstr(last_refusal.reason, "requires source")) {
             fprintf(stderr, "[Test] FAIL: a %s given no source was not refused by the task table\n", task);
             rc = 1;
         }
@@ -2026,7 +2048,9 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 AceSynthEncodes bad_bound;
                 const int       before = ace_test_batch_refusals();
                 if (!run(task, source.data(), NULL, bad_bound, true, 0, nullptr, b.rs, b.re) ||
-                    ace_test_batch_refusals() != before + 1 || !bad_bound.src_latents.empty()) {
+                    ace_test_batch_refusals() != before + 1 || !bad_bound.src_latents.empty() ||
+                    last_refusal.request != 0 || !last_refusal.reason ||
+                    strcmp(last_refusal.reason, "a region bound is not a finite number")) {
                     fprintf(stderr, "[Test] FAIL: the %s with %s was not refused before its encode\n", task, b.said);
                     rc = 1;
                 }
