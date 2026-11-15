@@ -786,6 +786,17 @@ bool ace_synth_task_ignores_source(const char * task) {
     return ace_synth_task_info(task, &info) && !info.needs_source;
 }
 
+bool ace_synth_inputs_refused(const char * task, bool has_source, AceSynthBatchRefusal * why) {
+    const SynthTask * entry = task ? find_synth_task(task) : nullptr;
+    if (!entry || !entry->needs_source || has_source) {
+        return false;
+    }
+    if (why) {
+        *why = { -1, "the task requires source audio or latents, and none was given" };
+    }
+    return true;
+}
+
 bool ace_synth_request_splices_source(const AceRequest * req) {
     const SynthTask * entry = req ? find_synth_task(req->task_type) : nullptr;
     if (!entry || !std::isfinite(req->repainting_start) || !std::isfinite(req->repainting_end)) {
@@ -1007,10 +1018,9 @@ static AceSynthJob * run_task(AceSynth *             ctx,
     }
     const std::string & task  = reqs[0].task_type;
     const SynthTask *   entry = find_synth_task(task);
-    if (entry->needs_source && !in.src.given()) {
+    if (ace_synth_inputs_refused(task.c_str(), in.src.given(), &refused)) {
         g_test_source_refusals.fetch_add(1);
         fprintf(stderr, "[Synth-Run] ERROR: task '%s' requires source audio or latents\n", task.c_str());
-        refused = { -1, "the task requires source audio or latents, and none was given" };
         return NULL;
     }
     // A task that takes no source given one runs as asked, without it: a

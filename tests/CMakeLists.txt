@@ -128,7 +128,7 @@ set_tests_properties(test-synth-cover-keeps-source PROPERTIES
 add_test(NAME test-synth-needs-source
          COMMAND ace-synth --request ${CMAKE_CURRENT_SOURCE_DIR}/request-cover.json --models /nonexistent)
 set_tests_properties(test-synth-needs-source PROPERTIES
-    PASS_REGULAR_EXPRESSION "task 'cover' requires --src-audio" FAIL_REGULAR_EXPRESSION "cannot scan --models")
+    PASS_REGULAR_EXPRESSION "task 'cover': the task requires source audio" FAIL_REGULAR_EXPRESSION "cannot scan --models")
 set(ACESTEP_TEST_MODELS "" CACHE PATH "Directory of GGUFs for the tests that read them (empty: not run)")
 if(ACESTEP_TEST_MODELS)
     add_test(NAME test-audio-layout COMMAND test-audio-layout --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)

@@ -155,11 +155,12 @@ static int synth_main(int argc, char ** argv) {
         src_audio_path = NULL;
     }
     // A task that works from a source, given none: refused now, before any
-    // model loads, as the run would refuse it (cadenza-audio #1160).
+    // model loads, by the run's own rule and reason (cadenza-audio #1160,
+    // #1193).
     {
-        AceSynthTaskInfo info;
-        if (!src_audio_path && ace_synth_task_info(reqs[0].task_type.c_str(), &info) && info.needs_source) {
-            fprintf(stderr, "[Ace-Synth] FATAL: task '%s' requires --src-audio\n", reqs[0].task_type.c_str());
+        AceSynthBatchRefusal why;
+        if (ace_synth_inputs_refused(reqs[0].task_type.c_str(), src_audio_path != NULL, &why)) {
+            fprintf(stderr, "[Ace-Synth] FATAL: task '%s': %s (--src-audio)\n", reqs[0].task_type.c_str(), why.reason);
             return 1;
         }
     }
@@ -326,7 +327,8 @@ static int synth_main(int argc, char ** argv) {
                                    all_audio.data(), nullptr, {}, &refused);
     if (rc != 0) {
         if (refused.reason) {
-            fprintf(stderr, "[Ace-Synth] ERROR: the engine refused the batch: %s\n", refused.reason);
+            fprintf(stderr, "[Ace-Synth] ERROR: the engine refused %s: %s\n",
+                    refused.request >= 0 ? all_basenames[refused.request].c_str() : "the batch", refused.reason);
         } else {
             fprintf(stderr, "[Ace-Synth] ERROR: batch run failed\n");
         }

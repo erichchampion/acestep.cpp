@@ -216,6 +216,10 @@ struct Job {
     std::atomic<JobStatus> status{ JobStatus::RUNNING };
     std::string            result_body;
     std::string            result_mime;
+    // Why a failed job failed, when the engine said (cadenza-audio #1193):
+    // its refusal of the run. Written before status, as the result is, and
+    // said in the status JSON as "error".
+    std::string            error;
     std::atomic<bool>      cancel{ false };
 
     // memory ordering contract: result_body and result_mime are written
@@ -396,6 +400,23 @@ static const char * job_status_str(JobStatus s) {
             return "cancelled";
     }
     return "unknown";
+}
+
+// {"status":...}, and "error" for a failed job the engine said why of (#1193).
+static std::string job_status_json(const Job & job) {
+    const JobStatus  status = job.status.load();
+    yyjson_mut_doc * doc    = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val * root   = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "status", job_status_str(status));
+    if (status == JobStatus::FAILED && !job.error.empty()) {
+        yyjson_mut_obj_add_strcpy(doc, root, "error", job.error.c_str());
+    }
+    char *      json = yyjson_mut_write(doc, 0, NULL);
+    std::string body = json ? json : "{}";
+    free(json);
+    yyjson_mut_doc_free(doc);
+    return body;
 }
 
 // log capture: intercept stderr via pipe, forward to terminal + ring buffer.
@@ -831,6 +852,8 @@ static void synth_worker(std::shared_ptr<Job>    job,
                                    AceProgress{ server_progress, (void *) &job->cancel }, &refused);
     if (rc != 0 && refused.reason) {
         fprintf(stderr, "[Server] job %s: the engine refused the batch: %s\n", job->id.c_str(), refused.reason);
+        job->error = refused.request >= 0 ? "Request " + std::to_string(refused.request) + ": " + refused.reason :
+                                            std::string(refused.reason);
     }
     ace_synth_free(ctx);
     free(src_interleaved);
@@ -966,6 +989,16 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         // (cadenza-audio #1157). The warning is said once the job is made.
         const bool src_ignored = ace_synth_task_ignores_source(ace_req.task_type.c_str());
         src_dropped            = src_ignored && (req.form.has_file("src_latents") || req.form.has_file("audio"));
+        // A task that works from a source, sent neither part: refused before
+        // any part -- a reference too -- is read or decoded (#1157, #1193).
+        {
+            AceSynthBatchRefusal why;
+            if (ace_synth_inputs_refused(ace_req.task_type.c_str(),
+                                         req.form.has_file("src_latents") || req.form.has_file("audio"), &why)) {
+                json_error(res, 400, (std::string(why.reason) + " (part \"audio\" or \"src_latents\")").c_str());
+                return;
+            }
+        }
 
         // src_latents wins over audio when both are sent: a client that
         // already cached the latent skips the VAE encode regardless of
@@ -1064,17 +1097,14 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             return;
         }
     }
-    // A task that works from a source, sent none -- a plain JSON body, or a
-    // multipart with neither part: a 400 with the reason now, as the run would
-    // refuse it, not a job that fails saying nothing (cadenza-audio #1160).
+    // A task that works from a source, sent none -- a plain JSON body: a 400
+    // with the run's own reason now, not a job that fails saying nothing
+    // (cadenza-audio #1160, #1193). A multipart sent neither part was
+    // refused before any part was read. The buffers are malloc_guard's.
     {
-        AceSynthTaskInfo info;
-        if (ace_synth_task_info(ace_reqs[0].task_type.c_str(), &info) && info.needs_source && !src_interleaved &&
-            src_latents.empty()) {
-            free(ref_interleaved);
-            const std::string why = "task '" + ace_reqs[0].task_type +
-                                    "' requires source audio or latents (part \"audio\" or \"src_latents\")";
-            json_error(res, 400, why.c_str());
+        AceSynthBatchRefusal why;
+        if (ace_synth_inputs_refused(ace_reqs[0].task_type.c_str(), src_interleaved || !src_latents.empty(), &why)) {
+            json_error(res, 400, (std::string(why.reason) + " (part \"audio\" or \"src_latents\")").c_str());
             return;
         }
     }
@@ -1912,11 +1942,9 @@ static int server_main(int argc, char ** argv) {
             res.set_content(job->result_body, job->result_mime);
             return;
         }
-        // default: return status JSON
-        std::string body = "{\"status\":\"";
-        body += job_status_str(job->status.load());
-        body += "\"}";
-        res.set_content(body, "application/json");
+        // default: return status JSON, with the engine's reason for a
+        // failed job that has one (#1193)
+        res.set_content(job_status_json(*job), "application/json");
     });
     svr.Post("/job", [](const httplib::Request & req, httplib::Response & res) {
         if (!req.has_param("id")) {

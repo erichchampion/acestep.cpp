@@ -195,6 +195,13 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
 // False for a task the engine does not know, which its run refuses.
 bool ace_synth_task_ignores_source(const char * task);
 
+// Whether a run of `task` is refused for its inputs: a task that works from a
+// source (the table's needs_source) given none -- the rule run_task holds a
+// run to, asked by a tool before it loads a model so it says the same
+// (cadenza-audio #1193). *why, when non-NULL, gets {-1, the reason}. False
+// for a task the engine does not know: the batch rule refuses that by name.
+bool ace_synth_inputs_refused(const char * task, bool has_source, AceSynthBatchRefusal * why);
+
 // Whether a run of the request (its task_type and region bounds) splices its
 // source back over the decode after it ends -- a repaint, or a lego whose
 // bounds ask a region (lego_asks_region) -- so the decode's tiles are not
