@@ -936,7 +936,7 @@ void ops_init_noise(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
     debug_dump_2d(&s.dbg, "context", s.context.data(), s.T, s.ctx_ch);
 
     fprintf(stderr, "[Init-Noise] Starting: T=%d, S=%d, enc_S=%d, steps=%d, batch=%d%s\n", s.T, s.S, s.enc_S,
-            s.num_steps, batch_n, s.cover_knobs ? " (cover)" : "");
+            s.num_steps, batch_n, s.use_source_context ? " (cover)" : "");
 }
 
 int ops_dit_generate(const AceSynth * ctx, int batch_n, SynthState & s, AceProgress progress) {

@@ -1609,6 +1609,7 @@ static int scenario_task_table() {
             st.use_source_context = true;
             st.have_cover         = true;
             st.cover_knobs        = info.cover_knobs;
+            st.is_repaint         = !strcmp(w.task, "repaint");  // as run_repaint sets it
             request_init(&st.rr);
             st.rr.task_type            = w.task;
             st.rr.audio_cover_strength = 0.5f;

@@ -174,7 +174,9 @@ struct SynthState {
     std::vector<int>                per_enc_S;
     std::vector<std::vector<float>> per_enc_nc;
     std::vector<int>                per_enc_S_nc;
-    bool                            need_enc_switch;
+    // ops_encode_text's decision (cover_switches_context), which
+    // ops_build_context_silence reads, so the two cannot disagree (#1187).
+    bool                            need_enc_switch = false;
 
     // stacked encoder hidden states
     int                max_enc_S;
