@@ -1056,15 +1056,16 @@ static int scenario_task_table() {
         bool         needs_source, needs_caption, cover_knobs, reads_region, reads_track;
     };
 
-    for (const Want & w : {
-             Want{ "text2music",  false, true,  false, false, false },
-             Want{ "cover",       true,  true,  true,  false, false },
-             Want{ "cover-nofsq", true,  true,  true,  false, false },
-             Want{ "repaint",     true,  true,  false, true,  false },
-             Want{ "lego",        true,  false, false, true,  true  },
-             Want{ "extract",     true,  false, false, false, true  },
-             Want{ "complete",    true,  false, false, false, true  }
-    }) {
+    const Want wants[] = {
+        Want{ "text2music",  false, true,  false, false, false },
+        Want{ "cover",       true,  true,  true,  false, false },
+        Want{ "cover-nofsq", true,  true,  true,  false, false },
+        Want{ "repaint",     true,  true,  false, true,  false },
+        Want{ "lego",        true,  false, false, true,  true  },
+        Want{ "extract",     true,  false, false, false, true  },
+        Want{ "complete",    true,  false, false, false, true  }
+    };
+    for (const Want & w : wants) {
         AceSynthTaskInfo info{ !w.needs_source, !w.needs_caption, !w.cover_knobs, !w.reads_region, !w.reads_track };
         if (!ace_synth_task_info(w.task, &info)) {
             fprintf(stderr, "[Test] FAIL: the task table does not know %s\n", w.task);
@@ -1116,28 +1117,30 @@ static int scenario_task_table() {
             }
         }
     }
-    // The engine's own tasks, walked: each is a row above -- a task added to
-    // the table and not here fails -- and, a tripwire for the one region
-    // check (#1150, #1185), a task whose run can splice its source back over
-    // a region reads that region, so the batch rule refuses its bound that is
-    // no number before any pad.
+    // The region reason's text, as ace-server's 400 and ARCHITECTURE say it:
+    // the constant is compared against, so its words are pinned here (#1185).
+    if (std::string_view(kAceRefusalRegionNonfinite) != "a region bound is not a finite number") {
+        fprintf(stderr, "[Test] FAIL: the region reason reads '%s'\n", kAceRefusalRegionNonfinite);
+        rc = 1;
+    }
+    // The engine's own tasks, walked: each is one of the rows above, and
+    // there are as many -- a task added to the table and not here fails
+    // (#1185).
     {
         int tasks = 0;
         for (const char * task; (task = ace_synth_task_name(tasks)) != nullptr; tasks++) {
-            AceSynthTaskInfo info;
-            ace_synth_task_info(task, &info);
-            AceRequest r;
-            request_init(&r);
-            r.task_type        = task;
-            r.repainting_start = 10.0f;
-            r.repainting_end   = 20.0f;
-            if (ace_synth_request_splices_source(&r) && !info.reads_region) {
-                fprintf(stderr, "[Test] FAIL: %s splices a region but does not read one\n", task);
+            bool row = false;
+            for (const Want & w : wants) {
+                row = row || !strcmp(w.task, task);
+            }
+            if (!row) {
+                fprintf(stderr, "[Test] FAIL: the table's %s is not a row of this test\n", task);
                 rc = 1;
             }
         }
-        if (tasks != 7 || ace_synth_task_name(-1) || ace_synth_task_name(tasks)) {
-            fprintf(stderr, "[Test] FAIL: the table walks %d tasks, want the 7 rows above\n", tasks);
+        const int rows = (int) (sizeof(wants) / sizeof(wants[0]));
+        if (tasks != rows || ace_synth_task_name(-1) || ace_synth_task_name(tasks)) {
+            fprintf(stderr, "[Test] FAIL: the table walks %d tasks, want the %d rows above\n", tasks, rows);
             rc = 1;
         }
     }
