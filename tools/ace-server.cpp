@@ -939,12 +939,13 @@ static void synth_worker(std::shared_ptr<Job>    job,
 // Metadata (seed, duration, etc) is already in the request JSON from /lm.
 // A 400 with the engine's reason for a task that works from a source sent
 // none (ace_synth_inputs_refused, #1193): true when it answered one.
-static bool refuse_sourceless(httplib::Response & res, const std::string & task, bool has_source) {
+// `hint` says how this request could have sent one.
+static bool refuse_sourceless(httplib::Response & res, const std::string & task, bool has_source, const char * hint) {
     AceSynthBatchRefusal why;
     if (!ace_synth_inputs_refused(task.c_str(), has_source, &why)) {
         return false;
     }
-    json_error(res, 400, (std::string(why.reason) + " (part \"audio\" or \"src_latents\")").c_str());
+    json_error(res, 400, (std::string(why.reason) + " (" + hint + ")").c_str());
     return true;
 }
 
@@ -1009,7 +1010,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         src_dropped            = src_ignored && src_sent;
         // A task that works from a source, sent neither part: refused before
         // any part -- a reference too -- is read or decoded (#1157, #1193).
-        if (refuse_sourceless(res, ace_req.task_type, src_sent)) {
+        if (refuse_sourceless(res, ace_req.task_type, src_sent, "part \"audio\" or \"src_latents\"")) {
             return;
         }
 
@@ -1114,7 +1115,8 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     // with the run's own reason now, not a job that fails saying nothing
     // (cadenza-audio #1160, #1193). A multipart sent neither part was
     // refused before any part was read. The buffers are malloc_guard's.
-    if (refuse_sourceless(res, ace_reqs[0].task_type, src_interleaved || !src_latents.empty())) {
+    if (refuse_sourceless(res, ace_reqs[0].task_type, src_interleaved || !src_latents.empty(),
+                          "send it as a multipart request, with an \"audio\" or \"src_latents\" part")) {
         return;
     }
 
