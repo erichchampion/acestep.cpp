@@ -900,6 +900,16 @@ static int scenario_splice_rule() {
     frames("a repaint wholly before the start", true, false, -2.0f, -1.0f, 750, 0, 0);
     frames("an inverted repaint", true, false, 20.0f, 10.0f, 750, 500, 500);
     frames("a cover", false, false, 10.0f, 20.0f, 750, 0, 0);
+    // A request of `task` with these bounds, asked whether its run splices
+    // its source (ace_synth_request_splices_source, #1156).
+    auto splices = [](const char * task, float rs, float re) {
+        AceRequest r;
+        request_init(&r);
+        r.task_type        = task;
+        r.repainting_start = rs;
+        r.repainting_end   = re;
+        return ace_synth_request_splices_source(&r);
+    };
     // A lego reads its bounds as a repaint does: the -1 end (any negative)
     // is the source's end, so a start with it asks a region to there -- or,
     // before the source, an outpaint -- where it once ran the whole song.
@@ -933,10 +943,11 @@ static int scenario_splice_rule() {
             }
             // What a tool reads to tell a spliced take (cadenza-audio #1156):
             // a lego by its region, a repaint always, any other task never.
-            for (const char * task : { "lego", "repaint", "cover", "text2music", "extract", "complete" }) {
+            for (const char * task :
+                 { "lego", "repaint", "cover", "cover-nofsq", "text2music", "extract", "complete" }) {
                 const bool lego   = !strcmp(task, "lego");
                 const bool want   = lego ? c.want : !strcmp(task, "repaint");
-                const bool splice = ace_synth_task_splices_source(task, c.rs, c.re);
+                const bool splice = splices(task, c.rs, c.re);
                 if (splice != want) {
                     fprintf(stderr, "[Test] FAIL: a %s from %.4fs to %.1fs splices its source %d, want %d\n", task,
                             c.rs, c.re, splice, want);
@@ -955,13 +966,13 @@ static int scenario_splice_rule() {
                  std::tuple{ "lego",    10.0f,         std::nanf("") },
                  std::tuple{ "lego",    -inf,          -1.0f         }
         }) {
-            if (ace_synth_task_splices_source(task, rs, re)) {
+            if (splices(task, rs, re)) {
                 fprintf(stderr, "[Test] FAIL: a '%s' from %g s to %g s splices its source\n", task, rs, re);
                 rc = 1;
             }
         }
-        if (ace_synth_task_splices_source(nullptr, 10.0f, 20.0f)) {
-            fprintf(stderr, "[Test] FAIL: a NULL task splices its source\n");
+        if (ace_synth_request_splices_source(nullptr)) {
+            fprintf(stderr, "[Test] FAIL: a NULL request splices its source\n");
             rc = 1;
         }
     }

@@ -605,7 +605,9 @@ static int run_repaint(AceSynth *          ctx,
                        int                 batch_n,
                        SynthState &        s,
                        AceProgress         progress) {
-    s.is_repaint         = true;
+    // True: the query's rule for a repaint, whose bounds run_task's batch
+    // rule has held finite (#1156).
+    s.is_repaint         = ace_synth_request_splices_source(&reqs[0]);
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_REPAINT;
 
@@ -642,7 +644,9 @@ static int run_lego(AceSynth *          ctx,
     // A bound that is no number was refused by run_task's batch rule, not
     // read as a region or none: lego_asks_region has no right answer for one
     // (#1144, #1150).
-    s.is_lego_region        = lego_asks_region(s.rr.repainting_start, s.rr.repainting_end);
+    // The query a tool reads to tell a spliced take, so the two cannot
+    // drift (cadenza-audio #1156).
+    s.is_lego_region = ace_synth_request_splices_source(&reqs[0]);
     // An end of its own at or before the start asks no region a lego can
     // run -- a repaint refuses it -- so the lego runs the whole song, said.
     // (0, 0) is a client's unset range -- the webui resets to it -- not one.
@@ -782,17 +786,17 @@ bool ace_synth_task_ignores_source(const char * task) {
     return ace_synth_task_info(task, &info) && !info.needs_source;
 }
 
-bool ace_synth_task_splices_source(const char * task, float repainting_start, float repainting_end) {
-    const SynthTask * entry = task ? find_synth_task(task) : nullptr;
-    if (!entry || !std::isfinite(repainting_start) || !std::isfinite(repainting_end)) {
+bool ace_synth_request_splices_source(const AceRequest * req) {
+    const SynthTask * entry = req ? find_synth_task(req->task_type) : nullptr;
+    if (!entry || !std::isfinite(req->repainting_start) || !std::isfinite(req->repainting_end)) {
         return false;
     }
-    // run_repaint's is_repaint, and run_lego's is_lego_region: what
-    // splices_source_after_decode reads of the run.
+    // run_repaint's is_repaint, and run_lego's is_lego_region, which both
+    // set from this: what splices_source_after_decode reads of the run.
     if (entry->run == run_repaint) {
         return true;
     }
-    return entry->run == run_lego && lego_asks_region(repainting_start, repainting_end);
+    return entry->run == run_lego && lego_asks_region(req->repainting_start, req->repainting_end);
 }
 
 bool ace_synth_request_missing_caption(const AceRequest * req) {
