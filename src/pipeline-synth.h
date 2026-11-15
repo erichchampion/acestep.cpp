@@ -198,8 +198,10 @@ struct AceSynthTaskInfo {
 
 bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
 
-// The name of the table's `index`th task, NULL past the last: so a tool or a
-// test walks the engine's own tasks, not a list of its own (#1185).
+// How many tasks the table holds, and the name of its `index`th, NULL out of
+// [0, count): so a tool or a test walks the engine's own tasks, not a list of
+// its own (#1185, cadenza-audio #1198).
+int          ace_synth_task_count();
 const char * ace_synth_task_name(int index);
 
 // Whether a known task takes no source, so a tool can skip decoding one it

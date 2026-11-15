@@ -1139,7 +1139,7 @@ static int scenario_task_table() {
             }
         }
         const int rows = (int) (sizeof(wants) / sizeof(wants[0]));
-        if (tasks != rows || ace_synth_task_name(-1) || ace_synth_task_name(tasks)) {
+        if (tasks != rows || tasks != ace_synth_task_count() || ace_synth_task_name(-1) || ace_synth_task_name(tasks)) {
             fprintf(stderr, "[Test] FAIL: the table walks %d tasks, want the %d rows above\n", tasks, rows);
             rc = 1;
         }
