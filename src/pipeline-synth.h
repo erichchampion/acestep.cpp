@@ -54,6 +54,10 @@ void ace_synth_default_params(AceSynthParams * p);
 // modules are acquired per op, never owned by the context. NULL on failure.
 AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 
+// The batch rule's reason for a region bound that is no number, a tool or a
+// test can compare against (cadenza-audio #1185).
+inline constexpr const char * kAceRefusalRegionNonfinite = "a region bound is not a finite number";
+
 // Why a batch is refused before any run, or a run before its job: the
 // request it is refused for (-1: the batch as a whole), and the reason, a
 // static string a tool can answer with (cadenza-audio #1123, #1160).
@@ -184,8 +188,12 @@ struct AceSynthTaskInfo {
     bool cover_knobs   = false;
     // Whether the task reads the region (repainting_start/_end): the batch
     // rule refuses such a task's request whose bound is no number, before
-    // its pad or encode (cadenza-audio #1150).
+    // its pad or encode (cadenza-audio #1150), and holds a batch's requests to
+    // one region (#1159; a lego asking none on both sides agrees).
     bool reads_region  = false;
+    // Whether the task reads the track: the batch rule holds a batch's
+    // requests to one (#1159, cadenza-audio #1185).
+    bool reads_track   = false;
 };
 
 bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
@@ -225,8 +233,9 @@ bool ace_synth_request_missing_caption(const AceRequest * req);
 // requests that differ in a setting the batch shares, read from its first
 // request alone: the steps, schedule, solver, models, output and the like,
 // and the region, track and cover knobs where the task reads them, and for
-// a text2music whether it has codes (#1159); any request's region bound
-// that is no number is said as that. A take's own may differ: seed, caption,
+// a text2music whether it has codes (#1159); a region bound that is no
+// number, in any request of a task that reads a region (the table's
+// reads_region), is said as that (kAceRefusalRegionNonfinite). A take's own may differ: seed, caption,
 // lyrics, metas, its codes, synth_batch_size, mp3_bitrate, and the LM's
 // fields; duration is #1162's. run_task asks it first, and the tools before
 // a run, so each says the same refusal.

@@ -955,7 +955,8 @@ POST /synth                     Submit synth generation, returns job ID
         request checked: "unknown task_type", "requests mix tasks: a batch
         runs as its first request's task" (a batch is one task), or
         "caption is required" (a task that needs one sent none, or white
-        space alone), "a region bound is not a finite number", "requests
+        space alone), "a region bound is not a finite number" (a task that
+        reads a region: a repaint or a lego), "requests
         differ in <field>: a batch runs as its first request's" (a setting
         the batch shares; see the batch above), "requests mix codes and
         none: a batch runs as its first request's" or "audio_codes holds no

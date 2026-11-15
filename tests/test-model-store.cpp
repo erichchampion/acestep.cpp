@@ -1053,30 +1053,45 @@ static int scenario_task_table() {
 
     struct Want {
         const char * task;
-        bool         needs_source, needs_caption, cover_knobs, reads_region;
+        bool         needs_source, needs_caption, cover_knobs, reads_region, reads_track;
     };
 
     for (const Want & w : {
-             Want{ "text2music",  false, true,  false, false },
-             Want{ "cover",       true,  true,  true,  false },
-             Want{ "cover-nofsq", true,  true,  true,  false },
-             Want{ "repaint",     true,  true,  false, true  },
-             Want{ "lego",        true,  false, false, true  },
-             Want{ "extract",     true,  false, false, false },
-             Want{ "complete",    true,  false, false, false }
+             Want{ "text2music",  false, true,  false, false, false },
+             Want{ "cover",       true,  true,  true,  false, false },
+             Want{ "cover-nofsq", true,  true,  true,  false, false },
+             Want{ "repaint",     true,  true,  false, true,  false },
+             Want{ "lego",        true,  false, false, true,  true  },
+             Want{ "extract",     true,  false, false, false, true  },
+             Want{ "complete",    true,  false, false, false, true  }
     }) {
-        AceSynthTaskInfo info{ !w.needs_source, !w.needs_caption, !w.cover_knobs, !w.reads_region };
+        AceSynthTaskInfo info{ !w.needs_source, !w.needs_caption, !w.cover_knobs, !w.reads_region, !w.reads_track };
         if (!ace_synth_task_info(w.task, &info)) {
             fprintf(stderr, "[Test] FAIL: the task table does not know %s\n", w.task);
             rc = 1;
         } else if (info.needs_source != w.needs_source || info.needs_caption != w.needs_caption ||
-                   info.cover_knobs != w.cover_knobs || info.reads_region != w.reads_region) {
-            fprintf(
-                stderr,
-                "[Test] FAIL: %s needs_source %d needs_caption %d cover_knobs %d reads_region %d, want %d %d %d %d\n",
-                w.task, info.needs_source, info.needs_caption, info.cover_knobs, info.reads_region, w.needs_source,
-                w.needs_caption, w.cover_knobs, w.reads_region);
+                   info.cover_knobs != w.cover_knobs || info.reads_region != w.reads_region ||
+                   info.reads_track != w.reads_track) {
+            fprintf(stderr,
+                    "[Test] FAIL: %s needs_source %d needs_caption %d cover_knobs %d reads_region %d reads_track %d, "
+                    "want %d %d %d %d %d\n",
+                    w.task, info.needs_source, info.needs_caption, info.cover_knobs, info.reads_region,
+                    info.reads_track, w.needs_source, w.needs_caption, w.cover_knobs, w.reads_region, w.reads_track);
             rc = 1;
+        }
+        // A tripwire for the one region check (#1150, #1185): a task whose run
+        // can splice its source back over a region reads that region, so the
+        // batch rule refuses its bound that is no number before any pad.
+        {
+            AceRequest r;
+            request_init(&r);
+            r.task_type        = w.task;
+            r.repainting_start = 10.0f;
+            r.repainting_end   = 20.0f;
+            if (ace_synth_request_splices_source(&r) && !info.reads_region) {
+                fprintf(stderr, "[Test] FAIL: %s splices a region but does not read one\n", w.task);
+                rc = 1;
+            }
         }
         // What a tool reads to skip decoding a source the task drops
         // (cadenza-audio #1157): the table's no-source tasks alone.
@@ -1106,8 +1121,8 @@ static int scenario_task_table() {
             r.repainting_end   = re;
             AceSynthBatchRefusal why{ -2, nullptr };
             const bool           refused = ace_synth_batch_refused(&r, 1, &why);
-            const bool           said    = refused && why.request == 0 && why.reason &&
-                                           std::string_view(why.reason) == "a region bound is not a finite number";
+            const bool           said =
+                refused && why.request == 0 && why.reason && std::string_view(why.reason) == kAceRefusalRegionNonfinite;
             if (refused != w.reads_region || (w.reads_region && !said)) {
                 fprintf(stderr, "[Test] FAIL: a %s of region %g..%g: refused %d (%s), want %d\n", w.task, rs, re,
                         refused, refused && why.reason ? why.reason : "no reason", w.reads_region);
@@ -1119,9 +1134,9 @@ static int scenario_task_table() {
     // the caller's info left as it was; nor does it ignore a source, so a
     // tool decodes it and the run refuses the task by name.
     for (const char * task : { "covers", "", (const char *) nullptr }) {
-        AceSynthTaskInfo info{ true, false, true, true };
+        AceSynthTaskInfo info{ true, false, true, true, true };
         if (ace_synth_task_info(task, &info) || !info.needs_source || info.needs_caption || !info.cover_knobs ||
-            !info.reads_region) {
+            !info.reads_region || !info.reads_track) {
             fprintf(stderr, "[Test] FAIL: the task table knows '%s', or wrote to the info of a task it does not\n",
                     task ? task : "(null)");
             rc = 1;
@@ -2062,19 +2077,19 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         const float inf = std::numeric_limits<float>::infinity();
         for (const char * task : { "repaint", "lego" }) {
             for (const Bounds & b : {
-                     Bounds{ std::nanf(""), 1.0f,          "a NaN start"       },
-                     Bounds{ 0.5f,          std::nanf(""), "a NaN end"         },
-                     Bounds{ 0.5f,          inf,           "an infinite end"   },
-                     Bounds{ 0.5f,          -inf,          "a -inf end"        },
-                     Bounds{ -inf,          1.0f,          "an infinite start" },
-                     Bounds{ inf,           1.0f,          "a +inf start"      }
+                     Bounds{ std::nanf(""), 1.0f,          "a NaN start"  },
+                     Bounds{ 0.5f,          std::nanf(""), "a NaN end"    },
+                     Bounds{ 0.5f,          inf,           "a +inf end"   },
+                     Bounds{ 0.5f,          -inf,          "a -inf end"   },
+                     Bounds{ -inf,          1.0f,          "a -inf start" },
+                     Bounds{ inf,           1.0f,          "a +inf start" }
             }) {
                 AceSynthEncodes bad_bound;
                 const int       before = ace_test_batch_refusals();
                 if (!run(task, source.data(), NULL, bad_bound, true, 0, nullptr, b.rs, b.re) ||
                     ace_test_batch_refusals() != before + 1 || !bad_bound.src_latents.empty() ||
                     last_refusal.request != 0 || !last_refusal.reason ||
-                    strcmp(last_refusal.reason, "a region bound is not a finite number")) {
+                    strcmp(last_refusal.reason, kAceRefusalRegionNonfinite)) {
                     fprintf(stderr, "[Test] FAIL: the %s with %s was not refused before its encode\n", task, b.said);
                     rc = 1;
                 }

@@ -777,6 +777,7 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
         info->needs_caption = entry->needs_caption;
         info->cover_knobs   = entry->cover_knobs;
         info->reads_region  = entry->reads_region;
+        info->reads_track   = entry->reads_track;
     }
     return true;
 }
@@ -920,7 +921,7 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
     // its own) and the synth would read as none.
     for (int i = 0; i < batch_n; i++) {
         if (task.reads_region && !(std::isfinite(reqs[i].repainting_start) && std::isfinite(reqs[i].repainting_end))) {
-            return refuse(i, "a region bound is not a finite number");
+            return refuse(i, kAceRefusalRegionNonfinite);
         }
         if (!task.needs_source && !reqs[i].audio_codes.empty() && !ops_codes_given(reqs[i].audio_codes)) {
             return refuse(i, "audio_codes holds no code");
