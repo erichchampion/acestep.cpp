@@ -825,9 +825,13 @@ static void synth_worker(std::shared_ptr<Job>    job,
     const float *                   src_lat_ptr = src_latents.empty() ? nullptr : src_latents.data();
     const float *                   ref_lat_ptr = ref_latents.empty() ? nullptr : ref_latents.data();
     std::vector<std::vector<float>> captured_latents;
+    AceSynthBatchRefusal            refused;
     const int rc = synth_batch_run(ctx, groups, src_interleaved, src_len, src_lat_ptr, src_T_latent, ref_interleaved,
                                    ref_len, ref_lat_ptr, ref_T_latent, audio.data(), &captured_latents,
-                                   AceProgress{ server_progress, (void *) &job->cancel });
+                                   AceProgress{ server_progress, (void *) &job->cancel }, &refused);
+    if (rc != 0 && refused.reason) {
+        fprintf(stderr, "[Server] job %s: the engine refused the batch: %s\n", job->id.c_str(), refused.reason);
+    }
     ace_synth_free(ctx);
     free(src_interleaved);
     free(ref_interleaved);
@@ -1057,6 +1061,20 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         if (ace_synth_batch_refused(ace_reqs.data(), run, &why)) {
             const std::string which = why.request >= 0 ? "Request " + std::to_string(why.request) + ": " : "";
             json_error(res, 400, (which + why.reason).c_str());
+            return;
+        }
+    }
+    // A task that works from a source, sent none -- a plain JSON body, or a
+    // multipart with neither part: a 400 with the reason now, as the run would
+    // refuse it, not a job that fails saying nothing (cadenza-audio #1160).
+    {
+        AceSynthTaskInfo info;
+        if (ace_synth_task_info(ace_reqs[0].task_type.c_str(), &info) && info.needs_source && !src_interleaved &&
+            src_latents.empty()) {
+            free(ref_interleaved);
+            const std::string why = "task '" + ace_reqs[0].task_type +
+                                    "' requires source audio or latents (part \"audio\" or \"src_latents\")";
+            json_error(res, 400, why.c_str());
             return;
         }
     }

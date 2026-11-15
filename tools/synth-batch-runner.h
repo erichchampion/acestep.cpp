@@ -30,6 +30,9 @@
 // latents_out: optional capture of one post-DiT latent per generated track,
 //   indexed identically to audio_out. Each entry is [T_track * 64] f32 time-major,
 //   T_track = entry.size() / 64. Pass NULL to skip the capture.
+// refused: when non-NULL, why the engine refused a group's run before its job,
+//   as ace_synth_job_run_dit says it (cadenza-audio #1160); left unset by any
+//   other failure.
 // Returns 0 on success, -1 on any error or cancellation.
 static int synth_batch_run(AceSynth *                             ctx,
                            std::vector<std::vector<AceRequest>> & groups,
@@ -43,7 +46,8 @@ static int synth_batch_run(AceSynth *                             ctx,
                            int                                    ref_T_latent,
                            AceAudio *                             audio_out,
                            std::vector<std::vector<float>> *      latents_out = nullptr,
-                           AceProgress                            progress    = {}) {
+                           AceProgress                            progress    = {},
+                           AceSynthBatchRefusal *                 refused     = nullptr) {
     const int                  n_groups = (int) groups.size();
     std::vector<AceSynthJob *> jobs(n_groups, nullptr);
     std::vector<int>           audio_off(n_groups, 0);
@@ -58,7 +62,7 @@ static int synth_batch_run(AceSynth *                             ctx,
     for (int g = 0; g < n_groups; g++) {
         const int gn = (int) groups[g].size();
         jobs[g] = ace_synth_job_run_dit(ctx, groups[g].data(), src_audio, src_len, src_latents, src_T_latent, ref_audio,
-                                        ref_len, ref_latents, ref_T_latent, gn, progress);
+                                        ref_len, ref_latents, ref_T_latent, gn, progress, nullptr, refused);
         if (!jobs[g]) {
             for (int j = 0; j < g; j++) {
                 ace_synth_job_free(jobs[j]);

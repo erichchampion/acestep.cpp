@@ -122,6 +122,13 @@ add_test(NAME test-synth-cover-keeps-source
                  --src-audio /nonexistent/source.wav --models /nonexistent)
 set_tests_properties(test-synth-cover-keeps-source PROPERTIES
     PASS_REGULAR_EXPRESSION "cannot scan --models" FAIL_REGULAR_EXPRESSION "ignores the given source")
+# And refuses a task that works from a source given none, before any model
+# loads, as the run would (cadenza-audio #1160): a cover with no --src-audio
+# stops there, not at the missing --models.
+add_test(NAME test-synth-needs-source
+         COMMAND ace-synth --request ${CMAKE_CURRENT_SOURCE_DIR}/request-cover.json --models /nonexistent)
+set_tests_properties(test-synth-needs-source PROPERTIES
+    PASS_REGULAR_EXPRESSION "task 'cover' requires --src-audio" FAIL_REGULAR_EXPRESSION "cannot scan --models")
 set(ACESTEP_TEST_MODELS "" CACHE PATH "Directory of GGUFs for the tests that read them (empty: not run)")
 if(ACESTEP_TEST_MODELS)
     add_test(NAME test-audio-layout COMMAND test-audio-layout --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)

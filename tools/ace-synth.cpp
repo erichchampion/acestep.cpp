@@ -154,6 +154,15 @@ static int synth_main(int argc, char ** argv) {
                 reqs[0].task_type.c_str());
         src_audio_path = NULL;
     }
+    // A task that works from a source, given none: refused now, before any
+    // model loads, as the run would refuse it (cadenza-audio #1160).
+    {
+        AceSynthTaskInfo info;
+        if (!src_audio_path && ace_synth_task_info(reqs[0].task_type.c_str(), &info) && info.needs_source) {
+            fprintf(stderr, "[Ace-Synth] FATAL: task '%s' requires --src-audio\n", reqs[0].task_type.c_str());
+            return 1;
+        }
+    }
 
     // Scan the registry and resolve model paths from the first request.
     ModelRegistry registry;
@@ -312,10 +321,15 @@ static int synth_main(int argc, char ** argv) {
     // The CLI does not expose latent IO yet: source and reference are always
     // audio, latent capture is disabled. The server reuses this runner with
     // the full feature.
+    AceSynthBatchRefusal refused;
     const int rc = synth_batch_run(ctx, groups, src_interleaved, src_len, NULL, 0, ref_interleaved, ref_len, NULL, 0,
-                                   all_audio.data());
+                                   all_audio.data(), nullptr, {}, &refused);
     if (rc != 0) {
-        fprintf(stderr, "[Ace-Synth] ERROR: batch run failed\n");
+        if (refused.reason) {
+            fprintf(stderr, "[Ace-Synth] ERROR: the engine refused the batch: %s\n", refused.reason);
+        } else {
+            fprintf(stderr, "[Ace-Synth] ERROR: batch run failed\n");
+        }
         for (auto & a : all_audio) {
             ace_audio_free(&a);
         }
