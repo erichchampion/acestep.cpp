@@ -179,6 +179,15 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
 // False for a task the engine does not know, which its run refuses.
 bool ace_synth_task_ignores_source(const char * task);
 
+// Whether a run of `task` with these region bounds splices its source back
+// over the decode after it ends -- a repaint, or a lego whose bounds ask a
+// region (lego_asks_region) -- so the decode's tiles are not what the take
+// plays, and a tool cannot stream them (cadenza-audio #1156). The flags
+// run_repaint and run_lego set, by the same rule. False for any other task,
+// one the engine does not know (or NULL), and a bound that is no finite
+// number, which the batch rule refuses.
+bool ace_synth_task_splices_source(const char * task, float repainting_start, float repainting_end);
+
 // Whether a request (non-NULL) is short of the caption its task needs: by
 // the table (a caption of white space alone being none), and for a task the
 // engine does not know, as if it needed one. ace_synth_batch_refused asks it

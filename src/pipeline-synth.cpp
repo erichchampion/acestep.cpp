@@ -782,6 +782,19 @@ bool ace_synth_task_ignores_source(const char * task) {
     return ace_synth_task_info(task, &info) && !info.needs_source;
 }
 
+bool ace_synth_task_splices_source(const char * task, float repainting_start, float repainting_end) {
+    const SynthTask * entry = task ? find_synth_task(task) : nullptr;
+    if (!entry || !std::isfinite(repainting_start) || !std::isfinite(repainting_end)) {
+        return false;
+    }
+    // run_repaint's is_repaint, and run_lego's is_lego_region: what
+    // splices_source_after_decode reads of the run.
+    if (entry->run == run_repaint) {
+        return true;
+    }
+    return entry->run == run_lego && lego_asks_region(repainting_start, repainting_end);
+}
+
 bool ace_synth_request_missing_caption(const AceRequest * req) {
     if (request_caption_given(req->caption)) {
         return false;

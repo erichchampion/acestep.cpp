@@ -931,6 +931,38 @@ static int scenario_splice_rule() {
                         c.want ? "no" : "a", c.want ? "one" : "none");
                 rc = 1;
             }
+            // What a tool reads to tell a spliced take (cadenza-audio #1156):
+            // a lego by its region, a repaint always, any other task never.
+            for (const char * task : { "lego", "repaint", "cover", "text2music", "extract", "complete" }) {
+                const bool lego   = !strcmp(task, "lego");
+                const bool want   = lego ? c.want : !strcmp(task, "repaint");
+                const bool splice = ace_synth_task_splices_source(task, c.rs, c.re);
+                if (splice != want) {
+                    fprintf(stderr, "[Test] FAIL: a %s from %.4fs to %.1fs splices its source %d, want %d\n", task,
+                            c.rs, c.re, splice, want);
+                    rc = 1;
+                }
+            }
+        }
+        // Nor a task the engine does not know, nor a bound that is no finite
+        // number -- the batch rule refuses either run.
+        const float inf = std::numeric_limits<float>::infinity();
+        for (const auto & [task, rs, re] : {
+                 std::tuple{ "remix",   10.0f,         20.0f         },
+                 std::tuple{ "",        10.0f,         20.0f         },
+                 std::tuple{ "repaint", std::nanf(""), 20.0f         },
+                 std::tuple{ "repaint", 10.0f,         inf           },
+                 std::tuple{ "lego",    10.0f,         std::nanf("") },
+                 std::tuple{ "lego",    -inf,          -1.0f         }
+        }) {
+            if (ace_synth_task_splices_source(task, rs, re)) {
+                fprintf(stderr, "[Test] FAIL: a '%s' from %g s to %g s splices its source\n", task, rs, re);
+                rc = 1;
+            }
+        }
+        if (ace_synth_task_splices_source(nullptr, 10.0f, 20.0f)) {
+            fprintf(stderr, "[Test] FAIL: a NULL task splices its source\n");
+            rc = 1;
         }
     }
     // A region on frame starts gets those frames -- every start to 1440 s
