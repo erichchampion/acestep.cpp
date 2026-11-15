@@ -1591,6 +1591,7 @@ static int scenario_task_table() {
                  Row{ "text2music",  false },
                  Row{ "cover",       true  },
                  Row{ "cover-nofsq", true  },
+                 Row{ "repaint",     false },
                  Row{ "lego",        false },
                  Row{ "extract",     false },
                  Row{ "complete",    false }
@@ -1619,6 +1620,8 @@ static int scenario_task_table() {
             }
             AceRequest req = st.rr;
             req.seed       = 1;
+            // ops_encode_text's decision, which the silence op reads (#1187).
+            st.need_enc_switch = cover_switches_context(st);
             ops_build_context_silence(&fake, 1, st);
             ops_init_noise(&fake, &req, 1, st);
             const bool switched = cover_switches_context(st) && st.cover_steps >= 0 && !st.context_silence.empty();

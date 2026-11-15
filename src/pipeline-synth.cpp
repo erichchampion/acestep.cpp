@@ -1037,14 +1037,16 @@ static AceSynthJob * run_task(AceSynth *             ctx,
     JobOwner     job_owner(ctx, alloc_job(ctx, reqs, batch_n));
     SynthState & s = job_owner.get()->state;
     // What the ops that read the cover knobs ask (cadenza-audio #1154): the
-    // rewrite below is what the run says and records of them.
+    // one mechanism. A task that does not read them keeps them as asked in
+    // s.rr, never read; the record says what the run made of them (#1187).
     s.cover_knobs  = entry->cover_knobs;
     // The cover knobs' defaults, which both rules below run a knob at.
     AceRequest   def;
     request_init(&def);
     // The cover knobs are a cover's alone: every other task runs at their
-    // defaults, said when a task with a source -- one they would have
-    // reached -- was asked otherwise; text2music never read them (#1135).
+    // defaults -- the ops' gates on s.cover_knobs see to it -- said when a
+    // task with a source, one they would have reached, was asked otherwise;
+    // text2music never read them (#1135, #1187).
     if (!entry->cover_knobs) {
         if (entry->needs_source && (s.rr.audio_cover_strength != def.audio_cover_strength ||
                                     s.rr.cover_noise_strength != def.cover_noise_strength)) {
@@ -1054,8 +1056,6 @@ static AceSynthJob * run_task(AceSynth *             ctx,
                     task.c_str(), def.audio_cover_strength, def.cover_noise_strength, s.rr.audio_cover_strength,
                     s.rr.cover_noise_strength);
         }
-        s.rr.audio_cover_strength = def.audio_cover_strength;
-        s.rr.cover_noise_strength = def.cover_noise_strength;
     } else {
         // A cover's knobs are fractions: one out of [0, 1] -- an infinity
         // too -- is clamped to it, and a NaN, which no clamp can place, runs
@@ -1079,15 +1079,19 @@ static AceSynthJob * run_task(AceSynth *             ctx,
     }
 
     // What the run made of the request, written however it ends -- a throw
-    // included -- while the job's state still stands (destroyed before it).
+    // included -- while the job's state still stands (destroyed before it):
+    // the knobs it ran at, the defaults for a task that does not read them.
     struct CoverRecord {
         const SynthState & s;
+        const AceRequest & def;
 
         ~CoverRecord() {
-            set_test_last_cover({ s.rr.audio_cover_strength, s.rr.cover_noise_strength, s.need_enc_switch,
+            const bool read = s.cover_knobs;
+            set_test_last_cover({ read ? s.rr.audio_cover_strength : def.audio_cover_strength,
+                                  read ? s.rr.cover_noise_strength : def.cover_noise_strength, s.need_enc_switch,
                                   s.cover_steps, s.num_steps });
         }
-    } record{ s };
+    } record{ s, def };
 
     const int rc = entry->run(ctx, reqs, in, batch_n, s, progress);
     return rc == 0 ? job_owner.release() : NULL;

@@ -836,10 +836,11 @@ void ops_build_context_silence(const AceSynth * ctx, int batch_n, SynthState & s
     // Cover mode: build silence s.context for audio_cover_strength switching
     // When step >= s.cover_steps, DiT switches from cover s.context to silence s.context
     // Repaint/lego_region: mask handles region; s.context switch never applies.
-    // A cover's alone, by the task table, not by a rewrite of s.rr upstream
-    // (cover_switches_context, cadenza-audio #1154).
+    // A cover's alone, by the task table (cover_switches_context, #1154):
+    // the decision ops_encode_text made and encoded the text a second time
+    // for, read here so the two cannot disagree (#1187).
     s.cover_steps = -1;
-    if (cover_switches_context(s)) {
+    if (s.need_enc_switch) {
         float cover_strength = s.rr.audio_cover_strength;
         // Build silence s.context: all frames use silence_latent
         std::vector<float> silence_single(s.T * s.ctx_ch);
@@ -935,7 +936,7 @@ void ops_init_noise(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
     debug_dump_2d(&s.dbg, "context", s.context.data(), s.T, s.ctx_ch);
 
     fprintf(stderr, "[Init-Noise] Starting: T=%d, S=%d, enc_S=%d, steps=%d, batch=%d%s\n", s.T, s.S, s.enc_S,
-            s.num_steps, batch_n, s.use_source_context ? " (cover)" : "");
+            s.num_steps, batch_n, s.cover_knobs ? " (cover)" : "");
 }
 
 int ops_dit_generate(const AceSynth * ctx, int batch_n, SynthState & s, AceProgress progress) {

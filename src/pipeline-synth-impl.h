@@ -215,7 +215,7 @@ inline bool splices_source_after_decode(const SynthState & s) {
 // ops_encode_text's need_enc_switch and ops_build_context_silence
 // (cadenza-audio #1154).
 inline bool cover_switches_context(const SynthState & s) {
-    return s.cover_knobs && s.use_source_context && !splices_source_after_decode(s) && s.rr.audio_cover_strength < 1.0f;
+    return s.cover_knobs && !splices_source_after_decode(s) && s.rr.audio_cover_strength < 1.0f;
 }
 
 // Whether the run starts from its source's latents blended into the noise,
@@ -223,7 +223,7 @@ inline bool cover_switches_context(const SynthState & s) {
 // encoded and a strength past 0 -- ops_init_noise's rule (cadenza-audio
 // #1154).
 inline bool cover_blends_noise(const SynthState & s) {
-    return s.cover_knobs && s.use_source_context && s.have_cover && s.rr.cover_noise_strength > 0.0f;
+    return s.cover_knobs && s.have_cover && s.rr.cover_noise_strength > 0.0f;
 }
 
 // Whether a lego's bounds ask for a region, read as a repaint reads them
