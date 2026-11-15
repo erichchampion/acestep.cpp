@@ -54,6 +54,14 @@ void ace_synth_default_params(AceSynthParams * p);
 // modules are acquired per op, never owned by the context. NULL on failure.
 AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 
+// Why a batch is refused before any run, or a run before its job: the
+// request it is refused for (-1: the batch as a whole), and the reason, a
+// static string a tool can answer with (cadenza-audio #1123, #1160).
+struct AceSynthBatchRefusal {
+    int          request = -1;
+    const char * reason  = nullptr;
+};
+
 // Phase 1: encode sources, build context, run all DiT denoising steps.
 // Modules are acquired as needed: VAE encoder for source and timbre, FSQ
 // tokenizer and detokenizer for cover-mode roundtrip, text encoder + cond
@@ -97,7 +105,6 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 //   call that was not refused: one that ran, failed further in, or was
 //   cancelled.
 // Returns NULL on error or cancellation.
-struct AceSynthBatchRefusal;
 AceSynthJob * ace_synth_job_run_dit(AceSynth *             ctx,
                                     const AceRequest *     reqs,
                                     const float *          src_audio,
@@ -203,13 +210,6 @@ bool ace_synth_request_splices_source(const AceRequest * req);
 // engine does not know, as if it needed one. ace_synth_batch_refused asks it
 // of every request (#1094, #1123).
 bool ace_synth_request_missing_caption(const AceRequest * req);
-
-// Why a batch is refused before any run: the request it is refused for, and
-// the reason, a static string a tool can answer with (cadenza-audio #1123).
-struct AceSynthBatchRefusal {
-    int          request = -1;
-    const char * reason  = nullptr;
-};
 
 // Whether a batch of batch_n requests (reqs non-NULL) is one the engine
 // refuses up front, by the task table: a task it does not know, requests that
