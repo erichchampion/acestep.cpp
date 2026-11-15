@@ -605,9 +605,10 @@ static int run_repaint(AceSynth *          ctx,
                        int                 batch_n,
                        SynthState &        s,
                        AceProgress         progress) {
-    // True: the query's rule for a repaint, whose bounds run_task's batch
-    // rule has held finite (#1156).
-    s.is_repaint         = ace_synth_request_splices_source(&reqs[0]);
+    // A repaint always splices its source back: what
+    // ace_synth_request_splices_source says of one whose bounds the batch
+    // rule let run (#1156), held true here whatever reaches this.
+    s.is_repaint         = true;
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_REPAINT;
 
@@ -641,11 +642,10 @@ static int run_lego(AceSynth *          ctx,
                     int                 batch_n,
                     SynthState &        s,
                     AceProgress         progress) {
-    // A bound that is no number was refused by run_task's batch rule, not
-    // read as a region or none: lego_asks_region has no right answer for one
-    // (#1144, #1150).
-    // The query a tool reads to tell a spliced take, so the two cannot
-    // drift (cadenza-audio #1156).
+    // Whether the lego asks a region: the query a tool reads to tell a
+    // spliced take, so the two cannot drift (cadenza-audio #1156). A bound
+    // that is no number was refused by run_task's batch rule, not read as a
+    // region or none (#1144, #1150).
     s.is_lego_region = ace_synth_request_splices_source(&reqs[0]);
     // An end of its own at or before the start asks no region a lego can
     // run -- a repaint refuses it -- so the lego runs the whole song, said.
