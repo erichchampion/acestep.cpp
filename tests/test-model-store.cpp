@@ -1591,7 +1591,6 @@ static int scenario_task_table() {
                  Row{ "text2music",  false },
                  Row{ "cover",       true  },
                  Row{ "cover-nofsq", true  },
-                 Row{ "repaint",     false },
                  Row{ "lego",        false },
                  Row{ "extract",     false },
                  Row{ "complete",    false }
@@ -1609,7 +1608,6 @@ static int scenario_task_table() {
             st.use_source_context = true;
             st.have_cover         = true;
             st.cover_knobs        = info.cover_knobs;
-            st.is_repaint         = !strcmp(w.task, "repaint");  // as run_repaint sets it
             request_init(&st.rr);
             st.rr.task_type            = w.task;
             st.rr.audio_cover_strength = 0.5f;
@@ -1621,8 +1619,6 @@ static int scenario_task_table() {
             }
             AceRequest req = st.rr;
             req.seed       = 1;
-            // ops_encode_text's decision, which the silence op reads (#1187).
-            st.need_enc_switch = cover_switches_context(st);
             ops_build_context_silence(&fake, 1, st);
             ops_init_noise(&fake, &req, 1, st);
             const bool switched = cover_switches_context(st) && st.cover_steps >= 0 && !st.context_silence.empty();

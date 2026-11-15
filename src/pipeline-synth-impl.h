@@ -174,8 +174,8 @@ struct SynthState {
     std::vector<int>                per_enc_S;
     std::vector<std::vector<float>> per_enc_nc;
     std::vector<int>                per_enc_S_nc;
-    // ops_encode_text's decision (cover_switches_context), which
-    // ops_build_context_silence reads, so the two cannot disagree (#1187).
+    // ops_encode_text's decision (cover_switches_context); false until it
+    // runs, so a run that fails before the encode records no switch (#1187).
     bool                            need_enc_switch = false;
 
     // stacked encoder hidden states
@@ -212,10 +212,10 @@ inline bool splices_source_after_decode(const SynthState & s) {
 // Whether the run switches its context to silence at audio_cover_strength's
 // step, and so encodes the text a second time for the steps after the switch:
 // a cover's, by the task table (s.cover_knobs, not use_source_context, which
-// other tasks set too), with a strength below 1, and no source spliced back
-// after the decode -- a region's mask holds its context. The one rule for
-// ops_encode_text's need_enc_switch and ops_build_context_silence
-// (cadenza-audio #1154).
+// other tasks set too, and every cover, #1187), with a strength below 1. No
+// cover splices its source back today; the splice term is a guard, as a
+// region's mask would hold its context. The one rule for ops_encode_text's
+// need_enc_switch and ops_build_context_silence (cadenza-audio #1154).
 inline bool cover_switches_context(const SynthState & s) {
     return s.cover_knobs && !splices_source_after_decode(s) && s.rr.audio_cover_strength < 1.0f;
 }

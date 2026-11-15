@@ -836,11 +836,11 @@ void ops_build_context_silence(const AceSynth * ctx, int batch_n, SynthState & s
     // Cover mode: build silence s.context for audio_cover_strength switching
     // When step >= s.cover_steps, DiT switches from cover s.context to silence s.context
     // Repaint/lego_region: mask handles region; s.context switch never applies.
-    // A cover's alone, by the task table (cover_switches_context, #1154):
-    // the decision ops_encode_text made and encoded the text a second time
-    // for, read here so the two cannot disagree (#1187).
+    // A cover's alone, by the task table (cover_switches_context, #1154): the
+    // rule ops_encode_text decided its second encode by, on inputs nothing
+    // between the two changes, so the two cannot disagree (#1187).
     s.cover_steps = -1;
-    if (s.need_enc_switch) {
+    if (cover_switches_context(s)) {
         float cover_strength = s.rr.audio_cover_strength;
         // Build silence s.context: all frames use silence_latent
         std::vector<float> silence_single(s.T * s.ctx_ch);
