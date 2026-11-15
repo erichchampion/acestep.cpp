@@ -126,6 +126,12 @@ struct SynthState {
     float rs;
     float re;
     bool  use_source_context;
+    // Whether the task reads audio_cover_strength and cover_noise_strength
+    // (the task table's cover_knobs, set by run_task): a cover's alone. The
+    // ops that read the knobs ask it, not use_source_context, which a lego,
+    // an extract, a complete and a text2music from codes set too
+    // (cadenza-audio #1135, #1154).
+    bool  cover_knobs = false;
     bool  have_codes;
     int   max_codes_len;
 
@@ -199,6 +205,25 @@ struct SynthState {
 // (#1130). The task sets both flags before it encodes.
 inline bool splices_source_after_decode(const SynthState & s) {
     return s.is_repaint || s.is_lego_region;
+}
+
+// Whether the run switches its context to silence at audio_cover_strength's
+// step, and so encodes the text a second time for the steps after the switch:
+// a cover's, by the task table (s.cover_knobs, not use_source_context, which
+// other tasks set too), with a strength below 1, and no source spliced back
+// after the decode -- a region's mask holds its context. The one rule for
+// ops_encode_text's need_enc_switch and ops_build_context_silence
+// (cadenza-audio #1154).
+inline bool cover_switches_context(const SynthState & s) {
+    return s.cover_knobs && s.use_source_context && !splices_source_after_decode(s) && s.rr.audio_cover_strength < 1.0f;
+}
+
+// Whether the run starts from its source's latents blended into the noise,
+// at cover_noise_strength: a cover's, by the task table, with a source
+// encoded and a strength past 0 -- ops_init_noise's rule (cadenza-audio
+// #1154).
+inline bool cover_blends_noise(const SynthState & s) {
+    return s.cover_knobs && s.use_source_context && s.have_cover && s.rr.cover_noise_strength > 0.0f;
 }
 
 // Whether a lego's bounds ask for a region, read as a repaint reads them

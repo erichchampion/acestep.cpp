@@ -539,7 +539,7 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
         return -1;
     }
 
-    s.need_enc_switch = s.use_source_context && !splices_source_after_decode(s) && s.rr.audio_cover_strength < 1.0f;
+    s.need_enc_switch = cover_switches_context(s);
 
     BPETokenizer * bpe = store_bpe(ctx->store, ctx->params.text_encoder_path, ctx->text_enc_key.file_id);
     if (!bpe) {
@@ -835,31 +835,31 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
 void ops_build_context_silence(const AceSynth * ctx, int batch_n, SynthState & s) {
     // Cover mode: build silence s.context for audio_cover_strength switching
     // When step >= s.cover_steps, DiT switches from cover s.context to silence s.context
-    // Repaint/lego_region: mask handles region; s.context switch never applies
+    // Repaint/lego_region: mask handles region; s.context switch never applies.
+    // A cover's alone, by the task table, not by a rewrite of s.rr upstream
+    // (cover_switches_context, cadenza-audio #1154).
     s.cover_steps = -1;
-    if (s.use_source_context && !splices_source_after_decode(s)) {
+    if (cover_switches_context(s)) {
         float cover_strength = s.rr.audio_cover_strength;
-        if (cover_strength < 1.0f) {
-            // Build silence s.context: all frames use silence_latent
-            std::vector<float> silence_single(s.T * s.ctx_ch);
-            for (int t = 0; t < s.T; t++) {
-                const float * src = ctx->meta->silence_full.data() + t * s.Oc;
-                for (int c = 0; c < s.Oc; c++) {
-                    silence_single[t * s.ctx_ch + c] = src[c];
-                }
-                for (int c = 0; c < s.Oc; c++) {
-                    silence_single[t * s.ctx_ch + s.Oc + c] = 1.0f;
-                }
+        // Build silence s.context: all frames use silence_latent
+        std::vector<float> silence_single(s.T * s.ctx_ch);
+        for (int t = 0; t < s.T; t++) {
+            const float * src = ctx->meta->silence_full.data() + t * s.Oc;
+            for (int c = 0; c < s.Oc; c++) {
+                silence_single[t * s.ctx_ch + c] = src[c];
             }
-            s.context_silence.resize(batch_n * s.T * s.ctx_ch);
-            for (int b = 0; b < batch_n; b++) {
-                memcpy(s.context_silence.data() + b * s.T * s.ctx_ch, silence_single.data(),
-                       s.T * s.ctx_ch * sizeof(float));
+            for (int c = 0; c < s.Oc; c++) {
+                silence_single[t * s.ctx_ch + s.Oc + c] = 1.0f;
             }
-            s.cover_steps = (int) ((float) s.num_steps * cover_strength);
-            fprintf(stderr, "[Context-Silence] audio_cover_strength=%.2f -> switch at step %d/%d\n", cover_strength,
-                    s.cover_steps, s.num_steps);
         }
+        s.context_silence.resize(batch_n * s.T * s.ctx_ch);
+        for (int b = 0; b < batch_n; b++) {
+            memcpy(s.context_silence.data() + b * s.T * s.ctx_ch, silence_single.data(),
+                   s.T * s.ctx_ch * sizeof(float));
+        }
+        s.cover_steps = (int) ((float) s.num_steps * cover_strength);
+        fprintf(stderr, "[Context-Silence] audio_cover_strength=%.2f -> switch at step %d/%d\n", cover_strength,
+                s.cover_steps, s.num_steps);
     }
 }
 
@@ -881,7 +881,8 @@ void ops_init_noise(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
     // the FSQ roundtrip conditions on degraded latents, but noise blending needs
     // the clean VAE latents: clean_src_latents reads them wherever they are (the
     // roundtrip moves them to fsq_clean_latents; without one, cover_latents).
-    if (s.use_source_context && s.have_cover && s.rr.cover_noise_strength > 0.0f) {
+    // A cover's alone, by the task table (cover_blends_noise, #1154).
+    if (cover_blends_noise(s)) {
         const std::vector<float> & blend_src             = clean_src_latents(s);
         float                      effective_noise_level = 1.0f - s.rr.cover_noise_strength;
         // find nearest timestep in s.schedule

@@ -1006,6 +1006,9 @@ static AceSynthJob * run_task(AceSynth *          ctx,
     // frees it, handing out its encodes first (JobOwner).
     JobOwner     job_owner(ctx, alloc_job(ctx, reqs, batch_n));
     SynthState & s = job_owner.get()->state;
+    // What the ops that read the cover knobs ask (cadenza-audio #1154): the
+    // rewrite below is what the run says and records of them.
+    s.cover_knobs  = entry->cover_knobs;
     // The cover knobs' defaults, which both rules below run a knob at.
     AceRequest   def;
     request_init(&def);

@@ -1499,6 +1499,73 @@ static int scenario_task_table() {
             }
         }
     }
+    // The ops that read the cover knobs ask the state's cover_knobs -- the
+    // table's column, which run_task sets -- not use_source_context, which a
+    // lego, an extract, a complete and a text2music from codes set too
+    // (#1154). A state reached without run_task's rewrite of s.rr, its knobs
+    // as asked (strength 0.5, noise 0.5), switches its context to silence and
+    // blends its noise into the source for a cover alone; any other task runs
+    // its every step on the source, from noise alone.
+    {
+        const int T = 4, Oc = 64, ctx_ch = 128, steps = 8;
+        DiTMeta   meta{};
+        meta.silence_full.assign((size_t) T * Oc, 0.25f);
+        AceSynth fake{};
+        fake.meta   = &meta;
+        fake.Oc     = Oc;
+        fake.ctx_ch = ctx_ch;
+
+        struct Row {
+            const char * task;
+            bool         cover_knobs;
+        };
+
+        for (const Row & w : {
+                 Row{ "text2music",  false },
+                 Row{ "cover",       true  },
+                 Row{ "cover-nofsq", true  },
+                 Row{ "lego",        false },
+                 Row{ "extract",     false },
+                 Row{ "complete",    false }
+        }) {
+            AceSynthTaskInfo info;
+            if (!ace_synth_task_info(w.task, &info) || info.cover_knobs != w.cover_knobs) {
+                fprintf(stderr, "[Test] FAIL: the table's %s cover_knobs is not %d\n", w.task, w.cover_knobs);
+                rc = 1;
+            }
+            SynthState st{};
+            st.Oc                 = Oc;
+            st.ctx_ch             = ctx_ch;
+            st.T                  = T;
+            st.T_cover            = T;
+            st.use_source_context = true;
+            st.have_cover         = true;
+            st.cover_knobs        = info.cover_knobs;
+            request_init(&st.rr);
+            st.rr.task_type            = w.task;
+            st.rr.audio_cover_strength = 0.5f;
+            st.rr.cover_noise_strength = 0.5f;
+            st.cover_latents.assign((size_t) T * Oc, 1.0f);
+            st.num_steps = steps;
+            for (int i = 0; i < steps; i++) {
+                st.schedule.push_back(1.0f - (float) i / steps);
+            }
+            AceRequest req = st.rr;
+            req.seed       = 1;
+            ops_build_context_silence(&fake, 1, st);
+            ops_init_noise(&fake, &req, 1, st);
+            const bool switched = cover_switches_context(st) && st.cover_steps >= 0 && !st.context_silence.empty();
+            const bool blended  = cover_blends_noise(st) && st.num_steps < steps;
+            if (switched != w.cover_knobs || blended != w.cover_knobs ||
+                (!w.cover_knobs && (st.cover_steps != -1 || st.num_steps != steps))) {
+                fprintf(stderr,
+                        "[Test] FAIL: a %s asked strength 0.5, noise 0.5 switches %d (step %d) and blends %d (%d of %d "
+                        "steps), want %d\n",
+                        w.task, switched, st.cover_steps, blended, st.num_steps, steps, w.cover_knobs);
+                rc = 1;
+            }
+        }
+    }
     if (rc == 0) {
         fprintf(stderr, "[Test] scenario 13 PASS\n");
     }
