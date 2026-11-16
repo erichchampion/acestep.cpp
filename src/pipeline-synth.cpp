@@ -943,6 +943,33 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
     return false;
 }
 
+bool ace_synth_batch_shared_differs(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why) {
+    if (!reqs || batch_n < 2) {
+        return false;
+    }
+    const SynthTask * task = find_synth_task(reqs[0].task_type);
+    if (!task) {
+        return false;
+    }
+    for (int i = 0; i < batch_n; i++) {
+        if (reqs[i].task_type != reqs[0].task_type ||
+            (task->reads_region &&
+             !(std::isfinite(reqs[i].repainting_start) && std::isfinite(reqs[i].repainting_end)))) {
+            return false;  // the rest of the batch rule's to refuse
+        }
+    }
+    for (int i = 1; i < batch_n; i++) {
+        if (const char * reason = shared_field_differs(reqs[0], reqs[i], *task)) {
+            if (why) {
+                why->request = i;
+                why->reason  = reason;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 int ace_synth_requests_run(const AceRequest * reqs, int batch_n) {
     int takes = 0;
     int run   = 0;

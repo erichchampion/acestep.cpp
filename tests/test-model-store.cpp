@@ -1117,6 +1117,34 @@ static int scenario_task_table() {
             }
         }
     }
+    // The batch rule's shared part alone (#1165): takes that differ in a
+    // setting the batch shares are said so, captioned or not; a batch the
+    // rest of the rule refuses first (mixed tasks) is left to it.
+    {
+        AceRequest a[2];
+        for (AceRequest & r : a) {
+            request_init(&r);
+            r.task_type = "text2music";
+        }
+        AceSynthBatchRefusal why;
+        if (ace_synth_batch_shared_differs(a, 2, &why) || ace_synth_batch_shared_differs(a, 1, &why)) {
+            fprintf(stderr, "[Test] FAIL: two like takes (no caption) differ in a shared setting\n");
+            rc = 1;
+        }
+        a[1].inference_steps = a[0].inference_steps + 1;
+        if (!ace_synth_batch_shared_differs(a, 2, &why) || why.request != 1 || !why.reason ||
+            !strstr(why.reason, "inference_steps")) {
+            fprintf(stderr, "[Test] FAIL: takes of two step counts did not differ (%s)\n",
+                    why.reason ? why.reason : "no reason");
+            rc = 1;
+        }
+        a[1].task_type = "cover";
+        AceSynthBatchRefusal left{ -7, "untouched" };
+        if (ace_synth_batch_shared_differs(a, 2, &left) || left.request != -7) {
+            fprintf(stderr, "[Test] FAIL: a batch of mixed tasks was not left to the rest of the rule\n");
+            rc = 1;
+        }
+    }
     // The region reason's text, as ace-server's 400 and ARCHITECTURE say it:
     // the constant is compared against, so its words are pinned here (#1185).
     if (std::string_view(kAceRefusalRegionNonfinite) != "a region bound is not a finite number") {

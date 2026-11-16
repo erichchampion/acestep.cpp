@@ -249,6 +249,17 @@ bool ace_synth_request_missing_caption(const AceRequest * req);
 // that passes.
 bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why);
 
+// The batch rule's last part alone: whether a batch's requests -- of one known
+// task, their region bounds finite -- differ in a setting the batch shares,
+// read from its first request (the steps, schedule, solver, models, output,
+// and the region, track and cover knobs where the task reads them, and a
+// text2music's codes or none). False for a batch the rest of the rule would
+// refuse first (an unknown or mixed task, a bound that is no number), which
+// it leaves to that rule; a caption is not asked. So a tool that checks the
+// rest itself, and words it its own way, can ask this up front
+// (cadenza-audio #1165). `why`, when given, says which and why.
+bool ace_synth_batch_shared_differs(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why);
+
 // How many of a batch's requests (reqs non-NULL) the tools run: each expands
 // to its synth_batch_size takes (1..9), and the batch is clamped to the DiT's
 // 9, so the requests past the 9th take never run. The tools ask the batch
