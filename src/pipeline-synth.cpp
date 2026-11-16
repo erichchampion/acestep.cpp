@@ -607,9 +607,10 @@ static int run_repaint(AceSynth *          ctx,
                        int                 batch_n,
                        SynthState &        s,
                        AceProgress         progress) {
-    // A repaint always splices its source back: what
-    // ace_synth_request_splices_source says of one whose bounds the batch
-    // rule let run (#1156), held true here whatever reaches this.
+    // A repaint always splices its source back: its table row's
+    // SynthSplice::always, which ace_synth_request_splices_source says of
+    // one whose bounds the batch rule let run and the table scenario pins
+    // (#1156, #1190), held true here whatever reaches this.
     s.is_repaint         = true;
     s.use_source_context = true;
     s.instruction_str    = DIT_INSTR_REPAINT;
@@ -754,8 +755,10 @@ struct SynthTask {
     bool         reads_track;
     // Whether, and when, a run of the task splices its source back over its
     // decode after the decode ends -- what ace_synth_request_splices_source
-    // reads, and run_repaint and run_lego set their flags from (cadenza-audio
-    // #1156, #1190). A splice is of the region, so only a task that reads one
+    // reads and run_lego sets its flag from; run_repaint always splices, as
+    // its row says (cadenza-audio #1156, #1190). The batch rule reads
+    // asked_region to let takes that ask no region differ in their unset
+    // bounds. A splice is of the region, so only a task that reads one
     // splices: the table test holds every row to that.
     SynthSplice  splices;
 };
@@ -868,10 +871,12 @@ static const char * shared_field_differs(const AceRequest & a, const AceRequest 
     if ((read) && !same_setting(a.field, b.field)) {                                 \
         return "requests differ in " #field ": a batch runs as its first request's"; \
     }
-    const bool lego          = task.name == std::string_view(TASK_LEGO);
-    // Both requests' bounds are finite here: the caller refused any that is
-    // not before comparing.
-    const bool region_unread = lego && !lego_asks_region(a.repainting_start, a.repainting_end) &&
+    // A task whose bounds splice only when they ask a region (the table's
+    // asked_region, a lego's) reads none when neither asks one (#1190). Both
+    // requests' bounds are finite here: the caller refused any that is not
+    // before comparing.
+    const bool asked         = task.splices == SynthSplice::asked_region;
+    const bool region_unread = asked && !lego_asks_region(a.repainting_start, a.repainting_end) &&
                                !lego_asks_region(b.repainting_start, b.repainting_end);
     ACE_SHARED(repainting_start, task.reads_region && !region_unread)
     ACE_SHARED(repainting_end, task.reads_region && !region_unread)
