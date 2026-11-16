@@ -975,6 +975,20 @@ static int scenario_splice_rule() {
             fprintf(stderr, "[Test] FAIL: a NULL request splices its source\n");
             rc = 1;
         }
+        // The empty name the app sends, parsed as a run parses it: the
+        // parser keeps its text2music default, which never splices -- the
+        // "" above is a request no parse produces (cadenza-audio #1190).
+        {
+            AceRequest r;
+            if (!request_parse_json(&r, R"({"task_type":"","repainting_start":10,"repainting_end":20})")) {
+                fprintf(stderr, "[Test] FAIL: an empty task's request does not parse\n");
+                rc = 1;
+            } else if (r.task_type != "text2music" || ace_synth_request_splices_source(&r)) {
+                fprintf(stderr, "[Test] FAIL: an empty task parses as '%s' and splices %d\n", r.task_type.c_str(),
+                        ace_synth_request_splices_source(&r));
+                rc = 1;
+            }
+        }
     }
     // A region on frame starts gets those frames -- every start to 1440 s
     // its own frame, none a frame early, as 2991 once were (#1129).
@@ -1053,31 +1067,33 @@ static int scenario_task_table() {
 
     struct Want {
         const char * task;
-        bool         needs_source, needs_caption, cover_knobs, reads_region, reads_track;
+        bool         needs_source, needs_caption, cover_knobs, reads_region, reads_track, splices;
     };
 
     const Want wants[] = {
-        Want{ "text2music",  false, true,  false, false, false },
-        Want{ "cover",       true,  true,  true,  false, false },
-        Want{ "cover-nofsq", true,  true,  true,  false, false },
-        Want{ "repaint",     true,  true,  false, true,  false },
-        Want{ "lego",        true,  false, false, true,  true  },
-        Want{ "extract",     true,  false, false, false, true  },
-        Want{ "complete",    true,  false, false, false, true  }
+        Want{ "text2music",  false, true,  false, false, false, false },
+        Want{ "cover",       true,  true,  true,  false, false, false },
+        Want{ "cover-nofsq", true,  true,  true,  false, false, false },
+        Want{ "repaint",     true,  true,  false, true,  false, true  },
+        Want{ "lego",        true,  false, false, true,  true,  true  },
+        Want{ "extract",     true,  false, false, false, true,  false },
+        Want{ "complete",    true,  false, false, false, true,  false }
     };
     for (const Want & w : wants) {
-        AceSynthTaskInfo info{ !w.needs_source, !w.needs_caption, !w.cover_knobs, !w.reads_region, !w.reads_track };
+        AceSynthTaskInfo info{ !w.needs_source, !w.needs_caption, !w.cover_knobs,
+                               !w.reads_region, !w.reads_track,   !w.splices };
         if (!ace_synth_task_info(w.task, &info)) {
             fprintf(stderr, "[Test] FAIL: the task table does not know %s\n", w.task);
             rc = 1;
         } else if (info.needs_source != w.needs_source || info.needs_caption != w.needs_caption ||
                    info.cover_knobs != w.cover_knobs || info.reads_region != w.reads_region ||
-                   info.reads_track != w.reads_track) {
+                   info.reads_track != w.reads_track || info.splices != w.splices) {
             fprintf(stderr,
-                    "[Test] FAIL: %s needs_source %d needs_caption %d cover_knobs %d reads_region %d reads_track %d, "
-                    "want %d %d %d %d %d\n",
+                    "[Test] FAIL: %s needs_source %d needs_caption %d cover_knobs %d reads_region %d reads_track %d "
+                    "splices %d, want %d %d %d %d %d %d\n",
                     w.task, info.needs_source, info.needs_caption, info.cover_knobs, info.reads_region,
-                    info.reads_track, w.needs_source, w.needs_caption, w.cover_knobs, w.reads_region, w.reads_track);
+                    info.reads_track, info.splices, w.needs_source, w.needs_caption, w.cover_knobs, w.reads_region,
+                    w.reads_track, w.splices);
             rc = 1;
         }
         // What a tool reads to skip decoding a source the task drops
@@ -1168,6 +1184,14 @@ static int scenario_task_table() {
     {
         int tasks = 0;
         for (const char * task; (task = ace_synth_task_name(tasks)) != nullptr; tasks++) {
+            // A splice is of the region: a task that splices and reads no
+            // region would splice bounds the batch rule never checked
+            // (cadenza-audio #1190).
+            AceSynthTaskInfo info;
+            if (ace_synth_task_info(task, &info) && info.splices && !info.reads_region) {
+                fprintf(stderr, "[Test] FAIL: the table's %s splices its source and reads no region\n", task);
+                rc = 1;
+            }
             bool row = false;
             for (const Want & w : wants) {
                 row = row || !strcmp(w.task, task);
@@ -1187,9 +1211,9 @@ static int scenario_task_table() {
     // the caller's info left as it was; nor does it ignore a source, so a
     // tool decodes it and the run refuses the task by name.
     for (const char * task : { "covers", "", (const char *) nullptr }) {
-        AceSynthTaskInfo info{ true, false, true, true, true };
+        AceSynthTaskInfo info{ true, false, true, true, true, true };
         if (ace_synth_task_info(task, &info) || !info.needs_source || info.needs_caption || !info.cover_knobs ||
-            !info.reads_region || !info.reads_track) {
+            !info.reads_region || !info.reads_track || !info.splices) {
             fprintf(stderr, "[Test] FAIL: the task table knows '%s', or wrote to the info of a task it does not\n",
                     task ? task : "(null)");
             rc = 1;

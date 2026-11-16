@@ -731,6 +731,11 @@ static int run_complete(AceSynth *          ctx,
 // says so (cadenza-audio #1095). needs_caption: a task told what to make by
 // its caption, not by its track (lego, extract, complete) -- the rule the
 // tools hold a request to, read through ace_synth_task_info (#1094).
+// A task's splice: never; always (a repaint, whose bounds are its region,
+// the whole song among them); or when its bounds ask a region
+// (lego_asks_region: a lego, whose defaults ask the whole song, no region).
+enum class SynthSplice { never, always, asked_region };
+
 using SynthTaskFn = int (*)(AceSynth *, const AceRequest *, const SynthInputs &, int, SynthState &, AceProgress);
 
 struct SynthTask {
@@ -747,16 +752,22 @@ struct SynthTask {
     // track: a batch's requests must agree in those it reads (#1159).
     bool         reads_region;
     bool         reads_track;
+    // Whether, and when, a run of the task splices its source back over its
+    // decode after the decode ends -- what ace_synth_request_splices_source
+    // reads, and run_repaint and run_lego set their flags from (cadenza-audio
+    // #1156, #1190). A splice is of the region, so only a task that reads one
+    // splices: the table test holds every row to that.
+    SynthSplice  splices;
 };
 
 static const SynthTask kSynthTasks[] = {
-    { TASK_TEXT2MUSIC,  run_text2music,  false, true,  false, false, false },
-    { TASK_COVER,       run_cover,       true,  true,  true,  false, false },
-    { TASK_COVER_NOFSQ, run_cover_nofsq, true,  true,  true,  false, false },
-    { TASK_REPAINT,     run_repaint,     true,  true,  false, true,  false },
-    { TASK_LEGO,        run_lego,        true,  false, false, true,  true  },
-    { TASK_EXTRACT,     run_extract,     true,  false, false, false, true  },
-    { TASK_COMPLETE,    run_complete,    true,  false, false, false, true  },
+    { TASK_TEXT2MUSIC,  run_text2music,  false, true,  false, false, false, SynthSplice::never        },
+    { TASK_COVER,       run_cover,       true,  true,  true,  false, false, SynthSplice::never        },
+    { TASK_COVER_NOFSQ, run_cover_nofsq, true,  true,  true,  false, false, SynthSplice::never        },
+    { TASK_REPAINT,     run_repaint,     true,  true,  false, true,  false, SynthSplice::always       },
+    { TASK_LEGO,        run_lego,        true,  false, false, true,  true,  SynthSplice::asked_region },
+    { TASK_EXTRACT,     run_extract,     true,  false, false, false, true,  SynthSplice::never        },
+    { TASK_COMPLETE,    run_complete,    true,  false, false, false, true,  SynthSplice::never        },
 };
 
 // The table's row for a task, by name; NULL for one it does not hold.
@@ -780,6 +791,7 @@ bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
         info->cover_knobs   = entry->cover_knobs;
         info->reads_region  = entry->reads_region;
         info->reads_track   = entry->reads_track;
+        info->splices       = entry->splices != SynthSplice::never;
     }
     return true;
 }
@@ -815,10 +827,15 @@ bool ace_synth_request_splices_source(const AceRequest * req) {
     }
     // run_repaint's is_repaint, and run_lego's is_lego_region, which both
     // set from this: what splices_source_after_decode reads of the run.
-    if (entry->run == run_repaint) {
-        return true;
+    switch (entry->splices) {
+        case SynthSplice::never:
+            return false;
+        case SynthSplice::always:
+            return true;
+        case SynthSplice::asked_region:
+            return lego_asks_region(req->repainting_start, req->repainting_end);
     }
-    return entry->run == run_lego && lego_asks_region(req->repainting_start, req->repainting_end);
+    return false;
 }
 
 bool ace_synth_request_missing_caption(const AceRequest * req) {

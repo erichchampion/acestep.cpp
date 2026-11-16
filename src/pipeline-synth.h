@@ -208,6 +208,11 @@ struct AceSynthTaskInfo {
     // Whether the task reads the track: the batch rule holds a batch's
     // requests to one (#1159, cadenza-audio #1185).
     bool reads_track   = false;
+    // Whether a run of the task can splice its source back over its decode
+    // after the decode ends: a repaint always, a lego when its bounds ask a
+    // region (ace_synth_request_splices_source says of a request). Only a
+    // task that reads a region splices one (cadenza-audio #1190).
+    bool splices       = false;
 };
 
 bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info);
