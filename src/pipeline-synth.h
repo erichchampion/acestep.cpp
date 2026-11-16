@@ -116,7 +116,7 @@ struct AceSynthBatchRefusal {
 //   was made -- its arguments (request -1), the batch rule
 //   (ace_synth_batch_refused: the request and its reason), or a task that
 //   works from a source given none (request -1) -- or partway through the
-//   run, for the request itself (request -1, the kAceRefusal* reasons below:
+//   run, for the request itself (request -1, the kAceRefusal* reasons above:
 //   its region, its length), which may come after the source's and the
 //   text's encodes. So a caller can answer an invalid request as that, not
 //   as the pipeline failing (cadenza-audio #1160, #1193). Left {-1, NULL} by
