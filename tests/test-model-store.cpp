@@ -1138,6 +1138,17 @@ static int scenario_task_table() {
                     why.reason ? why.reason : "no reason");
             rc = 1;
         }
+        // Codes that hold no code are the rest of the rule's to refuse, not
+        // a mix of codes and none.
+        a[1].inference_steps = a[0].inference_steps;
+        a[0].audio_codes     = "  ";
+        AceSynthBatchRefusal blank{ -7, "untouched" };
+        if (ace_synth_batch_shared_differs(a, 2, &blank) || blank.request != -7) {
+            fprintf(stderr, "[Test] FAIL: codes holding no code were said as a mix (%s)\n",
+                    blank.reason ? blank.reason : "no reason");
+            rc = 1;
+        }
+        a[0].audio_codes.clear();
         a[1].task_type = "cover";
         AceSynthBatchRefusal left{ -7, "untouched" };
         if (ace_synth_batch_shared_differs(a, 2, &left) || left.request != -7) {

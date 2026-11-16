@@ -952,10 +952,14 @@ bool ace_synth_batch_shared_differs(const AceRequest * reqs, int batch_n, AceSyn
         return false;
     }
     for (int i = 0; i < batch_n; i++) {
+        // The rest of the batch rule's to refuse: mixed tasks, a bound that
+        // is no number, a text2music's codes that hold no code --
+        // shared_field_differs reads codes given as codes held.
         if (reqs[i].task_type != reqs[0].task_type ||
             (task->reads_region &&
-             !(std::isfinite(reqs[i].repainting_start) && std::isfinite(reqs[i].repainting_end)))) {
-            return false;  // the rest of the batch rule's to refuse
+             !(std::isfinite(reqs[i].repainting_start) && std::isfinite(reqs[i].repainting_end))) ||
+            (!task->needs_source && !reqs[i].audio_codes.empty() && !ops_codes_given(reqs[i].audio_codes))) {
+            return false;
         }
     }
     for (int i = 1; i < batch_n; i++) {
