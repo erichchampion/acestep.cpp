@@ -1898,7 +1898,8 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             AceSynthEncodes empty;
             const int       before = ace_test_region_empty();
             if (!run(c.task, source.data(), NULL, empty, true, 0, nullptr, c.rs, c.re) ||
-                ace_test_region_empty() != before + 1 || !empty.src_latents.empty()) {
+                ace_test_region_empty() != before + 1 || !empty.src_latents.empty() || !last_refusal.reason ||
+                !strstr(last_refusal.reason, "ends at or before its start")) {
                 fprintf(stderr, "[Test] FAIL: the %s from %.1f s to %.1f s was not refused before its encode\n", c.task,
                         c.rs, c.re);
                 rc = 1;
@@ -2090,7 +2091,8 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 AceSynthEncodes too_long;
                 const int       before = ace_test_source_too_long();
                 if (!run(c.task, NULL, NULL, too_long, c.region, 0, &long_latents) ||
-                    ace_test_source_too_long() != before + 1 || !too_long.src_latents.empty()) {
+                    ace_test_source_too_long() != before + 1 || !too_long.src_latents.empty() || !last_refusal.reason ||
+                    !strstr(last_refusal.reason, "past a run's most frames")) {
                     fprintf(stderr,
                             "[Test] FAIL: the %s%s from latents of %d frames was not refused before its encode\n",
                             c.task, c.region ? " region" : "", ACE_MAX_LATENT_FRAMES + 1);

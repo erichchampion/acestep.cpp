@@ -218,11 +218,12 @@ int ace_test_region_empty() {
 // True, said and counted, for a region that ends at or before its start: the
 // one rule apply_outpainting_padding asks before the pad and the encode, and
 // adjust_region_coords after the pad's shift (#1134).
-static bool refuse_empty_region(float end, float start) {
+static bool refuse_empty_region(SynthState & s, float end, float start) {
     if (end > start) {
         return false;
     }
     g_test_region_empty.fetch_add(1);
+    s.refusal = "the region ends at or before its start";
     fprintf(stderr, "[Region] ERROR: end (%.1f) <= start (%.1f)\n", end, start);
     return true;
 }
@@ -238,11 +239,12 @@ int ace_test_source_too_long() {
 
 // True, said and counted, for a run of more frames than a run's most: the one
 // refusal the outpaint's pads and every task's source share (#1139, #1144).
-static bool refuse_past_run_most(long long frames, const char * what) {
+static bool refuse_past_run_most(SynthState & s, long long frames, const char * what) {
     if (!frames_past_run_most(frames)) {
         return false;
     }
     g_test_source_too_long.fetch_add(1);
+    s.refusal = "the source, with its pads if any, is past a run's most frames";
     fprintf(stderr, "[Synth-Run] ERROR: %s, %lld frames, is past a run's most, %d\n", what, frames,
             ACE_MAX_LATENT_FRAMES);
     return true;
@@ -281,15 +283,15 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
     // start at or past the source's end with the -1 end, which reads as the
     // source's end -- is refused here, before its pad or its source's encode,
     // as adjust_region_coords would refuse it after (#1134).
-    if (refuse_empty_region(end_time, rs_raw)) {
+    if (refuse_empty_region(s, end_time, rs_raw)) {
         return false;
     }
     float lpad     = (rs_raw < 0.0f) ? -rs_raw : 0.0f;
     float rpad     = (end_time > src_dur) ? end_time - src_dur : 0.0f;
     s.left_pad_sec = lpad;
     // The padded frames, in 64 bits, against the run's most.
-    auto too_long = [](int64_t frames) {
-        return refuse_past_run_most(frames, "the source with its pads");
+    auto too_long  = [&s](int64_t frames) {
+        return refuse_past_run_most(s, frames, "the source with its pads");
     };
 
     if (src.has_latents()) {
@@ -387,7 +389,7 @@ static bool adjust_region_coords(SynthState & s, float src_dur) {
     // as frame 0 and repaint from the start, unsaid (#1129).
     s.rs += s.left_pad_sec;
     s.re = asked_region_end(s.rr.repainting_start, s.re, src_dur) + s.left_pad_sec;
-    if (refuse_empty_region(s.re, s.rs)) {
+    if (refuse_empty_region(s, s.re, s.rs)) {
         return false;
     }
     fprintf(stderr, "[Region] %.1fs..%.1fs (canvas=%.1fs)\n", s.rs, s.re, latent_frames_sec(s.T_cover));
@@ -472,7 +474,7 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
     // rounded up to the DiT's patch, as ops_resolve_T rounds T, so the two
     // bounds agree for any patch_size, not only one that divides the most.
     const long long patch            = ctx->meta->cfg.patch_size > 0 ? ctx->meta->cfg.patch_size : 1;
-    if (refuse_past_run_most((src.frames() + patch - 1) / patch * patch, "the source")) {
+    if (refuse_past_run_most(s, (src.frames() + patch - 1) / patch * patch, "the source")) {
         return false;
     }
     bool        need_vae_pin     = (have_src_audio || have_ref_audio);
@@ -1130,6 +1132,11 @@ static AceSynthJob * run_task(AceSynth *             ctx,
     } record{ s };
 
     const int rc = entry->run(ctx, reqs, in, batch_n, s, progress);
+    // A request the run refused partway -- its region, its length -- is
+    // handed out as a refusal, as one refused before the job is (#1193).
+    if (rc != 0 && s.refusal) {
+        refused = { -1, s.refusal };
+    }
     return rc == 0 ? job_owner.release() : NULL;
 }
 

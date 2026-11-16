@@ -178,6 +178,11 @@ struct SynthState {
     // runs, so a run that fails before the encode records no switch (#1187).
     bool                            need_enc_switch = false;
 
+    // Why the run refused its request partway, before its job ran: a static
+    // reason run_task hands out through ace_synth_job_run_dit's `refused`
+    // (cadenza-audio #1193). NULL for a run that failed otherwise.
+    const char * refusal = nullptr;
+
     // stacked encoder hidden states
     int                max_enc_S;
     std::vector<float> enc_hidden;
