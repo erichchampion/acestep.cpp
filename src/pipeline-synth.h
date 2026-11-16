@@ -241,9 +241,9 @@ bool ace_synth_inputs_refused(const char * task, bool has_source, AceSynthBatchR
 // what the take plays, and a tool cannot stream them (cadenza-audio #1156).
 // It reads the task table's splices column: run_lego sets its flag from it,
 // and run_repaint, whose row says always, always splices -- so the run and a
-// tool read one rule (cadenza-audio #1190). False for any other task, one the engine does not know, a
-// NULL request, and a bound that is no finite number, which the batch rule
-// refuses.
+// tool read one rule (cadenza-audio #1190). False for any other task, one the
+// engine does not know, a NULL request, and a bound that is no finite number,
+// which the batch rule refuses.
 bool ace_synth_request_splices_source(const AceRequest * req);
 
 // Whether a request (non-NULL) is short of the caption its task needs: by
