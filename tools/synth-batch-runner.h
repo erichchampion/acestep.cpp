@@ -30,10 +30,10 @@
 // latents_out: optional capture of one post-DiT latent per generated track,
 //   indexed identically to audio_out. Each entry is [T_track * 64] f32 time-major,
 //   T_track = entry.size() / 64. Pass NULL to skip the capture.
-// refused: when non-NULL, why the engine refused a group's run before its job,
-//   as ace_synth_job_run_dit says it (cadenza-audio #1160), its request
-//   counted across every group, as audio_out is; left unset by any other
-//   failure.
+// refused: when non-NULL, why the engine refused a group's run -- before its
+//   job or partway, as ace_synth_job_run_dit says it (cadenza-audio #1160,
+//   #1193) -- its request counted across every group, as audio_out is; left
+//   unset by any other failure.
 // Returns 0 on success, -1 on any error or cancellation.
 static int synth_batch_run(AceSynth *                             ctx,
                            std::vector<std::vector<AceRequest>> & groups,

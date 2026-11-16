@@ -1781,6 +1781,27 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 last_refusal.reason ? last_refusal.reason : "no reason");
         rc = 1;
     }
+    // A text2music asked a duration past a run's most frames is refused
+    // partway -- by ops_resolve_T, before its text encode -- with the run's
+    // length reason, not as the pipeline failing (#1193).
+    {
+        AceRequest r;
+        request_init(&r);
+        r.caption   = "a short test";
+        r.duration  = latent_frames_sec(ACE_MAX_LATENT_FRAMES) + 60.0f;
+        r.seed      = 1;
+        r.task_type = "text2music";
+        AceSynthBatchRefusal why;
+        AceSynthJob * job = ace_synth_job_run_dit(synth, &r, NULL, 0, NULL, 0, NULL, 0, NULL, 0, 1, {}, nullptr, &why);
+        if (job || why.request != -1 || !why.reason || strcmp(why.reason, kAceRefusalLengthTooLong)) {
+            fprintf(stderr, "[Test] FAIL: a text2music of %.0f s was not refused for its length (%s)\n", r.duration,
+                    why.reason ? why.reason : "no reason");
+            rc = 1;
+        }
+        if (job) {
+            ace_synth_job_free(job);
+        }
+    }
     // Nor a call of no request: refused for its arguments, said as that.
     {
         AceRequest           r;
@@ -1899,7 +1920,7 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             const int       before = ace_test_region_empty();
             if (!run(c.task, source.data(), NULL, empty, true, 0, nullptr, c.rs, c.re) ||
                 ace_test_region_empty() != before + 1 || !empty.src_latents.empty() || !last_refusal.reason ||
-                !strstr(last_refusal.reason, "ends at or before its start")) {
+                strcmp(last_refusal.reason, kAceRefusalRegionEmpty)) {
                 fprintf(stderr, "[Test] FAIL: the %s from %.1f s to %.1f s was not refused before its encode\n", c.task,
                         c.rs, c.re);
                 rc = 1;
@@ -2092,7 +2113,7 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                 const int       before = ace_test_source_too_long();
                 if (!run(c.task, NULL, NULL, too_long, c.region, 0, &long_latents) ||
                     ace_test_source_too_long() != before + 1 || !too_long.src_latents.empty() || !last_refusal.reason ||
-                    !strstr(last_refusal.reason, "past a run's most frames")) {
+                    strcmp(last_refusal.reason, kAceRefusalSourceTooLong)) {
                     fprintf(stderr,
                             "[Test] FAIL: the %s%s from latents of %d frames was not refused before its encode\n",
                             c.task, c.region ? " region" : "", ACE_MAX_LATENT_FRAMES + 1);

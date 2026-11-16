@@ -9,6 +9,7 @@
 #include "dit-sampler.h"
 #include "philox.h"
 #include "pipeline-synth-impl.h"
+#include "pipeline-synth.h"
 #include "task-types.h"
 #include "vae-enc.h"
 
@@ -392,7 +393,7 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s) {
     if (frames_past_run_most(s.T)) {
         fprintf(stderr, "[Resolve-T] ERROR: T=%d exceeds silence_latent max %d, skipping\n", s.T,
                 ACE_MAX_LATENT_FRAMES);
-        s.refusal = "the duration is past a run's most frames";
+        s.refusal = kAceRefusalLengthTooLong;
         return -1;
     }
 
@@ -719,7 +720,7 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
         // (#1129): refused, as adjust_region_coords refuses an empty one.
         if (s.repaint_t1 <= s.repaint_t0) {
             fprintf(stderr, "[Build-Context] ERROR: the region %.3fs..%.3fs covers no latent frame\n", s.rs, s.re);
-            s.refusal = "the region covers no latent frame";
+            s.refusal = kAceRefusalRegionNoFrame;
             return -1;
         }
     }

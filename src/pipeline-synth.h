@@ -58,6 +58,17 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 // test can compare against (cadenza-audio #1185).
 inline constexpr const char * kAceRefusalRegionNonfinite = "a region bound is not a finite number";
 
+// The reasons a run refuses its request partway, handed out through
+// ace_synth_job_run_dit's `refused` (cadenza-audio #1193).
+inline constexpr const char * kAceRefusalRegionEmpty   = "the region ends at or before its start";
+inline constexpr const char * kAceRefusalRegionNoFrame = "the region covers no latent frame";
+inline constexpr const char * kAceRefusalSourceTooLong =
+    "the source, with its pads if any, is past a run's most frames";
+// The run's length -- its duration, its audio codes or its source, whichever
+// sets it -- past a run's most frames.
+inline constexpr const char * kAceRefusalLengthTooLong =
+    "the run's length (its duration, codes or source) is past a run's most frames";
+
 // Why a batch is refused before any run, or a run before its job: the
 // request it is refused for (-1: the batch as a whole), and the reason, a
 // static string a tool can answer with (cadenza-audio #1123, #1160).
@@ -101,13 +112,16 @@ struct AceSynthBatchRefusal {
 //   again after the encode, so latents would not make the same takes. NULL:
 //   none are kept. The synth keeps nothing of them past the call
 //   (cadenza-audio #975).
-// refused: when non-NULL, why the call was refused before its job was made
-//   -- its arguments (request -1), the batch rule (ace_synth_batch_refused:
-//   the request and its reason), or a task that works from a source given
-//   none (request -1) -- so a caller can answer an invalid request as that,
-//   not as the pipeline failing (cadenza-audio #1160). Left {-1, NULL} by a
-//   call that was not refused: one that ran, failed further in, or was
-//   cancelled.
+// refused: when non-NULL, why the call refused its request: before its job
+//   was made -- its arguments (request -1), the batch rule
+//   (ace_synth_batch_refused: the request and its reason), or a task that
+//   works from a source given none (request -1) -- or partway through the
+//   run, for the request itself (request -1, the kAceRefusal* reasons below:
+//   its region, its length), which may come after the source's and the
+//   text's encodes. So a caller can answer an invalid request as that, not
+//   as the pipeline failing (cadenza-audio #1160, #1193). Left {-1, NULL} by
+//   a call that was not refused: one that ran, failed for another reason,
+//   or was cancelled.
 // Returns NULL on error or cancellation.
 AceSynthJob * ace_synth_job_run_dit(AceSynth *             ctx,
                                     const AceRequest *     reqs,

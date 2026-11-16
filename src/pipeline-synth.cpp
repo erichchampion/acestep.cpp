@@ -223,7 +223,7 @@ static bool refuse_empty_region(SynthState & s, float end, float start) {
         return false;
     }
     g_test_region_empty.fetch_add(1);
-    s.refusal = "the region ends at or before its start";
+    s.refusal = kAceRefusalRegionEmpty;
     fprintf(stderr, "[Region] ERROR: end (%.1f) <= start (%.1f)\n", end, start);
     return true;
 }
@@ -244,7 +244,7 @@ static bool refuse_past_run_most(SynthState & s, long long frames, const char * 
         return false;
     }
     g_test_source_too_long.fetch_add(1);
-    s.refusal = "the source, with its pads if any, is past a run's most frames";
+    s.refusal = kAceRefusalSourceTooLong;
     fprintf(stderr, "[Synth-Run] ERROR: %s, %lld frames, is past a run's most, %d\n", what, frames,
             ACE_MAX_LATENT_FRAMES);
     return true;
