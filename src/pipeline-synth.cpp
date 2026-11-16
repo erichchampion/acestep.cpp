@@ -725,17 +725,17 @@ static int run_complete(AceSynth *          ctx,
     return 0;
 }
 
+// A task's splice: never; always (a repaint, whose bounds are its region,
+// the whole song among them); or when its bounds ask a region
+// (lego_asks_region: a lego, whose defaults ask the whole song, no region).
+enum class SynthSplice { never, always, asked_region };
+
 // The tasks, by name: what run_task dispatches on, and the list of the ones
 // it knows (#1057). needs_source: a task that works from a source refuses a
 // run given none; a task that takes none runs without one it is given, and
 // says so (cadenza-audio #1095). needs_caption: a task told what to make by
 // its caption, not by its track (lego, extract, complete) -- the rule the
 // tools hold a request to, read through ace_synth_task_info (#1094).
-// A task's splice: never; always (a repaint, whose bounds are its region,
-// the whole song among them); or when its bounds ask a region
-// (lego_asks_region: a lego, whose defaults ask the whole song, no region).
-enum class SynthSplice { never, always, asked_region };
-
 using SynthTaskFn = int (*)(AceSynth *, const AceRequest *, const SynthInputs &, int, SynthState &, AceProgress);
 
 struct SynthTask {
