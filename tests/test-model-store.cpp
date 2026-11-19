@@ -1133,42 +1133,21 @@ static int scenario_task_table() {
             }
         }
     }
-    // The batch rule's shared part alone (#1165): takes that differ in a
-    // setting the batch shares are said so, captioned or not; a batch the
-    // rest of the rule refuses first (mixed tasks) is left to it.
+    // Codes that hold no code are a request's own fault, said as that, not
+    // as a mix of codes and none (#1165).
     {
         AceRequest a[2];
         for (AceRequest & r : a) {
             request_init(&r);
             r.task_type = "text2music";
+            r.caption   = "lofi";
         }
-        AceSynthBatchRefusal why;
-        if (ace_synth_batch_shared_differs(a, 2, &why) || ace_synth_batch_shared_differs(a, 1, &why)) {
-            fprintf(stderr, "[Test] FAIL: two like takes (no caption) differ in a shared setting\n");
-            rc = 1;
-        }
-        a[1].inference_steps = a[0].inference_steps + 1;
-        if (!ace_synth_batch_shared_differs(a, 2, &why) || why.request != 1 || !why.reason ||
-            !strstr(why.reason, "inference_steps")) {
-            fprintf(stderr, "[Test] FAIL: takes of two step counts did not differ (%s)\n",
-                    why.reason ? why.reason : "no reason");
-            rc = 1;
-        }
-        // Codes that hold no code are the rest of the rule's to refuse, not
-        // a mix of codes and none.
-        a[1].inference_steps = a[0].inference_steps;
-        a[0].audio_codes     = "  ";
-        AceSynthBatchRefusal blank{ -7, "untouched" };
-        if (ace_synth_batch_shared_differs(a, 2, &blank) || blank.request != -7) {
-            fprintf(stderr, "[Test] FAIL: codes holding no code were said as a mix (%s)\n",
+        a[0].audio_codes = "  ";
+        AceSynthBatchRefusal blank;
+        if (!ace_synth_batch_refused(a, 2, &blank) || blank.request != 0 || blank.field ||
+            std::string_view(blank.reason) != "audio_codes holds no code") {
+            fprintf(stderr, "[Test] FAIL: codes holding no code were not said as that (%s)\n",
                     blank.reason ? blank.reason : "no reason");
-            rc = 1;
-        }
-        a[0].audio_codes.clear();
-        a[1].task_type = "cover";
-        AceSynthBatchRefusal left{ -7, "untouched" };
-        if (ace_synth_batch_shared_differs(a, 2, &left) || left.request != -7) {
-            fprintf(stderr, "[Test] FAIL: a batch of mixed tasks was not left to the rest of the rule\n");
             rc = 1;
         }
     }
@@ -1190,16 +1169,11 @@ static int scenario_task_table() {
                     why.field ? why.field : "none");
             rc = 1;
         }
-        AceSynthBatchRefusal shared;
-        if (!ace_synth_batch_shared_differs(a, 2, &shared) || !shared.field ||
-            std::string_view(shared.field) != "inference_steps") {
-            fprintf(stderr, "[Test] FAIL: the shared part did not name the field\n");
-            rc = 1;
-        }
         a[1].inference_steps = a[0].inference_steps;
         a[1].audio_codes     = "1,2";
         AceSynthBatchRefusal mix;
-        if (!ace_synth_batch_refused(a, 2, &mix) || !mix.field || std::string_view(mix.field) != "audio_codes") {
+        if (!ace_synth_batch_refused(a, 2, &mix) || !mix.field || std::string_view(mix.field) != "audio_codes" ||
+            !strstr(mix.reason, "requests differ in audio_codes")) {
             fprintf(stderr, "[Test] FAIL: a mix of codes and none was not named by audio_codes\n");
             rc = 1;
         }
@@ -1218,8 +1192,8 @@ static int scenario_task_table() {
         a[0].caption.clear();
         a[1].caption = "lofi";
         AceSynthBatchRefusal first;
-        if (!ace_synth_batch_refused(a, 2, &first, true) || first.request != 0) {
-            fprintf(stderr, "[Test] FAIL: a planned batch's first caption was not asked\n");
+        if (!ace_synth_batch_refused(a, 2, &first, true) || first.request != -1) {
+            fprintf(stderr, "[Test] FAIL: a planned batch's caption was not refused as the batch's\n");
             rc = 1;
         }
     }
@@ -1632,12 +1606,12 @@ static int scenario_task_table() {
         };
 
         for (const CodesCase & c : std::vector<CodesCase>{
-                 { "1,2,3", "",      1,  "mix codes"     },
-                 { "",      "1,2,3", 1,  "mix codes"     },
-                 { "1,2,3", " , ",   1,  "holds no code" },
-                 { " ",     "",      0,  "holds no code" },
-                 { "abc",   "abc",   0,  "holds no code" },
-                 { "1,2,3", "4,5",   -1, nullptr         },
+                 { "1,2,3", "",      1,  "some giving codes and some none" },
+                 { "",      "1,2,3", 1,  "some giving codes and some none" },
+                 { "1,2,3", " , ",   1,  "holds no code"                   },
+                 { " ",     "",      0,  "holds no code"                   },
+                 { "abc",   "abc",   0,  "holds no code"                   },
+                 { "1,2,3", "4,5",   -1, nullptr                           },
         }) {
             std::vector<AceRequest> b(2);
             for (AceRequest & r : b) {

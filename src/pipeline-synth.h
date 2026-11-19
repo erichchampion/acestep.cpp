@@ -87,7 +87,8 @@ inline int ace_synth_request_takes(int synth_batch_size) {
 // request it is refused for (-1: the batch as a whole), and the reason, a
 // static string a tool can answer with (cadenza-audio #1123, #1160).
 // For a setting the batch shares, `field` is the JSON name of the one that
-// differs -- "audio_codes" for a mix of codes and none -- so a tool can word
+// differs -- "audio_codes" for a mix of codes and none -- the name a reason's
+// "requests differ in <field>" leads with too, so a tool can word
 // it its own way without reading `reason` (cadenza-audio #1165); NULL for
 // any other refusal.
 struct AceSynthBatchRefusal {
@@ -287,19 +288,9 @@ bool ace_synth_request_missing_caption(const AceRequest * req);
 // `why`, when given, says which and why; it is left as it was for a batch
 // that passes. `planned`: the batch is still to be planned, and its later
 // requests take their caption from the plan of its first, so only the
-// first's caption is asked (cadenza-audio #1165, #1240).
+// first's caption is asked, and refused as the batch's (request -1)
+// (cadenza-audio #1165, #1240).
 bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why, bool planned = false);
-
-// The batch rule's last part alone: whether a batch's requests -- of one known
-// task, their region bounds finite -- differ in a setting the batch shares,
-// read from its first request (the steps, schedule, solver, models, output,
-// and the region, track and cover knobs where the task reads them, and a
-// text2music's codes or none). False for a batch the rest of the rule would
-// refuse first (an unknown or mixed task, a bound that is no number), which
-// it leaves to that rule; a caption is not asked. So a tool that checks the
-// rest itself, and words it its own way, can ask this up front
-// (cadenza-audio #1165). `why`, when given, says which and why.
-bool ace_synth_batch_shared_differs(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why);
 
 // How many of a batch's requests (reqs non-NULL) the tools run: each expands
 // to its synth_batch_size takes (1..kAceSynthMaxTakes), and the batch is

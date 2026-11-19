@@ -892,7 +892,8 @@ static const char * shared_field_differs(const AceRequest & a,
     // The caller refused codes that hold no code, so emptiness says it.
     if (!task.needs_source && a.audio_codes.empty() != b.audio_codes.empty()) {
         field = "audio_codes";
-        return "requests mix codes and none: a batch runs as its first request's";
+        return "requests differ in audio_codes, some giving codes and some none: a batch runs as its first "
+               "request's";
     }
     ACE_SHARED(audio_cover_strength, task.cover_knobs)
     ACE_SHARED(cover_noise_strength, task.cover_knobs)
@@ -958,9 +959,10 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
         if (reqs[i].task_type != reqs[0].task_type) {
             return refuse(i, "requests mix tasks: a batch runs as its first request's task");
         }
-        // A planned batch's later requests take theirs from its first's plan.
+        // A planned batch's later requests take theirs from its first's plan,
+        // so its first's caption is the batch's: refused as the batch's.
         if ((i == 0 || !planned) && ace_synth_request_missing_caption(&reqs[i])) {
-            return refuse(i, "caption is required");
+            return refuse(planned ? -1 : i, "caption is required");
         }
     }
     // The engine reads a batch's shared settings from its first request alone
@@ -982,35 +984,6 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
         const char * field = nullptr;
         if (const char * reason = shared_field_differs(reqs[0], reqs[i], task, field)) {
             return refuse(i, reason, field);
-        }
-    }
-    return false;
-}
-
-bool ace_synth_batch_shared_differs(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why) {
-    if (!reqs || batch_n < 2) {
-        return false;
-    }
-    const SynthTask * task = find_synth_task(reqs[0].task_type);
-    if (!task) {
-        return false;
-    }
-    for (int i = 0; i < batch_n; i++) {
-        // The rest of the batch rule's to refuse: mixed tasks, and a
-        // request's own fault.
-        if (reqs[i].task_type != reqs[0].task_type || request_own_fault(reqs[i], *task)) {
-            return false;
-        }
-    }
-    for (int i = 1; i < batch_n; i++) {
-        const char * field = nullptr;
-        if (const char * reason = shared_field_differs(reqs[0], reqs[i], *task, field)) {
-            if (why) {
-                why->request = i;
-                why->reason  = reason;
-                why->field   = field;
-            }
-            return true;
         }
     }
     return false;
