@@ -86,9 +86,14 @@ inline int ace_synth_request_takes(int synth_batch_size) {
 // Why a batch is refused before any run, or a run before its job: the
 // request it is refused for (-1: the batch as a whole), and the reason, a
 // static string a tool can answer with (cadenza-audio #1123, #1160).
+// For a setting the batch shares, `field` is the JSON name of the one that
+// differs -- "audio_codes" for a mix of codes and none -- so a tool can word
+// it its own way without reading `reason` (cadenza-audio #1165); NULL for
+// any other refusal.
 struct AceSynthBatchRefusal {
     int          request = -1;
     const char * reason  = nullptr;
+    const char * field   = nullptr;
 };
 
 // Phase 1: encode sources, build context, run all DiT denoising steps.
@@ -280,8 +285,10 @@ bool ace_synth_request_missing_caption(const AceRequest * req);
 // mp3_bitrate, and the LM's fields; duration is #1162's. run_task asks it
 // first, and the tools before a run, so each says the same refusal.
 // `why`, when given, says which and why; it is left as it was for a batch
-// that passes.
-bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why);
+// that passes. `planned`: the batch is still to be planned, and its later
+// requests take their caption from the plan of its first, so only the
+// first's caption is asked (cadenza-audio #1165, #1240).
+bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why, bool planned = false);
 
 // The batch rule's last part alone: whether a batch's requests -- of one known
 // task, their region bounds finite -- differ in a setting the batch shares,

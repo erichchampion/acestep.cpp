@@ -1172,6 +1172,57 @@ static int scenario_task_table() {
             rc = 1;
         }
     }
+    // The batch rule names the field a shared setting differs in, and none
+    // for any other refusal; a planned batch asks its first's caption alone
+    // (cadenza-audio #1165).
+    {
+        AceRequest a[2];
+        for (AceRequest & r : a) {
+            request_init(&r);
+            r.task_type = "text2music";
+            r.caption   = "lofi";
+        }
+        AceSynthBatchRefusal why;
+        a[1].inference_steps = a[0].inference_steps + 1;
+        if (!ace_synth_batch_refused(a, 2, &why) || why.request != 1 || !why.field ||
+            std::string_view(why.field) != "inference_steps") {
+            fprintf(stderr, "[Test] FAIL: the steps were not named as the field (%s)\n",
+                    why.field ? why.field : "none");
+            rc = 1;
+        }
+        AceSynthBatchRefusal shared;
+        if (!ace_synth_batch_shared_differs(a, 2, &shared) || !shared.field ||
+            std::string_view(shared.field) != "inference_steps") {
+            fprintf(stderr, "[Test] FAIL: the shared part did not name the field\n");
+            rc = 1;
+        }
+        a[1].inference_steps = a[0].inference_steps;
+        a[1].audio_codes     = "1,2";
+        AceSynthBatchRefusal mix;
+        if (!ace_synth_batch_refused(a, 2, &mix) || !mix.field || std::string_view(mix.field) != "audio_codes") {
+            fprintf(stderr, "[Test] FAIL: a mix of codes and none was not named by audio_codes\n");
+            rc = 1;
+        }
+        a[1].audio_codes.clear();
+        a[1].caption.clear();
+        AceSynthBatchRefusal bare{ -7, "untouched", "untouched" };
+        if (!ace_synth_batch_refused(a, 2, &bare) || bare.request != 1 || bare.field ||
+            !strstr(bare.reason, "caption")) {
+            fprintf(stderr, "[Test] FAIL: a later take short of a caption was not refused, fieldless\n");
+            rc = 1;
+        }
+        if (ace_synth_batch_refused(a, 2, nullptr, true)) {
+            fprintf(stderr, "[Test] FAIL: a planned batch's later caption was asked\n");
+            rc = 1;
+        }
+        a[0].caption.clear();
+        a[1].caption = "lofi";
+        AceSynthBatchRefusal first;
+        if (!ace_synth_batch_refused(a, 2, &first, true) || first.request != 0) {
+            fprintf(stderr, "[Test] FAIL: a planned batch's first caption was not asked\n");
+            rc = 1;
+        }
+    }
     // The region reason's text, as ace-server's 400 and ARCHITECTURE say it:
     // the constant is compared against, so its words are pinned here (#1185).
     if (std::string_view(kAceRefusalRegionNonfinite) != "a region bound is not a finite number") {

@@ -866,10 +866,15 @@ template <typename T> static bool same_setting(const T & a, const T & b) {
 // asks no region asks the whole song, whichever unset bounds it sends.
 // duration is not held here: a batch's takes of differing durations is
 // #1162's.
-static const char * shared_field_differs(const AceRequest & a, const AceRequest & b, const SynthTask & task) {
-#define ACE_SHARED(field, read)                                                      \
-    if ((read) && !same_setting(a.field, b.field)) {                                 \
-        return "requests differ in " #field ": a batch runs as its first request's"; \
+// `field` gets the JSON name of the field that differs.
+static const char * shared_field_differs(const AceRequest & a,
+                                         const AceRequest & b,
+                                         const SynthTask &  task,
+                                         const char *&      field) {
+#define ACE_SHARED(name, read)                                                      \
+    if ((read) && !same_setting(a.name, b.name)) {                                  \
+        field = #name;                                                              \
+        return "requests differ in " #name ": a batch runs as its first request's"; \
     }
     // A task whose bounds splice only when they ask a region (the table's
     // asked_region, a lego's) reads none when neither asks one (#1190). Both
@@ -886,6 +891,7 @@ static const char * shared_field_differs(const AceRequest & a, const AceRequest 
     // (run_text2music), so a take with codes and one without cannot share.
     // The caller refused codes that hold no code, so emptiness says it.
     if (!task.needs_source && a.audio_codes.empty() != b.audio_codes.empty()) {
+        field = "audio_codes";
         return "requests mix codes and none: a batch runs as its first request's";
     }
     ACE_SHARED(audio_cover_strength, task.cover_knobs)
@@ -927,11 +933,12 @@ static const char * request_own_fault(const AceRequest & req, const SynthTask & 
     return nullptr;
 }
 
-bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why) {
-    auto refuse = [&](int request, const char * reason) {
+bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why, bool planned) {
+    auto refuse = [&](int request, const char * reason, const char * field = nullptr) {
         if (why) {
             why->request = request;
             why->reason  = reason;
+            why->field   = field;
         }
         return true;
     };
@@ -951,7 +958,8 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
         if (reqs[i].task_type != reqs[0].task_type) {
             return refuse(i, "requests mix tasks: a batch runs as its first request's task");
         }
-        if (ace_synth_request_missing_caption(&reqs[i])) {
+        // A planned batch's later requests take theirs from its first's plan.
+        if ((i == 0 || !planned) && ace_synth_request_missing_caption(&reqs[i])) {
             return refuse(i, "caption is required");
         }
     }
@@ -971,8 +979,9 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
         }
     }
     for (int i = 1; i < batch_n; i++) {
-        if (const char * reason = shared_field_differs(reqs[0], reqs[i], task)) {
-            return refuse(i, reason);
+        const char * field = nullptr;
+        if (const char * reason = shared_field_differs(reqs[0], reqs[i], task, field)) {
+            return refuse(i, reason, field);
         }
     }
     return false;
@@ -994,10 +1003,12 @@ bool ace_synth_batch_shared_differs(const AceRequest * reqs, int batch_n, AceSyn
         }
     }
     for (int i = 1; i < batch_n; i++) {
-        if (const char * reason = shared_field_differs(reqs[0], reqs[i], *task)) {
+        const char * field = nullptr;
+        if (const char * reason = shared_field_differs(reqs[0], reqs[i], *task, field)) {
             if (why) {
                 why->request = i;
                 why->reason  = reason;
+                why->field   = field;
             }
             return true;
         }
