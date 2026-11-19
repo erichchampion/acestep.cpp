@@ -69,6 +69,12 @@ inline constexpr const char * kAceRefusalSourceTooLong =
 inline constexpr const char * kAceRefusalLengthTooLong =
     "the run's length (its duration, codes or source) is past a run's most frames";
 
+// The most takes the DiT runs in one batch: each request's synth_batch_size
+// is clamped to it, and so is a batch's total, so a run takes 1 to this many
+// requests. The tools clamp to it, and cadenza-audio's shim holds its request
+// cap to it (cadenza-audio #1165).
+inline constexpr int kAceSynthMaxTakes = 9;
+
 // Why a batch is refused before any run, or a run before its job: the
 // request it is refused for (-1: the batch as a whole), and the reason, a
 // static string a tool can answer with (cadenza-audio #1123, #1160).
@@ -96,7 +102,7 @@ struct AceSynthBatchRefusal {
 //   upstream's three 10 s segments, one centred in each third (750 latent
 //   frames); what failed_encodes hands back of it is that crop
 //   (cadenza-audio #1147).
-// batch_n: number of requests (1..9).
+// batch_n: number of requests (1..kAceSynthMaxTakes).
 // progress: abort + progress callback. Reports ACE_STAGE_DIT between DiT steps,
 // and ACE_STAGE_VAE_ENCODE while encoding the source and/or timbre reference in
 // Cover-family tasks. Default {} = never cancel, no progress.
@@ -281,8 +287,9 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
 bool ace_synth_batch_shared_differs(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why);
 
 // How many of a batch's requests (reqs non-NULL) the tools run: each expands
-// to its synth_batch_size takes (1..9), and the batch is clamped to the DiT's
-// 9, so the requests past the 9th take never run. The tools ask the batch
+// to its synth_batch_size takes (1..kAceSynthMaxTakes), and the batch is
+// clamped to the DiT's kAceSynthMaxTakes, so the requests past that take
+// never run. The tools ask the batch
 // rule of these alone -- a request that never runs refuses nothing.
 int ace_synth_requests_run(const AceRequest * reqs, int batch_n);
 

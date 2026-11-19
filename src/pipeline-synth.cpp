@@ -911,6 +911,22 @@ static const char * shared_field_differs(const AceRequest & a, const AceRequest 
     return nullptr;
 }
 
+// A request's own fault in a batch of `task`, said as that rather than as a
+// difference: a region bound that is no number, where the task reads a
+// region, and a text2music's codes that hold no code, which the LM reads as
+// codes given (it skips its own) and the synth would read as none -- and
+// shared_field_differs reads as codes held. NULL when it has none. The batch
+// rule and its last part ask it alike (cadenza-audio #1165).
+static const char * request_own_fault(const AceRequest & req, const SynthTask & task) {
+    if (task.reads_region && !(std::isfinite(req.repainting_start) && std::isfinite(req.repainting_end))) {
+        return kAceRefusalRegionNonfinite;
+    }
+    if (!task.needs_source && !req.audio_codes.empty() && !ops_codes_given(req.audio_codes)) {
+        return "audio_codes holds no code";
+    }
+    return nullptr;
+}
+
 bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why) {
     auto refuse = [&](int request, const char * reason) {
         if (why) {
@@ -947,16 +963,11 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
     // synth_batch_size and mp3_bitrate, and the LM's fields synth never reads.
     const SynthTask & task = *find_synth_task(reqs[0].task_type);
     // Each request on its own first, so a fault of one is said as that, not
-    // as a difference: a region bound that is no number -- the first's too,
-    // so a tool answers it as it answers a later one's -- and a text2music's
-    // codes that hold no code, which the LM reads as codes given (it skips
-    // its own) and the synth would read as none.
+    // as a difference -- the first's too, so a tool answers it as it answers
+    // a later one's.
     for (int i = 0; i < batch_n; i++) {
-        if (task.reads_region && !(std::isfinite(reqs[i].repainting_start) && std::isfinite(reqs[i].repainting_end))) {
-            return refuse(i, kAceRefusalRegionNonfinite);
-        }
-        if (!task.needs_source && !reqs[i].audio_codes.empty() && !ops_codes_given(reqs[i].audio_codes)) {
-            return refuse(i, "audio_codes holds no code");
+        if (const char * fault = request_own_fault(reqs[i], task)) {
+            return refuse(i, fault);
         }
     }
     for (int i = 1; i < batch_n; i++) {
@@ -976,13 +987,9 @@ bool ace_synth_batch_shared_differs(const AceRequest * reqs, int batch_n, AceSyn
         return false;
     }
     for (int i = 0; i < batch_n; i++) {
-        // The rest of the batch rule's to refuse: mixed tasks, a bound that
-        // is no number, a text2music's codes that hold no code --
-        // shared_field_differs reads codes given as codes held.
-        if (reqs[i].task_type != reqs[0].task_type ||
-            (task->reads_region &&
-             !(std::isfinite(reqs[i].repainting_start) && std::isfinite(reqs[i].repainting_end))) ||
-            (!task->needs_source && !reqs[i].audio_codes.empty() && !ops_codes_given(reqs[i].audio_codes))) {
+        // The rest of the batch rule's to refuse: mixed tasks, and a
+        // request's own fault.
+        if (reqs[i].task_type != reqs[0].task_type || request_own_fault(reqs[i], *task)) {
             return false;
         }
     }
@@ -1001,9 +1008,9 @@ bool ace_synth_batch_shared_differs(const AceRequest * reqs, int batch_n, AceSyn
 int ace_synth_requests_run(const AceRequest * reqs, int batch_n) {
     int takes = 0;
     int run   = 0;
-    for (int i = 0; i < batch_n && takes < 9; i++) {
+    for (int i = 0; i < batch_n && takes < kAceSynthMaxTakes; i++) {
         const int sbs = reqs[i].synth_batch_size;
-        takes += sbs < 1 ? 1 : (sbs > 9 ? 9 : sbs);
+        takes += sbs < 1 ? 1 : (sbs > kAceSynthMaxTakes ? kAceSynthMaxTakes : sbs);
         run++;
     }
     return run;
@@ -1191,7 +1198,8 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *             ctx,
     // Reset before any refusal, so a call refused here leaves no former
     // run's record (run_task resets it again for its own).
     set_test_last_cover(kCoverRecordUnset);
-    if (!ctx || !reqs || batch_n < 1 || batch_n > 9) {
+    static_assert(kAceSynthMaxTakes == 9, "the refusal below says the cap");
+    if (!ctx || !reqs || batch_n < 1 || batch_n > kAceSynthMaxTakes) {
         why = { -1, "a run takes a synth and 1..9 requests" };
         return NULL;
     }

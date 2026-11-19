@@ -271,15 +271,15 @@ static int synth_main(int argc, char ** argv) {
     }
 
     // Generate every request in one DiT batch. synth_batch_size expands each
-    // request into per-seed variants in groups[0]. Total clamped to DiT max 9.
+    // request into per-seed variants in groups[0]. Total clamped to DiT max kAceSynthMaxTakes.
     int total_alloc = 0;
     for (int ri = 0; ri < batch_n; ri++) {
         int sbs = reqs[ri].synth_batch_size;
-        total_alloc += sbs < 1 ? 1 : (sbs > 9 ? 9 : sbs);
+        total_alloc += sbs < 1 ? 1 : (sbs > kAceSynthMaxTakes ? kAceSynthMaxTakes : sbs);
     }
-    if (total_alloc > 9) {
-        fprintf(stderr, "[Ace-Synth] Batch %d exceeds DiT max 9, clamping\n", total_alloc);
-        total_alloc = 9;
+    if (total_alloc > kAceSynthMaxTakes) {
+        fprintf(stderr, "[Ace-Synth] Batch %d exceeds DiT max %d, clamping\n", total_alloc, kAceSynthMaxTakes);
+        total_alloc = kAceSynthMaxTakes;
     }
     std::vector<AceAudio>                all_audio(total_alloc);
     std::vector<std::string>             all_basenames(total_alloc);
@@ -293,8 +293,8 @@ static int synth_main(int argc, char ** argv) {
         if (sbs < 1) {
             sbs = 1;
         }
-        if (sbs > 9) {
-            sbs = 9;
+        if (sbs > kAceSynthMaxTakes) {
+            sbs = kAceSynthMaxTakes;
         }
         if (off + sbs > total_alloc) {
             sbs = total_alloc - off;
