@@ -69,10 +69,11 @@ inline constexpr const char * kAceRefusalSourceTooLong =
 inline constexpr const char * kAceRefusalLengthTooLong =
     "the run's length (its duration, codes or source) is past a run's most frames";
 
-// The most takes the DiT runs in one batch: each request's synth_batch_size
-// is clamped to it, and so is a batch's total, so a run takes 1 to this many
-// requests. The tools clamp to it, and cadenza-audio's shim holds its request
-// cap to it (cadenza-audio #1165).
+// The most takes the DiT runs in one batch: a run (ace_synth_job_run_dit)
+// takes 1 to this many requests, one take each -- it never reads
+// synth_batch_size. The tools expand each request to its synth_batch_size
+// takes, clamped to this, and clamp a batch's total to it too.
+// cadenza-audio's shim holds its request cap to it (cadenza-audio #1165).
 inline constexpr int kAceSynthMaxTakes = 9;
 
 // The takes a request's synth_batch_size expands to: 1..kAceSynthMaxTakes, a
