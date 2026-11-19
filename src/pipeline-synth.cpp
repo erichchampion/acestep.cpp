@@ -1009,8 +1009,7 @@ int ace_synth_requests_run(const AceRequest * reqs, int batch_n) {
     int takes = 0;
     int run   = 0;
     for (int i = 0; i < batch_n && takes < kAceSynthMaxTakes; i++) {
-        const int sbs = reqs[i].synth_batch_size;
-        takes += sbs < 1 ? 1 : (sbs > kAceSynthMaxTakes ? kAceSynthMaxTakes : sbs);
+        takes += ace_synth_request_takes(reqs[i].synth_batch_size);
         run++;
     }
     return run;

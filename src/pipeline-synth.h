@@ -75,6 +75,13 @@ inline constexpr const char * kAceRefusalLengthTooLong =
 // cap to it (cadenza-audio #1165).
 inline constexpr int kAceSynthMaxTakes = 9;
 
+// The takes a request's synth_batch_size expands to: 1..kAceSynthMaxTakes, a
+// size below 1 being one take. The tools and ace_synth_requests_run count a
+// request's takes by it alone, so they agree on what runs.
+inline int ace_synth_request_takes(int synth_batch_size) {
+    return synth_batch_size < 1 ? 1 : (synth_batch_size > kAceSynthMaxTakes ? kAceSynthMaxTakes : synth_batch_size);
+}
+
 // Why a batch is refused before any run, or a run before its job: the
 // request it is refused for (-1: the batch as a whole), and the reason, a
 // static string a tool can answer with (cadenza-audio #1123, #1160).

@@ -732,8 +732,7 @@ static void synth_worker(std::shared_ptr<Job>    job,
     const int batch_n     = (int) ace_reqs.size();
     int       total_alloc = 0;
     for (int ri = 0; ri < batch_n; ri++) {
-        int sbs = ace_reqs[ri].synth_batch_size;
-        total_alloc += sbs < 1 ? 1 : (sbs > kAceSynthMaxTakes ? kAceSynthMaxTakes : sbs);
+        total_alloc += ace_synth_request_takes(ace_reqs[ri].synth_batch_size);
     }
     if (total_alloc > kAceSynthMaxTakes) {
         fprintf(stderr, "[Server] Batch %d exceeds DiT max %d, clamping\n", total_alloc, kAceSynthMaxTakes);
@@ -816,13 +815,7 @@ static void synth_worker(std::shared_ptr<Job>    job,
     int off = 0;
     for (int ri = 0; ri < batch_n && off < total_alloc; ri++) {
         auto & r   = ace_reqs[ri];
-        int    sbs = r.synth_batch_size;
-        if (sbs < 1) {
-            sbs = 1;
-        }
-        if (sbs > kAceSynthMaxTakes) {
-            sbs = kAceSynthMaxTakes;
-        }
+        int    sbs = ace_synth_request_takes(r.synth_batch_size);
         if (off + sbs > total_alloc) {
             sbs = total_alloc - off;
         }
@@ -935,7 +928,7 @@ static void synth_worker(std::shared_ptr<Job>    job,
 //   one latent part (application/octet-stream, raw f32 [T*64]) per generated
 //   track, paired in wire order. The latent reproduces its track's audio when
 //   fed back to /vae decode.
-// Batch size = number of JSON objects (after synth_batch_size expansion, clamped to 9).
+// Batch size = number of JSON objects (after synth_batch_size expansion, clamped to kAceSynthMaxTakes).
 // Metadata (seed, duration, etc) is already in the request JSON from /lm.
 // A 400 with the engine's reason for a task that works from a source sent
 // none (ace_synth_inputs_refused, #1193): true when it answered one.

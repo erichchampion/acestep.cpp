@@ -274,8 +274,7 @@ static int synth_main(int argc, char ** argv) {
     // request into per-seed variants in groups[0]. Total clamped to DiT max kAceSynthMaxTakes.
     int total_alloc = 0;
     for (int ri = 0; ri < batch_n; ri++) {
-        int sbs = reqs[ri].synth_batch_size;
-        total_alloc += sbs < 1 ? 1 : (sbs > kAceSynthMaxTakes ? kAceSynthMaxTakes : sbs);
+        total_alloc += ace_synth_request_takes(reqs[ri].synth_batch_size);
     }
     if (total_alloc > kAceSynthMaxTakes) {
         fprintf(stderr, "[Ace-Synth] Batch %d exceeds DiT max %d, clamping\n", total_alloc, kAceSynthMaxTakes);
@@ -289,13 +288,7 @@ static int synth_main(int argc, char ** argv) {
 
     int off = 0;
     for (int ri = 0; ri < batch_n && off < total_alloc; ri++) {
-        int sbs = reqs[ri].synth_batch_size;
-        if (sbs < 1) {
-            sbs = 1;
-        }
-        if (sbs > kAceSynthMaxTakes) {
-            sbs = kAceSynthMaxTakes;
-        }
+        int sbs = ace_synth_request_takes(reqs[ri].synth_batch_size);
         if (off + sbs > total_alloc) {
             sbs = total_alloc - off;
         }
