@@ -892,8 +892,8 @@ static const char * shared_field_differs(const AceRequest & a,
     // The caller refused codes that hold no code, so emptiness says it.
     if (!task.needs_source && a.audio_codes.empty() != b.audio_codes.empty()) {
         field = "audio_codes";
-        return "requests differ in audio_codes, some giving codes and some none: a batch runs as its first "
-               "request's";
+        return "requests differ in audio_codes: some give codes and some none, and a batch runs as its "
+               "first request's";
     }
     ACE_SHARED(audio_cover_strength, task.cover_knobs)
     ACE_SHARED(cover_noise_strength, task.cover_knobs)
@@ -923,7 +923,7 @@ static const char * shared_field_differs(const AceRequest & a,
 // region, and a text2music's codes that hold no code, which the LM reads as
 // codes given (it skips its own) and the synth would read as none -- and
 // shared_field_differs reads as codes held. NULL when it has none. The batch
-// rule and its last part ask it alike (cadenza-audio #1165).
+// rule asks it of each request (cadenza-audio #1165).
 static const char * request_own_fault(const AceRequest & req, const SynthTask & task) {
     if (task.reads_region && !(std::isfinite(req.repainting_start) && std::isfinite(req.repainting_end))) {
         return kAceRefusalRegionNonfinite;

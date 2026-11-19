@@ -958,9 +958,10 @@ POST /synth                     Submit synth generation, returns job ID
         space alone), "a region bound is not a finite number" (a task that
         reads a region: a repaint or a lego), "requests
         differ in <field>: a batch runs as its first request's" (a setting
-        the batch shares; see the batch above), "requests mix codes and
-        none: a batch runs as its first request's" or "audio_codes holds no
-        code" (a text2music).
+        the batch shares; see the batch above) -- for a text2music's codes
+        given in some requests and none in others, "requests differ in
+        audio_codes: some give codes and some none, and a batch runs as its
+        first request's" -- or "audio_codes holds no code" (a text2music).
         ace-synth refuses the same before loading a model.
 
 POST /understand                Submit understand, returns job ID

@@ -5,6 +5,8 @@
 #include "task-types.h"
 #include "yyjson.h"
 
+#include <cfloat>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <random>
@@ -129,6 +131,18 @@ static inline std::string yy_str(yyjson_val * v) {
 }
 
 // populate AceRequest fields from a yyjson object (must be pre-initialized)
+// A JSON number as a float field: one past a float's range is an infinity
+// of its sign, said so rather than left to the cast, which C++ leaves
+// undefined there -- the batch rule refuses a region bound that is one, and
+// a knob is clamped (cadenza-audio #1152, #1165).
+static float json_float(yyjson_val * v) {
+    const double d = yyjson_get_num(v);
+    if (std::isfinite(d) && std::fabs(d) > FLT_MAX) {
+        return d > 0 ? INFINITY : -INFINITY;
+    }
+    return (float) d;
+}
+
 static void request_parse_obj(yyjson_val * obj, AceRequest * r) {
     yyjson_val * v;
 
@@ -213,49 +227,49 @@ static void request_parse_obj(yyjson_val * obj, AceRequest * r) {
 
     // floats
     if ((v = yyjson_obj_get(obj, "duration")) && yyjson_is_num(v)) {
-        r->duration = (float) yyjson_get_num(v);
+        r->duration = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "lm_temperature")) && yyjson_is_num(v)) {
-        r->lm_temperature = (float) yyjson_get_num(v);
+        r->lm_temperature = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "lm_cfg_scale")) && yyjson_is_num(v)) {
-        r->lm_cfg_scale = (float) yyjson_get_num(v);
+        r->lm_cfg_scale = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "lm_top_p")) && yyjson_is_num(v)) {
-        r->lm_top_p = (float) yyjson_get_num(v);
+        r->lm_top_p = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "guidance_scale")) && yyjson_is_num(v)) {
-        r->guidance_scale = (float) yyjson_get_num(v);
+        r->guidance_scale = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "shift")) && yyjson_is_num(v)) {
-        r->shift = (float) yyjson_get_num(v);
+        r->shift = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "dcw_scaler")) && yyjson_is_num(v)) {
-        r->dcw_scaler = (float) yyjson_get_num(v);
+        r->dcw_scaler = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "dcw_high_scaler")) && yyjson_is_num(v)) {
-        r->dcw_high_scaler = (float) yyjson_get_num(v);
+        r->dcw_high_scaler = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "dcw_mode")) && yyjson_is_str(v)) {
         r->dcw_mode = yyjson_get_str(v);
     }
     if ((v = yyjson_obj_get(obj, "audio_cover_strength")) && yyjson_is_num(v)) {
-        r->audio_cover_strength = (float) yyjson_get_num(v);
+        r->audio_cover_strength = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "cover_noise_strength")) && yyjson_is_num(v)) {
-        r->cover_noise_strength = (float) yyjson_get_num(v);
+        r->cover_noise_strength = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "repainting_start")) && yyjson_is_num(v)) {
-        r->repainting_start = (float) yyjson_get_num(v);
+        r->repainting_start = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "repainting_end")) && yyjson_is_num(v)) {
-        r->repainting_end = (float) yyjson_get_num(v);
+        r->repainting_end = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "latent_shift")) && yyjson_is_num(v)) {
-        r->latent_shift = (float) yyjson_get_num(v);
+        r->latent_shift = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "latent_rescale")) && yyjson_is_num(v)) {
-        r->latent_rescale = (float) yyjson_get_num(v);
+        r->latent_rescale = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "peak_clip")) && yyjson_is_num(v)) {
         r->peak_clip = (int) yyjson_get_num(v);
@@ -264,7 +278,7 @@ static void request_parse_obj(yyjson_val * obj, AceRequest * r) {
         r->mp3_bitrate = (int) yyjson_get_num(v);
     }
     if ((v = yyjson_obj_get(obj, "adapter_scale")) && yyjson_is_num(v)) {
-        r->adapter_scale = (float) yyjson_get_num(v);
+        r->adapter_scale = json_float(v);
     }
 
     // bool

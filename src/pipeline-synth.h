@@ -269,7 +269,8 @@ bool ace_synth_request_splices_source(const AceRequest * req);
 // Whether a request (non-NULL) is short of the caption its task needs: by
 // the table (a caption of white space alone being none), and for a task the
 // engine does not know, as if it needed one. ace_synth_batch_refused asks it
-// of every request (#1094, #1123).
+// of every request, or of a planned batch's first alone (#1094, #1123,
+// cadenza-audio #1240).
 bool ace_synth_request_missing_caption(const AceRequest * req);
 
 // Whether a batch of batch_n requests (reqs non-NULL) is one the engine

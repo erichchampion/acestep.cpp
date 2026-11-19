@@ -1606,12 +1606,12 @@ static int scenario_task_table() {
         };
 
         for (const CodesCase & c : std::vector<CodesCase>{
-                 { "1,2,3", "",      1,  "some giving codes and some none" },
-                 { "",      "1,2,3", 1,  "some giving codes and some none" },
-                 { "1,2,3", " , ",   1,  "holds no code"                   },
-                 { " ",     "",      0,  "holds no code"                   },
-                 { "abc",   "abc",   0,  "holds no code"                   },
-                 { "1,2,3", "4,5",   -1, nullptr                           },
+                 { "1,2,3", "",      1,  "some give codes and some none" },
+                 { "",      "1,2,3", 1,  "some give codes and some none" },
+                 { "1,2,3", " , ",   1,  "holds no code"                 },
+                 { " ",     "",      0,  "holds no code"                 },
+                 { "abc",   "abc",   0,  "holds no code"                 },
+                 { "1,2,3", "4,5",   -1, nullptr                         },
         }) {
             std::vector<AceRequest> b(2);
             for (AceRequest & r : b) {
