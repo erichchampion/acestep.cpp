@@ -894,10 +894,11 @@ static void synth_worker(std::shared_ptr<Job>    job,
             audio_normalize(audio[b].samples, audio[b].n_samples * 2, peak_clip);
         }
         if (output_wav) {
-            encoded[b] = audio_encode_wav(audio[b].samples, audio[b].n_samples, 48000, wav_fmt);
+            encoded[b] = audio_encode_wav(audio[b].samples, audio[b].n_samples, ACE_SAMPLE_RATE, wav_fmt);
         } else {
-            encoded[b] = audio_encode_mp3(audio[b].samples, audio[b].n_samples, 48000, groups[0][b].mp3_bitrate,
-                                          AceProgress{ server_progress, (void *) &job->cancel });
+            encoded[b] =
+                audio_encode_mp3(audio[b].samples, audio[b].n_samples, ACE_SAMPLE_RATE, groups[0][b].mp3_bitrate,
+                                 AceProgress{ server_progress, (void *) &job->cancel });
         }
         ace_audio_free(&audio[b]);
     }
@@ -1024,7 +1025,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                                reinterpret_cast<const float *>(file.content.data()) + (size_t) T * LATENT_CHANNELS);
             src_T_latent = T;
             fprintf(stderr, "[Server] Source latents: %d frames (%.2fs), VAE encode skipped\n", T,
-                    (float) T * 1920.0f / 48000.0f);
+                    latent_frames_sec(T));
         }
 
         if (!src_ignored && req.form.has_file("audio")) {
@@ -1039,7 +1040,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                 json_error(res, 400, "Failed to decode audio");
                 return;
             }
-            fprintf(stderr, "[Server] Source audio: %.2fs @ 48kHz\n", (float) T_audio / 48000.0f);
+            fprintf(stderr, "[Server] Source audio: %.2fs @ 48kHz\n", samples_sec(T_audio));
             src_interleaved = audio_planar_to_interleaved(planar, T_audio);
             free(planar);
             src_len = T_audio;
@@ -1059,7 +1060,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                                reinterpret_cast<const float *>(file.content.data()) + (size_t) T * LATENT_CHANNELS);
             ref_T_latent = T;
             fprintf(stderr, "[Server] Reference latents: %d frames (%.2fs), VAE encode skipped\n", T,
-                    (float) T * 1920.0f / 48000.0f);
+                    latent_frames_sec(T));
         }
 
         if (req.form.has_file("ref_audio")) {
@@ -1069,7 +1070,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                 float * planar =
                     audio_read_48k_buf((const uint8_t *) file.content.data(), file.content.size(), &T_audio);
                 if (planar && T_audio > 0) {
-                    fprintf(stderr, "[Server] Reference audio: %.2fs @ 48kHz\n", (float) T_audio / 48000.0f);
+                    fprintf(stderr, "[Server] Reference audio: %.2fs @ 48kHz\n", samples_sec(T_audio));
                     ref_interleaved = audio_planar_to_interleaved(planar, T_audio);
                     free(planar);
                     ref_len = T_audio;
@@ -1319,7 +1320,7 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
         src_latents.assign(reinterpret_cast<const float *>(file.content.data()),
                            reinterpret_cast<const float *>(file.content.data()) + (size_t) T * LATENT_CHANNELS);
         src_T_latent = T;
-        fprintf(stderr, "[Server] Understand source: %d latent frames (%.2fs)\n", T, (float) T * 1920.0f / 48000.0f);
+        fprintf(stderr, "[Server] Understand source: %d latent frames (%.2fs)\n", T, latent_frames_sec(T));
     }
 
     float * src_interleaved = nullptr;
@@ -1337,7 +1338,7 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
             json_error(res, 400, "Failed to decode audio");
             return;
         }
-        fprintf(stderr, "[Server] Understand source: %.2fs @ 48kHz\n", (float) T_audio / 48000.0f);
+        fprintf(stderr, "[Server] Understand source: %.2fs @ 48kHz\n", samples_sec(T_audio));
         // convert planar [L:T][R:T] to interleaved [L0,R0,L1,R1,...] for pipeline
         src_interleaved = audio_planar_to_interleaved(planar, T_audio);
         free(planar);
@@ -1403,7 +1404,7 @@ static void decode_worker(std::shared_ptr<Job> job,
     }
     ModelHandle vae_guard(g_store, vae);
 
-    int                T_audio_max = (src_T_latent + 64) * 1920;
+    int                T_audio_max = (src_T_latent + 64) * ACE_LATENT_HOP;
     std::vector<float> audio_buf((size_t) T_audio_max * 2);
     int T_audio = vae_ggml_decode_tiled(vae, src_latents.data(), src_T_latent, audio_buf.data(), T_audio_max,
                                         g_synth_params.vae_chunk, g_synth_params.vae_overlap,
@@ -1415,7 +1416,7 @@ static void decode_worker(std::shared_ptr<Job> job,
         return;
     }
     fprintf(stderr, "[Server] decode: %d latent frames -> %d audio samples (%.2fs), %.0fms\n", src_T_latent, T_audio,
-            (float) T_audio / 48000.0f, t_dec.ms());
+            samples_sec(T_audio), t_dec.ms());
 
     if (g_keep_loaded) {
         g_loaded_vae = vae_name;
@@ -1432,9 +1433,9 @@ static void decode_worker(std::shared_ptr<Job> job,
     std::string  encoded;
     const char * mime = output_wav ? "audio/wav" : "audio/mpeg";
     if (output_wav) {
-        encoded = audio_encode_wav(audio_buf.data(), T_audio, 48000, wav_fmt);
+        encoded = audio_encode_wav(audio_buf.data(), T_audio, ACE_SAMPLE_RATE, wav_fmt);
     } else {
-        encoded = audio_encode_mp3(audio_buf.data(), T_audio, 48000, ace_req.mp3_bitrate,
+        encoded = audio_encode_mp3(audio_buf.data(), T_audio, ACE_SAMPLE_RATE, ace_req.mp3_bitrate,
                                    AceProgress{ server_progress, (void *) &job->cancel });
     }
 
@@ -1486,7 +1487,7 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
     // -- the handler's pre-check refuses what is past the most, and a source
     // at it keeps its margin (cadenza-audio #1144)
     // audio never sneaks past the handler-side pre-check.
-    int T_latent_max = src_len / 1920 + 64;
+    int T_latent_max = src_len / ACE_LATENT_HOP + 64;
     if (T_latent_max > ACE_MAX_LATENT_FRAMES + 64) {
         T_latent_max = ACE_MAX_LATENT_FRAMES + 64;
     }
@@ -1501,7 +1502,7 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
         return;
     }
     fprintf(stderr, "[Server] encode: %d audio samples (%.2fs) -> %d latent frames, %.0fms\n", src_len,
-            (float) src_len / 48000.0f, T_latent, t_enc.ms());
+            samples_sec(src_len), T_latent, t_enc.ms());
 
     if (g_keep_loaded) {
         g_loaded_vae = vae_name;
@@ -1595,8 +1596,7 @@ static void handle_vae(const httplib::Request & req, httplib::Response & res) {
         int src_len = T_audio;
 
         auto job = job_create();
-        fprintf(stderr, "[Server] Job %s created (vae encode, %.2fs audio)\n", job->id.c_str(),
-                (float) src_len / 48000.0f);
+        fprintf(stderr, "[Server] Job %s created (vae encode, %.2fs audio)\n", job->id.c_str(), samples_sec(src_len));
 
         work_push_job(job, [job, ace_req, src_interleaved, src_len]() mutable {
             encode_worker(job, ace_req, src_interleaved, src_len);

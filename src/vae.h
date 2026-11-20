@@ -8,12 +8,13 @@
 // Upsample: 10x6x4x4x2 = 1920x
 
 #pragma once
-#include "gpu-compute.h"
 #include "ace-fatal.h"
+#include "audio-frames.h"
 #include "backend.h"
 #include "ggml-backend.h"
 #include "ggml.h"
 #include "gguf-weights.h"
+#include "gpu-compute.h"
 #include "progress.h"
 
 #include <cmath>
@@ -442,7 +443,7 @@ static int vae_ggml_compute(VAEGGML *     m,
 // Decode API: latent [T_latent, 64] -> audio [2, T_audio] flat.
 // Returns T_audio (or -1 on error).
 static int vae_ggml_decode(VAEGGML * m, const float * latent, int T_latent, float * audio_out, int max_T_audio) {
-    int T_audio = T_latent * 1920;
+    int T_audio = T_latent * ACE_LATENT_HOP;
     if (T_audio > max_T_audio) {
         fprintf(stderr, "[VAE] T_audio %d exceeds max %d\n", T_audio, max_T_audio);
         return -1;
@@ -455,8 +456,7 @@ static int vae_ggml_decode(VAEGGML * m, const float * latent, int T_latent, floa
 
     ggml_backend_tensor_get(m->graph_output, audio_out, 0, T_out * 2 * sizeof(float));
 
-    fprintf(stderr, "[VAE] Decoded: T_latent=%d -> T_audio=%d (%.2fs @ 48kHz)\n", T_latent, T_out,
-            (float) T_out / 48000.0f);
+    fprintf(stderr, "[VAE] Decoded: T_latent=%d -> T_audio=%d (%.2fs @ 48kHz)\n", T_latent, T_out, samples_sec(T_out));
     return T_out;
 }
 
@@ -582,7 +582,7 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
     memmove(audio_out + audio_write_pos, audio_out + max_T_audio, audio_write_pos * sizeof(float));
 
     fprintf(stderr, "[VAE] Tiled decode done: %d tiles -> T_audio=%d (%.2fs @ 48kHz)\n", num_steps, audio_write_pos,
-            (float) audio_write_pos / 48000.0f);
+            samples_sec(audio_write_pos));
 
     return audio_write_pos;
 }

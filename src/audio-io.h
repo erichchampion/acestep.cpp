@@ -5,6 +5,7 @@
 // All functions use planar stereo float: [L: T samples][R: T samples].
 // Part of acestep.cpp. MIT license.
 
+#include "audio-frames.h"
 #include "backend-config.h"
 #include "progress.h"
 #include "task-types.h"
@@ -217,14 +218,14 @@ static float * audio_read_48k_buf(const uint8_t * data, size_t size, int * T_out
         return NULL;
     }
 
-    if (sr == 48000) {
+    if (sr == ACE_SAMPLE_RATE) {
         *T_out = T;
         return raw;
     }
 
     int T_rs = 0;
     fprintf(stderr, "[Audio-Resample] %d Hz -> 48000 Hz, %d samples...\n", sr, T);
-    float * resampled = audio_resample(raw, T, sr, 48000, 2, &T_rs);
+    float * resampled = audio_resample(raw, T, sr, ACE_SAMPLE_RATE, 2, &T_rs);
     free(raw);
 
     if (!resampled) {
@@ -283,14 +284,14 @@ static float * audio_read_48k(const char * path, int * T_out) {
         return NULL;
     }
 
-    if (sr == 48000) {
+    if (sr == ACE_SAMPLE_RATE) {
         *T_out = T;
         return raw;
     }
 
     int T_rs = 0;
     fprintf(stderr, "[Audio-Resample] %d Hz -> 48000 Hz, %d samples...\n", sr, T);
-    float * resampled = audio_resample(raw, T, sr, 48000, 2, &T_rs);
+    float * resampled = audio_resample(raw, T, sr, ACE_SAMPLE_RATE, 2, &T_rs);
     free(raw);
 
     if (!resampled) {
@@ -589,7 +590,7 @@ static std::string audio_encode_mp3(const float * audio, int T_audio, int sr, in
     float *       resampled = NULL;
 
     // resample to 44100 if sr is not a valid MPEG1 rate
-    if (sr != 32000 && sr != 44100 && sr != 48000) {
+    if (sr != 32000 && sr != 44100 && sr != ACE_SAMPLE_RATE) {
         int T_rs  = 0;
         resampled = audio_resample(audio, T_audio, sr, 44100, 2, &T_rs);
         if (!resampled) {

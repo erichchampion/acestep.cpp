@@ -36,7 +36,7 @@ struct AceSynthParams {
 struct AceAudio {
     float * samples;      // planar stereo [L0..LN, R0..RN]
     int     n_samples;    // per channel
-    int     sample_rate;  // always 48000
+    int     sample_rate;  // always ACE_SAMPLE_RATE (48000, audio-frames.h)
 };
 
 // The VAE encodes a failed ace_synth_job_run_dit made (failed_encodes there):

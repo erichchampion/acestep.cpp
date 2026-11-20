@@ -6,8 +6,9 @@
 // Downsample: 2x4x4x6x10 = 1920x (matches decoder upsample)
 
 #pragma once
-#include "gpu-compute.h"
 #include "ace-fatal.h"
+#include "audio-frames.h"
+#include "gpu-compute.h"
 #include "progress.h"
 #include "vae.h"
 
@@ -251,7 +252,7 @@ static int vae_enc_compute(VAEEncoder *  m,
 
 // Encode API: audio [T_audio, 2] -> latent_out [T_latent, 64] (mean only, deterministic)
 // Returns T_latent (or -1 on error).
-// latent_out must hold at least (T_audio / 1920) * 64 floats.
+// latent_out must hold at least (T_audio / ACE_LATENT_HOP) * 64 floats.
 static int vae_enc_encode(VAEEncoder *  m,
                           const float * audio,       // [T_audio, 2] interleaved stereo
                           int           T_audio,
@@ -284,7 +285,7 @@ static int vae_enc_encode(VAEEncoder *  m,
     }
 
     fprintf(stderr, "[VAE-Enc] Encode: T_audio=%d -> T_latent=%d (%.2fs @ 48kHz)\n", T_audio, T_latent,
-            (float) T_audio / 48000.0f);
+            samples_sec(T_audio));
 
     return T_latent;
 }
@@ -300,8 +301,8 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
                                 int           overlap    = 64,
                                 AceProgress   progress   = {}) {
     // Work in audio-sample space. Each latent frame = 1920 audio samples.
-    int audio_chunk   = chunk_size * 1920;
-    int audio_overlap = overlap * 1920;
+    int audio_chunk   = chunk_size * ACE_LATENT_HOP;
+    int audio_overlap = overlap * ACE_LATENT_HOP;
 
     // Shrink overlap until stride is positive
     while (audio_chunk - 2 * audio_overlap <= 0 && audio_overlap > 0) {
@@ -402,7 +403,7 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
     }
 
     fprintf(stderr, "[VAE-Enc] Tiled encode done: %d tiles -> T_latent=%d (%.2fs @ 48kHz)\n", num_steps,
-            latent_write_pos, (float) T_audio / 48000.0f);
+            latent_write_pos, samples_sec(T_audio));
 
     return latent_write_pos;
 }

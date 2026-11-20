@@ -4,6 +4,7 @@
 // comes from the request JSON. The registry resolves names to GGUF paths
 // under --models <dir> and --adapters <dir>.
 
+#include "audio-frames.h"
 #include "audio-io.h"
 #include "model-registry.h"
 #include "model-store.h"
@@ -244,7 +245,7 @@ static int synth_main(int argc, char ** argv) {
             store_free(store);
             return 1;
         }
-        fprintf(stderr, "[Ace-Synth] Source audio: %.2fs @ 48kHz\n", (float) T_audio / 48000.0f);
+        fprintf(stderr, "[Ace-Synth] Source audio: %.2fs @ 48kHz\n", samples_sec(T_audio));
 
         src_interleaved = audio_planar_to_interleaved(planar, T_audio);
         free(planar);
@@ -264,7 +265,7 @@ static int synth_main(int argc, char ** argv) {
             store_free(store);
             return 1;
         }
-        fprintf(stderr, "[Ace-Synth] Reference audio: %.2fs @ 48kHz\n", (float) T_audio / 48000.0f);
+        fprintf(stderr, "[Ace-Synth] Reference audio: %.2fs @ 48kHz\n", samples_sec(T_audio));
         ref_interleaved = audio_planar_to_interleaved(planar, T_audio);
         free(planar);
         ref_len = T_audio;
@@ -343,8 +344,8 @@ static int synth_main(int argc, char ** argv) {
         const char * ext = is_mp3 ? ".mp3" : ".wav";
         char         out_path[1024];
         snprintf(out_path, sizeof(out_path), "%s%d%s", all_basenames[b].c_str(), all_synth_indices[b], ext);
-        if (!audio_write(out_path, all_audio[b].samples, all_audio[b].n_samples, 48000, groups[0][b].mp3_bitrate,
-                         wav_fmt)) {
+        if (!audio_write(out_path, all_audio[b].samples, all_audio[b].n_samples, ACE_SAMPLE_RATE,
+                         groups[0][b].mp3_bitrate, wav_fmt)) {
             fprintf(stderr, "[Ace-Synth Batch%d] FATAL: failed to write %s\n", b, out_path);
         }
         ace_audio_free(&all_audio[b]);

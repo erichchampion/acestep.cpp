@@ -25,6 +25,7 @@
 //   neural-codec --vae model.gguf --encode --q4 -i song.wav -o song.nac4
 //   neural-codec --vae model.gguf --decode -i song.nac4 -o song.wav
 
+#include "audio-frames.h"
 #include "audio-io.h"
 #include "tool-main.h"
 #include "vae-enc.h"
@@ -81,7 +82,7 @@ static bool write_latent_q8(const char * path, const float * data, int T_latent)
     fclose(f);
 
     size_t bytes    = NAC8_HEADER + (size_t) T_latent * NAC8_FRAME;
-    float  duration = (float) T_latent * 1920.0f / 48000.0f;
+    float  duration = latent_frames_sec(T_latent);
     float  kbps     = (float) bytes * 8.0f / (duration * 1000.0f);
     fprintf(stderr, "[Latent] Wrote %s: Q8, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, T_latent, duration,
             (float) bytes / 1024.0f, kbps);
@@ -136,7 +137,7 @@ static bool write_latent_q4(const char * path, const float * data, int T_latent)
     fclose(f);
 
     size_t bytes    = NAC4_HEADER + (size_t) T_latent * NAC4_FRAME;
-    float  duration = (float) T_latent * 1920.0f / 48000.0f;
+    float  duration = latent_frames_sec(T_latent);
     float  kbps     = (float) bytes * 8.0f / (duration * 1000.0f);
     fprintf(stderr, "[Latent] Wrote %s: Q4, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, T_latent, duration,
             (float) bytes / 1024.0f, kbps);
@@ -152,7 +153,7 @@ static bool write_latent_f32(const char * path, const float * data, int T_latent
     size_t bytes = (size_t) T_latent * 64 * sizeof(float);
     fwrite(data, 1, bytes, f);
     fclose(f);
-    float duration = (float) T_latent * 1920.0f / 48000.0f;
+    float duration = latent_frames_sec(T_latent);
     fprintf(stderr, "[Latent] Wrote %s: f32, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, T_latent, duration,
             (float) bytes / 1024.0f, (float) bytes * 8.0f / (duration * 1000.0f));
     return true;
@@ -224,7 +225,7 @@ static float * read_latent(const char * path, int * T_latent) {
         }
         fclose(f);
 
-        float duration = (float) (*T_latent) * 1920.0f / 48000.0f;
+        float duration = latent_frames_sec(*T_latent);
         float kbps     = (float) fsize * 8.0f / (duration * 1000.0f);
         fprintf(stderr, "[Latent] Read %s: Q8, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, *T_latent, duration,
                 (float) fsize / 1024.0f, kbps);
@@ -286,7 +287,7 @@ static float * read_latent(const char * path, int * T_latent) {
         }
         fclose(f);
 
-        float duration = (float) (*T_latent) * 1920.0f / 48000.0f;
+        float duration = latent_frames_sec(*T_latent);
         float kbps     = (float) fsize * 8.0f / (duration * 1000.0f);
         fprintf(stderr, "[Latent] Read %s: Q4, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, *T_latent, duration,
                 (float) fsize / 1024.0f, kbps);
@@ -315,7 +316,7 @@ static float * read_latent(const char * path, int * T_latent) {
     }
     fclose(f);
 
-    float duration = (float) (*T_latent) * 1920.0f / 48000.0f;
+    float duration = latent_frames_sec(*T_latent);
     fprintf(stderr, "[Latent] Read %s: f32, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, *T_latent, duration,
             (float) fsize / 1024.0f, (float) fsize * 8.0f / (duration * 1000.0f));
     return data;
@@ -454,10 +455,10 @@ static int codec_main(int argc, char ** argv) {
         VAEEncoder enc = {};
         vae_enc_load(&enc, vae_path);
 
-        int                max_T = (T_audio / 1920) + 64;
+        int                max_T = (T_audio / ACE_LATENT_HOP) + 64;
         std::vector<float> latent((size_t) max_T * 64);
 
-        fprintf(stderr, "\n[VAE] Encoding %d samples (%.2fs)...\n", T_audio, (float) T_audio / 48000.0f);
+        fprintf(stderr, "\n[VAE] Encoding %d samples (%.2fs)...\n", T_audio, samples_sec(T_audio));
         int T_latent = vae_enc_encode_tiled(&enc, audio, T_audio, latent.data(), max_T, chunk_size, overlap);
         free(audio);
         if (T_latent < 0) {
@@ -489,7 +490,7 @@ static int codec_main(int argc, char ** argv) {
         VAEGGML dec = {};
         vae_ggml_load(&dec, vae_path);
 
-        int                max_T = T_latent * 1920 + 4096;
+        int                max_T = T_latent * ACE_LATENT_HOP + 4096;
         std::vector<float> audio((size_t) 2 * max_T, 0.0f);
 
         fprintf(stderr, "\n[VAE] Decoding %d latent frames...\n", T_latent);
@@ -500,9 +501,9 @@ static int codec_main(int argc, char ** argv) {
             return 1;
         }
 
-        if (audio_write(output_path, audio.data(), T_audio, 48000, 0, wav_fmt)) {
+        if (audio_write(output_path, audio.data(), T_audio, ACE_SAMPLE_RATE, 0, wav_fmt)) {
             fprintf(stderr, "\n[VAE] Output: %s (%d samples, %.2fs @ 48kHz)\n", output_path, T_audio,
-                    (float) T_audio / 48000.0f);
+                    samples_sec(T_audio));
         } else {
             fprintf(stderr, "[VAE] FATAL: failed to write %s\n", output_path);
         }
