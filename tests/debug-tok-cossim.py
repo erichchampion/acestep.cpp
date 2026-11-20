@@ -13,14 +13,7 @@ Run from tests/ directory:
 import sys, os, subprocess, argparse, struct, shutil, math, json
 import numpy as np
 
-# The PyTorch reference (erichchampion/ace-step-1.5): ACESTEP_REF when set,
-# else whatever PYTHONPATH gives (scripts/reanchor.sh exports both). No
-# fixed path: the old ../../ACE-Step-1.5 link went first on sys.path and
-# won over both (erichchampion/cadenza-audio#1146).
-def use_reference():
-    ref = os.environ.get("ACESTEP_REF")
-    if ref and ref not in sys.path:
-        sys.path.insert(0, ref)
+from acestep_ref import use_reference  # the reference's path (#1146)
 
 FSQ_LEVELS = [8, 8, 8, 5, 5, 5]
 

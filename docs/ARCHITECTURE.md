@@ -1244,10 +1244,12 @@ Test logs (turbo + SFT, seed 42, Philox noise, multiple quantizations):
 
 Each script compares GGML C++ output against the Python reference
 (cosine similarity per intermediate tensor). Requires the original
-ACE-Step-1.5 repo cloned alongside acestep.cpp (`../ACE-Step-1.5`).
+ACE-Step-1.5 repo, named by `ACESTEP_REF` (or on `PYTHONPATH`):
+`tests/acestep_ref.py` puts it first on `sys.path`.
 
 ```bash
 cd tests
+export ACESTEP_REF=/path/to/ACE-Step-1.5
 python3 debug-lm-logits.py    # Qwen3 LM: first-token logits GGML vs PyTorch (0.6B/1.7B/4B)
 python3 debug-detok-cossim.py # FSQ detokenizer: step-by-step cossim C++ vs Python
 python3 debug-dit-cossim.py   # DiT: per-layer cossim GGML vs Python (turbo/SFT, BF16/quantized)
