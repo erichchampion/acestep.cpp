@@ -14,6 +14,15 @@ Usage:
 import os, sys, subprocess, struct, shutil, argparse, json
 import numpy as np
 
+# The PyTorch reference (erichchampion/ace-step-1.5): ACESTEP_REF when set,
+# else whatever PYTHONPATH gives (scripts/reanchor.sh exports both). No
+# fixed path: the old ../../ACE-Step-1.5 link went first on sys.path and
+# won over both (erichchampion/cadenza-audio#1146).
+def use_reference():
+    ref = os.environ.get("ACESTEP_REF")
+    if ref and ref not in sys.path:
+        sys.path.insert(0, ref)
+
 SEED = 42
 
 MODE_CONFIG = {
@@ -163,7 +172,7 @@ def run_ggml(dump_dir, req, cfg, gguf_path, adapter_dir=None):
 # Python runner
 
 def run_python(dump_dir, req, cfg, adapter_dir=None):
-    sys.path.insert(0, "../../ACE-Step-1.5")
+    use_reference()
     from acestep.handler import AceStepHandler
 
     os.makedirs(dump_dir, exist_ok=True)
