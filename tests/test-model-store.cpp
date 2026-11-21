@@ -10,6 +10,7 @@
 // Scans the registry exactly like the CLI binaries and picks the first entry
 // of each bucket (LM, DiT, VAE).
 
+#include "audio-frames.h"
 #include "backend-config.h"
 #include "backend.h"
 #include "model-registry.h"
@@ -422,13 +423,13 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
     // and every code, the report the same but for codes_start's base. Each
     // call is cancelled at its LM's first poll.
     {
-        const int          n = 30 * 48000;
+        const int          n = 30 * ACE_SAMPLE_RATE;
         std::vector<float> audio((size_t) n * 2);
         // A chirp, 110 Hz rising to 880 Hz: no stretch repeats, so a window
         // cut from the wrong place encodes different audio. (A steady tone
         // repeats each code -- 9600 samples -- and would hide it.)
         for (int i = 0; i < n; i++) {
-            const double t = (double) i / 48000.0, f0 = 110.0, k = (880.0 - 110.0) / 30.0;
+            const double t = (double) i / ACE_SAMPLE_RATE, f0 = 110.0, k = (880.0 - 110.0) / 30.0;
             audio[(size_t) i * 2] = audio[(size_t) i * 2 + 1] =
                 0.3f * (float) sin(2.0 * 3.14159265358979 * (f0 * t + 0.5 * k * t * t));
         }
@@ -1772,12 +1773,13 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         return 1;
     }
     // Two seconds of two different tones, interleaved stereo at 48 kHz.
-    const int          seconds = 2, n = seconds * 48000;
+    const int          seconds = 2, n = seconds * ACE_SAMPLE_RATE;
     std::vector<float> source((size_t) n * 2), reference((size_t) n * 2);
     for (int i = 0; i < n; i++) {
-        source[(size_t) i * 2] = source[(size_t) i * 2 + 1] = 0.3f * sinf(2.0f * 3.14159265f * 220.0f * i / 48000.0f);
-        reference[(size_t) i * 2]                           = reference[(size_t) i * 2 + 1] =
-            0.3f * sinf(2.0f * 3.14159265f * 523.0f * i / 48000.0f);
+        source[(size_t) i * 2] = source[(size_t) i * 2 + 1] =
+            0.3f * sinf(2.0f * 3.14159265f * 220.0f * i / (float) ACE_SAMPLE_RATE);
+        reference[(size_t) i * 2] = reference[(size_t) i * 2 + 1] =
+            0.3f * sinf(2.0f * 3.14159265f * 523.0f * i / (float) ACE_SAMPLE_RATE);
     }
     AceProgress cancel;
     int         dit_polls = 0;
@@ -1888,11 +1890,11 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // given as audio, the run encodes -- and hands back -- upstream's three
     // 10 s segments, 750 frames, not the 800 of the whole.
     {
-        const int          long_n = 32 * 48000;
+        const int          long_n = 32 * ACE_SAMPLE_RATE;
         std::vector<float> long_ref((size_t) long_n * 2);
         for (int i = 0; i < long_n; i++) {
             long_ref[(size_t) i * 2] = long_ref[(size_t) i * 2 + 1] =
-                0.3f * sinf(2.0f * 3.14159265f * 330.0f * i / 48000.0f);
+                0.3f * sinf(2.0f * 3.14159265f * 330.0f * i / (float) ACE_SAMPLE_RATE);
         }
         AceRequest r;
         request_init(&r);

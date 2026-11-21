@@ -10,7 +10,9 @@
 //
 //   ./test-vae-tiling --vae <vae gguf>
 
+#include "audio-frames.h"
 #include "pipeline-synth.h"
+#include "test-util.h"
 #include "vae-enc.h"
 #include "vae.h"
 
@@ -19,8 +21,6 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
-
-#include "test-util.h"
 
 static const int kChunk = 128;  // latent frames: many joins in 30 s
 
@@ -45,11 +45,11 @@ int main(int argc, char ** argv) {
 
     // 30 s of stereo with structure at every scale: a few tones, a slow sweep
     // and seeded noise (an LCG, so every run encodes the same samples).
-    const int T = 30 * 48000;
+    const int          T = 30 * ACE_SAMPLE_RATE;
     std::vector<float> audio(2 * (size_t) T);
     uint32_t           lcg = 12345;
     for (int t = 0; t < T; t++) {
-        float ts = (float) t / 48000.0f;
+        float ts = samples_sec(t);
         lcg      = lcg * 1664525u + 1013904223u;
         float n  = ((float) (lcg >> 8) / (float) (1u << 24) - 0.5f) * 0.1f;
         float s  = 0.3f * sinf(2.0f * 3.14159265f * (110.0f + 20.0f * ts) * ts) +
@@ -61,7 +61,7 @@ int main(int argc, char ** argv) {
     // Encoder: untiled (a chunk past the whole input) against tiled.
     VAEEncoder * enc = new VAEEncoder();
     vae_enc_load(enc, vae_path);
-    const int          max_T = T / 1920 + 64;
+    const int          max_T = T / ACE_LATENT_HOP + 64;
     std::vector<float> ref((size_t) max_T * 64), tiled((size_t) max_T * 64);
     int                T_ref = vae_enc_encode_tiled(enc, audio.data(), T, ref.data(), max_T, 1 << 16, 0);
     CHECK(T_ref > 0);
@@ -83,7 +83,7 @@ int main(int argc, char ** argv) {
     // Decoder: the untiled latents back to audio, untiled against tiled.
     VAEGGML * dec = new VAEGGML();
     vae_ggml_load(dec, vae_path);
-    const int          max_A = T_ref * 1920;
+    const int          max_A = T_ref * ACE_LATENT_HOP;
     std::vector<float> aref(2 * (size_t) max_A), atiled(2 * (size_t) max_A);
     int                A_ref = vae_ggml_decode_tiled(dec, ref.data(), T_ref, aref.data(), max_A, 1 << 16, 0);
     CHECK(A_ref > 0);

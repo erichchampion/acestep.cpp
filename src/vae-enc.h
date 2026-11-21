@@ -252,7 +252,8 @@ static int vae_enc_compute(VAEEncoder *  m,
 
 // Encode API: audio [T_audio, 2] -> latent_out [T_latent, 64] (mean only, deterministic)
 // Returns T_latent (or -1 on error).
-// latent_out must hold at least (T_audio / ACE_LATENT_HOP) * 64 floats.
+// latent_out must hold max_T_latent * 64 floats: the most frames it may write
+// (callers give the audio's frames, T_audio / ACE_LATENT_HOP, plus a margin).
 static int vae_enc_encode(VAEEncoder *  m,
                           const float * audio,       // [T_audio, 2] interleaved stereo
                           int           T_audio,
@@ -284,8 +285,8 @@ static int vae_enc_encode(VAEEncoder *  m,
         }
     }
 
-    fprintf(stderr, "[VAE-Enc] Encode: T_audio=%d -> T_latent=%d (%.2fs @ 48kHz)\n", T_audio, T_latent,
-            samples_sec(T_audio));
+    fprintf(stderr, "[VAE-Enc] Encode: T_audio=%d -> T_latent=%d (%.2fs @ %dkHz)\n", T_audio, T_latent,
+            samples_sec(T_audio), ACE_SAMPLE_RATE / 1000);
 
     return T_latent;
 }
@@ -402,8 +403,8 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
         latent_write_pos += core_len;
     }
 
-    fprintf(stderr, "[VAE-Enc] Tiled encode done: %d tiles -> T_latent=%d (%.2fs @ 48kHz)\n", num_steps,
-            latent_write_pos, samples_sec(T_audio));
+    fprintf(stderr, "[VAE-Enc] Tiled encode done: %d tiles -> T_latent=%d (%.2fs @ %dkHz)\n", num_steps,
+            latent_write_pos, samples_sec(T_audio), ACE_SAMPLE_RATE / 1000);
 
     return latent_write_pos;
 }

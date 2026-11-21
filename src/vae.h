@@ -456,7 +456,8 @@ static int vae_ggml_decode(VAEGGML * m, const float * latent, int T_latent, floa
 
     ggml_backend_tensor_get(m->graph_output, audio_out, 0, T_out * 2 * sizeof(float));
 
-    fprintf(stderr, "[VAE] Decoded: T_latent=%d -> T_audio=%d (%.2fs @ 48kHz)\n", T_latent, T_out, samples_sec(T_out));
+    fprintf(stderr, "[VAE] Decoded: T_latent=%d -> T_audio=%d (%.2fs @ %dkHz)\n", T_latent, T_out, samples_sec(T_out),
+            ACE_SAMPLE_RATE / 1000);
     return T_out;
 }
 
@@ -581,8 +582,8 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
     // Compact ch1 from offset max_T_audio to offset audio_write_pos
     memmove(audio_out + audio_write_pos, audio_out + max_T_audio, audio_write_pos * sizeof(float));
 
-    fprintf(stderr, "[VAE] Tiled decode done: %d tiles -> T_audio=%d (%.2fs @ 48kHz)\n", num_steps, audio_write_pos,
-            samples_sec(audio_write_pos));
+    fprintf(stderr, "[VAE] Tiled decode done: %d tiles -> T_audio=%d (%.2fs @ %dkHz)\n", num_steps, audio_write_pos,
+            samples_sec(audio_write_pos), ACE_SAMPLE_RATE / 1000);
 
     return audio_write_pos;
 }

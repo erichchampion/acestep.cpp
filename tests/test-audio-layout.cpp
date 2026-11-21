@@ -22,7 +22,9 @@
 // Needs only the VAE GGUF (the same file carries the encoder and decoder);
 // no text encoder, no DiT.
 
+#include "audio-frames.h"
 #include "audio-io.h"
+#include "test-util.h"
 #include "vae-enc.h"
 #include "vae.h"
 
@@ -32,8 +34,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-#include "test-util.h"
 
 // Pearson correlation of two same-length sample ranges. The layout metric:
 // a channel that survives the round trip correlates with its own source;
@@ -88,11 +88,11 @@ int main(int argc, char ** argv) {
     // One second of stereo at 48 kHz: L = 220 Hz, R = 880 Hz, full scale but
     // clipped to a safe peak. Distinct frequencies, because distinctness is
     // what the layout contract has to preserve.
-    const int T      = 48000;
-    const int max_T  = (T / 1920) + 64;
+    const int          T     = ACE_SAMPLE_RATE;
+    const int          max_T = (T / ACE_LATENT_HOP) + 64;
     std::vector<float> planar_in(2 * (size_t) T);
     for (int t = 0; t < T; t++) {
-        float        ts   = (float) t / 48000.0f;
+        float ts                   = samples_sec(t);
         planar_in[(size_t) t]      = 0.8f * std::sinf(2.0f * 3.14159265f * 220.0f * ts);
         planar_in[(size_t) T + t]  = 0.8f * std::sinf(2.0f * 3.14159265f * 880.0f * ts);
     }
@@ -117,11 +117,11 @@ int main(int argc, char ** argv) {
     // Decode: latents in, PLANAR audio out ([L: T][R: T] flat).
     VAEGGML * dec = new VAEGGML();
     vae_ggml_load(dec, vae_path);
-    int max_T_audio = T_latent * 1920;
+    int                max_T_audio = T_latent * ACE_LATENT_HOP;
     std::vector<float> audio_out(2 * (size_t) max_T_audio);
     int T_out = vae_ggml_decode_tiled(dec, latents.data(), T_latent, audio_out.data(), max_T_audio, 256, 64);
     CHECK(T_out > 0);
-    fprintf(stderr, "[Test] Decoded: T_audio=%d (%.2fs)\n", T_out, (float) T_out / 48000.0f);
+    fprintf(stderr, "[Test] Decoded: T_audio=%d (%.2fs)\n", T_out, samples_sec(T_out));
 
     // The output is planar: left occupies [0, T), right [T, 2T).
     const float * out_l = audio_out.data();

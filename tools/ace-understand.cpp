@@ -189,7 +189,7 @@ static int understand_main(int argc, char ** argv) {
         store_free(store);
         return 1;
     }
-    fprintf(stderr, "[Ace-Understand] %.2fs @ 48kHz\n", samples_sec(T_audio));
+    fprintf(stderr, "[Ace-Understand] %.2fs @ %dkHz\n", samples_sec(T_audio), ACE_SAMPLE_RATE / 1000);
 
     float * src_interleaved = audio_planar_to_interleaved(planar, T_audio);
     free(planar);

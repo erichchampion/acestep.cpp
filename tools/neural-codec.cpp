@@ -502,8 +502,8 @@ static int codec_main(int argc, char ** argv) {
         }
 
         if (audio_write(output_path, audio.data(), T_audio, ACE_SAMPLE_RATE, 0, wav_fmt)) {
-            fprintf(stderr, "\n[VAE] Output: %s (%d samples, %.2fs @ 48kHz)\n", output_path, T_audio,
-                    samples_sec(T_audio));
+            fprintf(stderr, "\n[VAE] Output: %s (%d samples, %.2fs @ %dkHz)\n", output_path, T_audio,
+                    samples_sec(T_audio), ACE_SAMPLE_RATE / 1000);
         } else {
             fprintf(stderr, "[VAE] FATAL: failed to write %s\n", output_path);
         }

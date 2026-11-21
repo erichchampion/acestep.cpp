@@ -224,7 +224,7 @@ static float * audio_read_48k_buf(const uint8_t * data, size_t size, int * T_out
     }
 
     int T_rs = 0;
-    fprintf(stderr, "[Audio-Resample] %d Hz -> 48000 Hz, %d samples...\n", sr, T);
+    fprintf(stderr, "[Audio-Resample] %d Hz -> %d Hz, %d samples...\n", sr, ACE_SAMPLE_RATE, T);
     float * resampled = audio_resample(raw, T, sr, ACE_SAMPLE_RATE, 2, &T_rs);
     free(raw);
 
@@ -290,7 +290,7 @@ static float * audio_read_48k(const char * path, int * T_out) {
     }
 
     int T_rs = 0;
-    fprintf(stderr, "[Audio-Resample] %d Hz -> 48000 Hz, %d samples...\n", sr, T);
+    fprintf(stderr, "[Audio-Resample] %d Hz -> %d Hz, %d samples...\n", sr, ACE_SAMPLE_RATE, T);
     float * resampled = audio_resample(raw, T, sr, ACE_SAMPLE_RATE, 2, &T_rs);
     free(raw);
 
@@ -590,7 +590,7 @@ static std::string audio_encode_mp3(const float * audio, int T_audio, int sr, in
     float *       resampled = NULL;
 
     // resample to 44100 if sr is not a valid MPEG1 rate
-    if (sr != 32000 && sr != 44100 && sr != ACE_SAMPLE_RATE) {
+    if (sr != 32000 && sr != 44100 && sr != 48000) {  // MPEG1's own rates, not the engine clock
         int T_rs  = 0;
         resampled = audio_resample(audio, T_audio, sr, 44100, 2, &T_rs);
         if (!resampled) {
