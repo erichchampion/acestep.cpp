@@ -154,7 +154,7 @@ static void vae_enc_load(VAEEncoder * m, const char * path) {
     vae_fuse_wn(m->c2w, gf, "encoder.conv2");
     vae_load_bias(m->c2b, gf, "encoder.conv2.bias");
 
-    fprintf(stderr, "[VAE-Enc] Loaded: 5 blocks, downsample=1920x, F32 activations\n");
+    fprintf(stderr, "[VAE-Enc] Loaded: 5 blocks, downsample=%dx, F32 activations\n", ACE_LATENT_HOP);
     gf_close(&gf);
 }
 
@@ -285,8 +285,8 @@ static int vae_enc_encode(VAEEncoder *  m,
         }
     }
 
-    fprintf(stderr, "[VAE-Enc] Encode: T_audio=%d -> T_latent=%d (%.2fs @ %dkHz)\n", T_audio, T_latent,
-            samples_sec(T_audio), ACE_SAMPLE_RATE / 1000);
+    fprintf(stderr, "[VAE-Enc] Encode: T_audio=%d -> T_latent=%d (%.2fs @ %d Hz)\n", T_audio, T_latent,
+            samples_sec(T_audio), ACE_SAMPLE_RATE);
 
     return T_latent;
 }
@@ -368,7 +368,7 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
         // Determine downsample factor from first tile
         if (i == 0) {
             downsample_factor = (float) tile_T / (float) win_len;
-            fprintf(stderr, "[VAE-Enc] Downsample factor: %.6f (expected ~1/1920)\n", downsample_factor);
+            fprintf(stderr, "[VAE-Enc] Downsample factor: %.6f (expected ~1/%d)\n", downsample_factor, ACE_LATENT_HOP);
         }
 
         // Trim in latent frames (mirror of decoder trim logic)
@@ -403,8 +403,8 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
         latent_write_pos += core_len;
     }
 
-    fprintf(stderr, "[VAE-Enc] Tiled encode done: %d tiles -> T_latent=%d (%.2fs @ %dkHz)\n", num_steps,
-            latent_write_pos, samples_sec(T_audio), ACE_SAMPLE_RATE / 1000);
+    fprintf(stderr, "[VAE-Enc] Tiled encode done: %d tiles -> T_latent=%d (%.2fs @ %d Hz)\n", num_steps,
+            latent_write_pos, samples_sec(T_audio), ACE_SAMPLE_RATE);
 
     return latent_write_pos;
 }

@@ -1040,7 +1040,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                 json_error(res, 400, "Failed to decode audio");
                 return;
             }
-            fprintf(stderr, "[Server] Source audio: %.2fs @ %dkHz\n", samples_sec(T_audio), ACE_SAMPLE_RATE / 1000);
+            fprintf(stderr, "[Server] Source audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
             src_interleaved = audio_planar_to_interleaved(planar, T_audio);
             free(planar);
             src_len = T_audio;
@@ -1070,8 +1070,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                 float * planar =
                     audio_read_48k_buf((const uint8_t *) file.content.data(), file.content.size(), &T_audio);
                 if (planar && T_audio > 0) {
-                    fprintf(stderr, "[Server] Reference audio: %.2fs @ %dkHz\n", samples_sec(T_audio),
-                            ACE_SAMPLE_RATE / 1000);
+                    fprintf(stderr, "[Server] Reference audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
                     ref_interleaved = audio_planar_to_interleaved(planar, T_audio);
                     free(planar);
                     ref_len = T_audio;
@@ -1339,7 +1338,7 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
             json_error(res, 400, "Failed to decode audio");
             return;
         }
-        fprintf(stderr, "[Server] Understand source: %.2fs @ %dkHz\n", samples_sec(T_audio), ACE_SAMPLE_RATE / 1000);
+        fprintf(stderr, "[Server] Understand source: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
         // convert planar [L:T][R:T] to interleaved [L0,R0,L1,R1,...] for pipeline
         src_interleaved = audio_planar_to_interleaved(planar, T_audio);
         free(planar);

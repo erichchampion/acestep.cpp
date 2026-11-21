@@ -9,6 +9,7 @@
 // Detokenizer reuses Qwen3 encoder infrastructure from qwen3.h
 
 #pragma once
+#include "audio-frames.h"
 #include "gpu-compute.h"
 #include "qwen3-enc.h"
 
@@ -208,7 +209,8 @@ static int detok_ggml_decode(DetokGGML * m, const int * codes, int T_5Hz, float 
         ggml_backend_tensor_get(t_out, context_out + g * P * 64, 0, P * 64 * sizeof(float));
     }
 
-    fprintf(stderr, "[Context] Decoded: %d codes -> %d frames (%.1fs @ 25Hz)\n", T_5Hz, T_25Hz, (float) T_25Hz / 25.0f);
+    fprintf(stderr, "[Context] Decoded: %d codes -> %d frames (%.1fs @ %.0fHz)\n", T_5Hz, T_25Hz,
+            (float) T_25Hz / ACE_LATENT_FPS, ACE_LATENT_FPS);
 
     ggml_backend_sched_reset(m->sched);
     ggml_free(ctx);

@@ -245,7 +245,7 @@ static int synth_main(int argc, char ** argv) {
             store_free(store);
             return 1;
         }
-        fprintf(stderr, "[Ace-Synth] Source audio: %.2fs @ %dkHz\n", samples_sec(T_audio), ACE_SAMPLE_RATE / 1000);
+        fprintf(stderr, "[Ace-Synth] Source audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
 
         src_interleaved = audio_planar_to_interleaved(planar, T_audio);
         free(planar);
@@ -265,7 +265,7 @@ static int synth_main(int argc, char ** argv) {
             store_free(store);
             return 1;
         }
-        fprintf(stderr, "[Ace-Synth] Reference audio: %.2fs @ %dkHz\n", samples_sec(T_audio), ACE_SAMPLE_RATE / 1000);
+        fprintf(stderr, "[Ace-Synth] Reference audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
         ref_interleaved = audio_planar_to_interleaved(planar, T_audio);
         free(planar);
         ref_len = T_audio;

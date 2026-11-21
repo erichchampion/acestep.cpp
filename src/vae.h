@@ -257,7 +257,7 @@ static void vae_ggml_load(VAEGGML * m, const char * path) {
     vae_load_snake_inv(m->sb, gf, "decoder.snake1.beta");
     vae_fuse_wn(m->c2w, gf, "decoder.conv2");
 
-    fprintf(stderr, "[VAE] Loaded: 5 blocks, upsample=1920x, F32 activations\n");
+    fprintf(stderr, "[VAE] Loaded: 5 blocks, upsample=%dx, F32 activations\n", ACE_LATENT_HOP);
     gf_close(&gf);
 }
 
@@ -456,8 +456,8 @@ static int vae_ggml_decode(VAEGGML * m, const float * latent, int T_latent, floa
 
     ggml_backend_tensor_get(m->graph_output, audio_out, 0, T_out * 2 * sizeof(float));
 
-    fprintf(stderr, "[VAE] Decoded: T_latent=%d -> T_audio=%d (%.2fs @ %dkHz)\n", T_latent, T_out, samples_sec(T_out),
-            ACE_SAMPLE_RATE / 1000);
+    fprintf(stderr, "[VAE] Decoded: T_latent=%d -> T_audio=%d (%.2fs @ %d Hz)\n", T_latent, T_out, samples_sec(T_out),
+            ACE_SAMPLE_RATE);
     return T_out;
 }
 
@@ -544,7 +544,7 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
         // Determine upsample factor from first tile
         if (i == 0) {
             upsample_factor = (float) tile_T / (float) win_len;
-            fprintf(stderr, "[VAE] Upsample factor: %.2f (expected ~1920)\n", upsample_factor);
+            fprintf(stderr, "[VAE] Upsample factor: %.2f (expected ~%d)\n", upsample_factor, ACE_LATENT_HOP);
         }
 
         // Compute trim in audio samples (matches Python int(round(...)))
@@ -582,8 +582,8 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
     // Compact ch1 from offset max_T_audio to offset audio_write_pos
     memmove(audio_out + audio_write_pos, audio_out + max_T_audio, audio_write_pos * sizeof(float));
 
-    fprintf(stderr, "[VAE] Tiled decode done: %d tiles -> T_audio=%d (%.2fs @ %dkHz)\n", num_steps, audio_write_pos,
-            samples_sec(audio_write_pos), ACE_SAMPLE_RATE / 1000);
+    fprintf(stderr, "[VAE] Tiled decode done: %d tiles -> T_audio=%d (%.2fs @ %d Hz)\n", num_steps, audio_write_pos,
+            samples_sec(audio_write_pos), ACE_SAMPLE_RATE);
 
     return audio_write_pos;
 }
