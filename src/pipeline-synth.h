@@ -299,7 +299,7 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
 // order -- the last trimmed to fit, the requests past the cap left out -- and
 // sums to `total`. `asked` is the batch's total before that clamp (each
 // request already at most kAceSynthMaxTakes), for the tools' clamp log.
-// reqs is non-NULL, or batch_n is 0.
+// A NULL reqs is an empty batch, whatever batch_n says.
 // The tools allocate and expand by this, and ace_synth_requests_run counts
 // its requests, so "which requests run" is one rule (cadenza-audio #1243).
 struct AceSynthBatchTakes {
@@ -310,7 +310,7 @@ struct AceSynthBatchTakes {
 
 AceSynthBatchTakes ace_synth_batch_takes(const AceRequest * reqs, int batch_n);
 
-// How many of a batch's requests (reqs non-NULL) the tools run:
+// How many of a batch's requests the tools run (0 for a NULL reqs):
 // ace_synth_batch_takes's requests, so the requests past the DiT's
 // kAceSynthMaxTakes take never run. The tools ask the batch
 // rule of these alone -- a request that never runs refuses nothing.

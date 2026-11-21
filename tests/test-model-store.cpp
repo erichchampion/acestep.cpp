@@ -1416,8 +1416,9 @@ static int scenario_task_table() {
             batch[1].synth_batch_size      = 2;
             const AceSynthBatchTakes under = ace_synth_batch_takes(batch.data(), 2);
             const AceSynthBatchTakes none  = ace_synth_batch_takes(batch.data(), 0);
+            const AceSynthBatchTakes null  = ace_synth_batch_takes(nullptr, 3);
             if (under.takes != std::vector<int>{ 1, 2 } || under.total != 3 || under.asked != 3 ||
-                !none.takes.empty() || none.total != 0 || none.asked != 0) {
+                !none.takes.empty() || none.total != 0 || none.asked != 0 || !null.takes.empty() || null.total != 0) {
                 fprintf(stderr, "[Test] FAIL: an uncapped batch's takes are %d of %d; an empty one's %d\n", under.total,
                         under.asked, none.total);
                 rc = 1;
