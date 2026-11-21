@@ -272,14 +272,12 @@ static int synth_main(int argc, char ** argv) {
     }
 
     // Generate every request in one DiT batch. synth_batch_size expands each
-    // request into per-seed variants in groups[0]. Total clamped to DiT max kAceSynthMaxTakes.
-    int total_alloc = 0;
-    for (int ri = 0; ri < batch_n; ri++) {
-        total_alloc += ace_synth_request_takes(reqs[ri].synth_batch_size);
-    }
-    if (total_alloc > kAceSynthMaxTakes) {
-        fprintf(stderr, "[Ace-Synth] Batch %d exceeds DiT max %d, clamping\n", total_alloc, kAceSynthMaxTakes);
-        total_alloc = kAceSynthMaxTakes;
+    // request into per-seed variants in groups[0]. Total clamped to DiT max kAceSynthMaxTakes,
+    // by the engine's one rule for which requests run (ace_synth_batch_takes).
+    const AceSynthBatchTakes batch_takes = ace_synth_batch_takes(reqs.data(), batch_n);
+    const int                total_alloc = batch_takes.total;
+    if (batch_takes.asked > total_alloc) {
+        fprintf(stderr, "[Ace-Synth] Batch %d exceeds DiT max %d, clamping\n", batch_takes.asked, kAceSynthMaxTakes);
     }
     std::vector<AceAudio>                all_audio(total_alloc);
     std::vector<std::string>             all_basenames(total_alloc);
@@ -288,11 +286,8 @@ static int synth_main(int argc, char ** argv) {
     groups[0].reserve(total_alloc);
 
     int off = 0;
-    for (int ri = 0; ri < batch_n && off < total_alloc; ri++) {
-        int sbs = ace_synth_request_takes(reqs[ri].synth_batch_size);
-        if (off + sbs > total_alloc) {
-            sbs = total_alloc - off;
-        }
+    for (int ri = 0; ri < (int) batch_takes.takes.size(); ri++) {
+        const int sbs = batch_takes.takes[ri];
 
         // resolve seed once per original request
         request_resolve_seed(&reqs[ri]);

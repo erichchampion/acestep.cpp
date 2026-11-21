@@ -77,8 +77,8 @@ inline constexpr const char * kAceRefusalLengthTooLong =
 inline constexpr int kAceSynthMaxTakes = 9;
 
 // The takes a request's synth_batch_size expands to: 1..kAceSynthMaxTakes, a
-// size below 1 being one take. The tools and ace_synth_requests_run count a
-// request's takes by it alone, so they agree on what runs.
+// size below 1 being one take. ace_synth_batch_takes counts a request's
+// takes by it alone, for the tools and ace_synth_requests_run.
 inline int ace_synth_request_takes(int synth_batch_size) {
     return synth_batch_size < 1 ? 1 : (synth_batch_size > kAceSynthMaxTakes ? kAceSynthMaxTakes : synth_batch_size);
 }
@@ -293,10 +293,24 @@ bool ace_synth_request_missing_caption(const AceRequest * req);
 // (cadenza-audio #1165, #1240).
 bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatchRefusal * why, bool planned = false);
 
-// How many of a batch's requests (reqs non-NULL) the tools run: each expands
-// to its synth_batch_size takes (1..kAceSynthMaxTakes), and the batch is
-// clamped to the DiT's kAceSynthMaxTakes, so the requests past that take
-// never run. The tools ask the batch
+// A batch's takes as the tools expand it: each request to its
+// synth_batch_size takes (ace_synth_request_takes), the batch clamped to the
+// DiT's kAceSynthMaxTakes. `takes` holds one count per request that runs, in
+// order -- the last trimmed to fit, the requests past the cap left out -- and
+// sums to `total`. `asked` is the total before the clamp, for the tools' log.
+// The tools allocate and expand by this, and ace_synth_requests_run counts
+// its requests, so "which requests run" is one rule (cadenza-audio #1243).
+struct AceSynthBatchTakes {
+    std::vector<int> takes;
+    int              total = 0;
+    int              asked = 0;
+};
+
+AceSynthBatchTakes ace_synth_batch_takes(const AceRequest * reqs, int batch_n);
+
+// How many of a batch's requests (reqs non-NULL) the tools run:
+// ace_synth_batch_takes's requests, so the requests past the DiT's
+// kAceSynthMaxTakes take never run. The tools ask the batch
 // rule of these alone -- a request that never runs refuses nothing.
 int ace_synth_requests_run(const AceRequest * reqs, int batch_n);
 

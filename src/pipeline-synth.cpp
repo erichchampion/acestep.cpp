@@ -989,14 +989,23 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
     return false;
 }
 
-int ace_synth_requests_run(const AceRequest * reqs, int batch_n) {
-    int takes = 0;
-    int run   = 0;
-    for (int i = 0; i < batch_n && takes < kAceSynthMaxTakes; i++) {
-        takes += ace_synth_request_takes(reqs[i].synth_batch_size);
-        run++;
+AceSynthBatchTakes ace_synth_batch_takes(const AceRequest * reqs, int batch_n) {
+    AceSynthBatchTakes batch;
+    for (int i = 0; i < batch_n; i++) {
+        const int takes = ace_synth_request_takes(reqs[i].synth_batch_size);
+        batch.asked += takes;
+        if (batch.total < kAceSynthMaxTakes) {
+            const int room = kAceSynthMaxTakes - batch.total;
+            const int runs = takes < room ? takes : room;
+            batch.takes.push_back(runs);
+            batch.total += runs;
+        }
     }
-    return run;
+    return batch;
+}
+
+int ace_synth_requests_run(const AceRequest * reqs, int batch_n) {
+    return (int) ace_synth_batch_takes(reqs, batch_n).takes.size();
 }
 
 static std::atomic<int> g_test_batch_refusals{ 0 };

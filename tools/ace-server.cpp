@@ -728,15 +728,13 @@ static void synth_worker(std::shared_ptr<Job>    job,
                          WavFormat               wav_fmt,
                          int                     peak_clip) {
     // Generate every request in one DiT batch. synth_batch_size expands each
-    // request into per-seed variants. Total clamped to DiT max kAceSynthMaxTakes.
-    const int batch_n     = (int) ace_reqs.size();
-    int       total_alloc = 0;
-    for (int ri = 0; ri < batch_n; ri++) {
-        total_alloc += ace_synth_request_takes(ace_reqs[ri].synth_batch_size);
-    }
-    if (total_alloc > kAceSynthMaxTakes) {
-        fprintf(stderr, "[Server] Batch %d exceeds DiT max %d, clamping\n", total_alloc, kAceSynthMaxTakes);
-        total_alloc = kAceSynthMaxTakes;
+    // request into per-seed variants. Total clamped to DiT max kAceSynthMaxTakes,
+    // by the engine's one rule for which requests run (ace_synth_batch_takes).
+    const int                batch_n     = (int) ace_reqs.size();
+    const AceSynthBatchTakes batch_takes = ace_synth_batch_takes(ace_reqs.data(), batch_n);
+    const int                total_alloc = batch_takes.total;
+    if (batch_takes.asked > total_alloc) {
+        fprintf(stderr, "[Server] Batch %d exceeds DiT max %d, clamping\n", batch_takes.asked, kAceSynthMaxTakes);
     }
     std::vector<AceAudio> audio(total_alloc);
 
@@ -812,13 +810,9 @@ static void synth_worker(std::shared_ptr<Job>    job,
     // that, not the take's place in the expanded batch (#1193).
     std::vector<int> take_request;
     take_request.reserve(total_alloc);
-    int off = 0;
-    for (int ri = 0; ri < batch_n && off < total_alloc; ri++) {
-        auto & r   = ace_reqs[ri];
-        int    sbs = ace_synth_request_takes(r.synth_batch_size);
-        if (off + sbs > total_alloc) {
-            sbs = total_alloc - off;
-        }
+    for (int ri = 0; ri < (int) batch_takes.takes.size(); ri++) {
+        auto &    r   = ace_reqs[ri];
+        const int sbs = batch_takes.takes[ri];
         request_resolve_seed(&r);
         const long long base_seed = r.seed;
 
@@ -828,7 +822,6 @@ static void synth_worker(std::shared_ptr<Job>    job,
             groups[0].push_back(v);
             take_request.push_back(ri);
         }
-        off += sbs;
     }
 
     if (total_alloc > 1) {

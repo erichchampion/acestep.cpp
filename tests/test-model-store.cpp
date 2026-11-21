@@ -1397,6 +1397,26 @@ static int scenario_task_table() {
                         after_nine, after_eight);
                 rc = 1;
             }
+            // The takes the tools allocate and expand: 4 + 4 + the third's 1
+            // of its 3, trimmed to the cap; 15 asked (#1243).
+            batch[2].synth_batch_size      = 3;
+            const AceSynthBatchTakes eight = ace_synth_batch_takes(batch.data(), 10);
+            if (eight.takes != std::vector<int>{ 4, 4, 1 } || eight.total != 9 || eight.asked != 4 + 4 + 3 + 7) {
+                fprintf(stderr, "[Test] FAIL: the batch's takes are %zu request(s), %d in all of %d asked\n",
+                        eight.takes.size(), eight.total, eight.asked);
+                rc = 1;
+            }
+            // Under the cap, every request runs all its takes, a size below 1 being one.
+            batch[0].synth_batch_size      = 0;
+            batch[1].synth_batch_size      = 2;
+            const AceSynthBatchTakes under = ace_synth_batch_takes(batch.data(), 2);
+            const AceSynthBatchTakes none  = ace_synth_batch_takes(batch.data(), 0);
+            if (under.takes != std::vector<int>{ 1, 2 } || under.total != 3 || under.asked != 3 ||
+                !none.takes.empty() || none.total != 0 || none.asked != 0) {
+                fprintf(stderr, "[Test] FAIL: an uncapped batch's takes are %d of %d; an empty one's %d\n", under.total,
+                        under.asked, none.total);
+                rc = 1;
+            }
         }
         // An empty batch is refused, not read past.
         AceSynthBatchRefusal empty_why;
