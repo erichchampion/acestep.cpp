@@ -991,6 +991,9 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
 
 AceSynthBatchTakes ace_synth_batch_takes(const AceRequest * reqs, int batch_n) {
     AceSynthBatchTakes batch;
+    if (!reqs) {
+        return batch;
+    }
     for (int i = 0; i < batch_n; i++) {
         const int takes = ace_synth_request_takes(reqs[i].synth_batch_size);
         batch.asked += takes;

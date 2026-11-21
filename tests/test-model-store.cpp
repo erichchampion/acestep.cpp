@@ -1389,6 +1389,11 @@ static int scenario_task_table() {
             const int ten_of_one      = ace_synth_requests_run(batch.data(), 10);
             batch[0].synth_batch_size = 9;
             const int after_nine      = ace_synth_requests_run(batch.data(), 10);
+            // A request that fills the cap runs alone: the next isn't listed at 0.
+            if (ace_synth_batch_takes(batch.data(), 10).takes != std::vector<int>{ 9 }) {
+                fprintf(stderr, "[Test] FAIL: a batch whose first request fills the cap runs more than it\n");
+                rc = 1;
+            }
             batch[0].synth_batch_size = 4;
             batch[1].synth_batch_size = 4;
             const int after_eight     = ace_synth_requests_run(batch.data(), 10);
@@ -1398,7 +1403,7 @@ static int scenario_task_table() {
                 rc = 1;
             }
             // The takes the tools allocate and expand: 4 + 4 + the third's 1
-            // of its 3, trimmed to the cap; 15 asked (#1243).
+            // of its 3, trimmed to the cap; 18 asked, the other seven one each (#1243).
             batch[2].synth_batch_size      = 3;
             const AceSynthBatchTakes eight = ace_synth_batch_takes(batch.data(), 10);
             if (eight.takes != std::vector<int>{ 4, 4, 1 } || eight.total != 9 || eight.asked != 4 + 4 + 3 + 7) {
