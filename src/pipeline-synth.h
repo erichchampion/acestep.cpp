@@ -348,6 +348,11 @@ int ace_test_source_too_long();
 // by adjust_region_coords' after the pad's shift (cadenza-audio #1134).
 int ace_test_region_empty();
 
+// Tests only: how many runs have been refused for a region that covers no
+// latent frame by the check before its source's encode and its text encode,
+// not ops_build_context's after them (cadenza-audio #1137).
+int ace_test_region_no_frame();
+
 // Tests only: what the last run made of the request's cover knobs -- the
 // strength and noise it ran with, whether it built the switch to a non-cover
 // text encode, the step its context switches to silence at (-1: none), and

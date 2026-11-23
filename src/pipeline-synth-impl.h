@@ -251,6 +251,21 @@ inline bool lego_asks_region(float rs, float re) {
     return rs > 0.0f ? sec_latent_frame(rs) > 0 : sec_latent_frame_end(-rs) > 0;
 }
 
+// A run's frames for the DiT: `frames` rounded up to its patch, as
+// ops_resolve_T rounds them (cadenza-audio #1137).
+inline int frames_to_patch(int frames, int patch) {
+    return ((frames + patch - 1) / patch) * patch;
+}
+
+// The frames [t0, t1) a region from rs to re seconds (in the padded frame)
+// covers in a run of T: its first frame the one rs falls in, its end rounded
+// up, both held to the run, and never reversed. The one rule
+// resolve_region_frames and the refusal before the encode read (#1137).
+inline void region_frames_in(float rs, float re, int T, int & t0, int & t1) {
+    t0 = std::clamp(sec_latent_frame(rs), 0, T);
+    t1 = std::clamp(sec_latent_frame_end(re), t0, T);
+}
+
 // The region's latent frames, [repaint_t0, repaint_t1) with
 // 0 <= repaint_t0 <= repaint_t1 <= T -- its first frame the one its start falls
 // in, its end rounded up to cover the last frame it reaches into (#1129); an
@@ -267,8 +282,7 @@ inline void resolve_region_frames(SynthState & s) {
     if (!splices_source_after_decode(s)) {
         return;
     }
-    s.repaint_t0 = std::clamp(sec_latent_frame(s.rs), 0, s.T);
-    s.repaint_t1 = std::clamp(sec_latent_frame_end(s.re), s.repaint_t0, s.T);
+    region_frames_in(s.rs, s.re, s.T, s.repaint_t0, s.repaint_t1);
 }
 
 // The source's clean VAE latents: fsq_clean_latents holds them once the FSQ

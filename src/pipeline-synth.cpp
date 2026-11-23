@@ -228,6 +228,35 @@ static bool refuse_empty_region(SynthState & s, float end, float start) {
     return true;
 }
 
+// The runs refused for a region of no frame before the encodes
+// (ace_test_region_no_frame).
+static std::atomic<int> g_test_region_no_frame{ 0 };
+
+int ace_test_region_no_frame() {
+    return g_test_region_no_frame.load();
+}
+
+// True, said and counted, for a region that covers no latent frame of `enc`,
+// the source as padded: by the frame rule ops_build_context reads, over the
+// frames the encoder keeps rounded up to the patch as ops_resolve_T rounds
+// them, and the region shifted by the pad as adjust_region_coords shifts it.
+// Asked before the source's encode and the text encode, which a region of
+// none would run for nothing (cadenza-audio #1137).
+static bool refuse_region_no_frame(const AceSynth * ctx, SynthState & s, const AceRequest & r,
+                                   const SynthInput & enc, float src_dur) {
+    const float rs = r.repainting_start + s.left_pad_sec;
+    const float re = asked_region_end(r.repainting_start, r.repainting_end, src_dur) + s.left_pad_sec;
+    int         t0 = 0, t1 = 0;
+    region_frames_in(rs, re, frames_to_patch((int) enc.frames(), ctx->meta->cfg.patch_size), t0, t1);
+    if (t1 > t0) {
+        return false;
+    }
+    g_test_region_no_frame.fetch_add(1);
+    s.refusal = kAceRefusalRegionNoFrame;
+    fprintf(stderr, "[Region] ERROR: the region %.3fs..%.3fs covers no latent frame\n", rs, re);
+    return true;
+}
+
 // The runs refused for a source, with its pads if any, past a run's most
 // frames -- before its pad is allocated or its encode run
 // (ace_test_source_too_long).
@@ -266,11 +295,11 @@ static bool refuse_past_run_most(SynthState & s, long long frames, const char * 
 // a pad that would take the run past its most frames (ACE_MAX_LATENT_FRAMES):
 // a far region bound -- a repainting_end of 1e10 s -- is refused before its
 // pad is, not after gigabytes of one (#1139).
-static bool apply_outpainting_padding(const AceSynth *   ctx,
-                                      const AceRequest & r,
-                                      const SynthInput & src,
-                                      SynthState &       s,
-                                      SynthInput &       enc) {
+static bool pad_for_region(const AceSynth *   ctx,
+                           const AceRequest & r,
+                           const SynthInput & src,
+                           SynthState &       s,
+                           SynthInput &       enc) {
     // Both bounds are finite: run_task's batch rule refused a request whose
     // task reads a region and a bound of it is no number (#1150).
     enc = src;
@@ -378,6 +407,17 @@ static bool apply_outpainting_padding(const AceSynth *   ctx,
                 lpad_s, samples_sec(rpad_s), rpad_s, samples_sec(padded_total));
     }
     return true;
+}
+
+// The source padded for its region (pad_for_region), and the region refused
+// there if it covers no frame of it -- before the source's encode and the
+// text encode, not after (#1137). False, said, for either refusal.
+static bool apply_outpainting_padding(const AceSynth *   ctx,
+                                      const AceRequest & r,
+                                      const SynthInput & src,
+                                      SynthState &       s,
+                                      SynthInput &       enc) {
+    return pad_for_region(ctx, r, src, s, enc) && !refuse_region_no_frame(ctx, s, r, enc, src.duration_sec());
 }
 
 // Shift region coords into the padded reference frame, resolve sentinel end

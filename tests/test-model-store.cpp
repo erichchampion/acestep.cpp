@@ -2129,15 +2129,33 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // A repaint whose region covers no latent frame -- an outpaint of latents
     // within the frame slack of none, so nothing padded -- is refused before
     // its DiT, not run to give back its source unsaid (cadenza-audio #1129).
+    // Refused before its text encode, by the check where its source is
+    // padded -- not ops_build_context's after it -- a repaint's and a lego
+    // region's alike: also a region within the slack of none at the source's
+    // end, which pads nothing (#1137).
     {
-        AceSynthEncodes none;
-        if (cover.src_latents.empty() ||
-            !run("repaint", NULL, NULL, none, true, 0, &cover.src_latents, -0.0001f, -1.0f) ||
-            !none.src_latents.empty() || !none.ref_latents.empty() || !last_refusal.reason ||
-            strcmp(last_refusal.reason, kAceRefusalRegionNoFrame)) {
-            fprintf(stderr, "[Test] FAIL: a repaint whose region covers no frame returned a job, or reached its DiT\n");
-            rc = 1;
+        struct Case {
+            const char * task;
+            float        rs, re;
+        };
+
+        for (const Case & c : {
+                 Case{ "repaint", -0.0001f,        -1.0f                     },
+                 Case{ "repaint", (float) seconds, (float) seconds + 0.0001f },
+                 Case{ "lego",    (float) seconds, (float) seconds + 0.0001f }
+        }) {
+            AceSynthEncodes none;
+            const int       before = ace_test_region_no_frame();
+            if (cover.src_latents.empty() || !run(c.task, NULL, NULL, none, true, 0, &cover.src_latents, c.rs, c.re) ||
+                !none.src_latents.empty() || !none.ref_latents.empty() || !last_refusal.reason ||
+                strcmp(last_refusal.reason, kAceRefusalRegionNoFrame) || ace_test_region_no_frame() != before + 1) {
+                fprintf(stderr, "[Test] FAIL: the %s from %.4f s to %.4f s, of no frame, was not refused before its encodes\n",
+                        c.task, c.rs, c.re);
+                rc = 1;
+            }
         }
+    }
+    {
         // Nor a region whose end is far past what a run holds: refused before
         // its pad is allocated -- gigabytes of one, for 1e10 s (#1139) -- by
         // the bound, not by a failure further in (#1144).
