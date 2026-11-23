@@ -2132,8 +2132,8 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // Refused before its encodes, by the check where its source is padded --
     // not ops_build_context's after the text encode -- a repaint's and a lego
     // region's alike: also a region within the slack of none at the source's
-    // end, which pads nothing; and as audio, its VAE encode not run either,
-    // or the failed run would hand its encode out (#1137).
+    // end, which pads nothing; and as audio. No encode pass is reached: not
+    // the source's, nor the text's after it (#1137).
     {
         struct Case {
             const char * task;
@@ -2148,12 +2148,13 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                  Case{ "repaint", (float) seconds, (float) seconds + 0.0001f, false }
         }) {
             AceSynthEncodes none;
-            const int       before = ace_test_region_no_frame();
+            const int       before = ace_test_region_no_frame(), passes = ace_test_encode_passes();
             if (cover.src_latents.empty() ||
                 !run(c.task, c.latents ? NULL : source.data(), NULL, none, true, 0,
                      c.latents ? &cover.src_latents : nullptr, c.rs, c.re) ||
                 !none.src_latents.empty() || !none.ref_latents.empty() || !last_refusal.reason ||
-                strcmp(last_refusal.reason, kAceRefusalRegionNoFrame) || ace_test_region_no_frame() != before + 1) {
+                strcmp(last_refusal.reason, kAceRefusalRegionNoFrame) || ace_test_region_no_frame() != before + 1 ||
+                ace_test_encode_passes() != passes) {
                 fprintf(stderr,
                         "[Test] FAIL: the %s from %.4f s to %.4f s (%s), of no frame, was not refused before its "
                         "encodes\n",

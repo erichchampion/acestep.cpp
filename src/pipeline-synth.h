@@ -353,6 +353,11 @@ int ace_test_region_empty();
 // not ops_build_context's after them (cadenza-audio #1137).
 int ace_test_region_no_frame();
 
+// Tests only: how many runs have reached their encodes -- the source's and
+// the timbre's, which come before the text's -- so a test can tell a run
+// refused before them from one refused after (cadenza-audio #1137).
+int ace_test_encode_passes();
+
 // Tests only: what the last run made of the request's cover knobs -- the
 // strength and noise it ran with, whether it built the switch to a non-cover
 // text encode, the step its context switches to silence at (-1: none), and

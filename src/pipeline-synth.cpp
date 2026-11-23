@@ -216,7 +216,7 @@ int ace_test_region_empty() {
 }
 
 // True, said and counted, for a region that ends at or before its start: the
-// one rule apply_outpainting_padding asks before the pad and the encode, and
+// one rule pad_for_region asks before the pad and the encode, and
 // adjust_region_coords after the pad's shift (#1134).
 static bool refuse_empty_region(SynthState & s, float end, float start) {
     if (end > start) {
@@ -226,6 +226,14 @@ static bool refuse_empty_region(SynthState & s, float end, float start) {
     s.refusal = kAceRefusalRegionEmpty;
     fprintf(stderr, "[Region] ERROR: end (%.1f) <= start (%.1f)\n", end, start);
     return true;
+}
+
+// The runs that reached their encodes: the source's, the timbre's, and after
+// them the text's (ace_test_encode_passes).
+static std::atomic<int> g_test_encode_passes{ 0 };
+
+int ace_test_encode_passes() {
+    return g_test_encode_passes.load();
 }
 
 // The runs refused for a region of no frame before the encodes
@@ -431,11 +439,11 @@ static bool adjust_region_coords(SynthState & s, float src_dur) {
 // it (adjust_region_coords), and refused there if it covers no frame of it --
 // before the source's encode and the text encode, not after (#1137). False,
 // said, for any refusal.
-static bool apply_outpainting_padding(const AceSynth *   ctx,
-                                      const AceRequest & r,
-                                      const SynthInput & src,
-                                      SynthState &       s,
-                                      SynthInput &       enc) {
+static bool prepare_region(const AceSynth *   ctx,
+                           const AceRequest & r,
+                           const SynthInput & src,
+                           SynthState &       s,
+                           SynthInput &       enc) {
     return pad_for_region(ctx, r, src, s, enc) && adjust_region_coords(s, src.duration_sec()) &&
            !refuse_region_no_frame(ctx, s, enc);
 }
@@ -504,6 +512,7 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
                                          const SynthInput & ref,
                                          SynthState &       s,
                                          AceProgress        progress) {
+    g_test_encode_passes.fetch_add(1);
     // Neither input given needs no pin either: the timbre takes its silence
     // path, the source no encode.
     const bool  have_src_audio   = src.has_audio();
@@ -659,7 +668,7 @@ static int run_repaint(AceSynth *          ctx,
     s.instruction_str    = DIT_INSTR_REPAINT;
 
     SynthInput enc;
-    if (!apply_outpainting_padding(ctx, reqs[0], in.src, s, enc)) {
+    if (!prepare_region(ctx, reqs[0], in.src, s, enc)) {
         return -1;
     }
 
@@ -706,7 +715,7 @@ static int run_lego(AceSynth *          ctx,
 
     // In region mode, padded at the edges the region passes; else as given.
     SynthInput enc = in.src;
-    if (s.is_lego_region && !apply_outpainting_padding(ctx, reqs[0], in.src, s, enc)) {
+    if (s.is_lego_region && !prepare_region(ctx, reqs[0], in.src, s, enc)) {
         return -1;
     }
 
