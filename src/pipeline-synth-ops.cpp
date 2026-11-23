@@ -382,7 +382,7 @@ int ops_resolve_T(const AceSynth * ctx, SynthState & s) {
     } else {
         s.T = sec_latent_frame(s.duration);
     }
-    s.T     = frames_to_patch(s.T, ctx->meta->cfg.patch_size);
+    s.T     = (int) frames_to_patch(s.T, ctx->meta->cfg.patch_size);
     s.S     = s.T / ctx->meta->cfg.patch_size;
     s.enc_S = 0;
 
@@ -718,8 +718,8 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
         // A region with no frame -- within the frame slack of none, or past
         // the run's end -- would mask nothing and give back the source, unsaid
         // (#1129). apply_outpainting_padding refuses it by the same rule,
-        // before the encodes (#1137); this holds for a run that got here
-        // another way.
+        // before the encodes (#1137), for every task that splices today:
+        // this is a backstop, uncounted, should a run reach here another way.
         if (s.repaint_t1 <= s.repaint_t0) {
             fprintf(stderr, "[Build-Context] ERROR: the region %.3fs..%.3fs covers no latent frame\n", s.rs, s.re);
             s.refusal = kAceRefusalRegionNoFrame;

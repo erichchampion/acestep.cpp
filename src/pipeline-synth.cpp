@@ -236,24 +236,26 @@ int ace_test_region_no_frame() {
     return g_test_region_no_frame.load();
 }
 
-// True, said and counted, for a region that covers no latent frame of `enc`,
-// the source as padded: by the frame rule ops_build_context reads, over the
-// frames the encoder keeps rounded up to the patch as ops_resolve_T rounds
-// them, and the region shifted by the pad as adjust_region_coords shifts it.
-// Asked before the source's encode and the text encode, which a region of
-// none would run for nothing (cadenza-audio #1137).
-static bool refuse_region_no_frame(const AceSynth * ctx, SynthState & s, const AceRequest & r,
-                                   const SynthInput & enc, float src_dur) {
-    const float rs = r.repainting_start + s.left_pad_sec;
-    const float re = asked_region_end(r.repainting_start, r.repainting_end, src_dur) + s.left_pad_sec;
-    int         t0 = 0, t1 = 0;
-    region_frames_in(rs, re, frames_to_patch((int) enc.frames(), ctx->meta->cfg.patch_size), t0, t1);
+// True, said and counted, for a region (s.rs, s.re, shifted by
+// adjust_region_coords) that covers no latent frame of `enc`, the source as
+// padded: by the frame rule ops_build_context reads, over the frames the
+// encoder keeps rounded up to the patch as ops_resolve_T rounds them. Asked
+// before the source's encode and the text encode, which a region of none
+// would run for nothing (cadenza-audio #1137). A source past a run's most is
+// left to its own refusal, after (#1144): that is what is wrong with it.
+static bool refuse_region_no_frame(const AceSynth * ctx, SynthState & s, const SynthInput & enc) {
+    const long long T = frames_to_patch(enc.frames(), ctx->meta->cfg.patch_size);
+    if (frames_past_run_most(T)) {
+        return false;
+    }
+    int t0 = 0, t1 = 0;
+    region_frames_in(s.rs, s.re, (int) T, t0, t1);
     if (t1 > t0) {
         return false;
     }
     g_test_region_no_frame.fetch_add(1);
     s.refusal = kAceRefusalRegionNoFrame;
-    fprintf(stderr, "[Region] ERROR: the region %.3fs..%.3fs covers no latent frame\n", rs, re);
+    fprintf(stderr, "[Region] ERROR: the region %.3fs..%.3fs covers no latent frame\n", s.rs, s.re);
     return true;
 }
 
@@ -409,17 +411,6 @@ static bool pad_for_region(const AceSynth *   ctx,
     return true;
 }
 
-// The source padded for its region (pad_for_region), and the region refused
-// there if it covers no frame of it -- before the source's encode and the
-// text encode, not after (#1137). False, said, for either refusal.
-static bool apply_outpainting_padding(const AceSynth *   ctx,
-                                      const AceRequest & r,
-                                      const SynthInput & src,
-                                      SynthState &       s,
-                                      SynthInput &       enc) {
-    return pad_for_region(ctx, r, src, s, enc) && !refuse_region_no_frame(ctx, s, r, enc, src.duration_sec());
-}
-
 // Shift region coords into the padded reference frame, resolve sentinel end
 // (-1) to either left pad boundary (outpaint) or source end (inpaint).
 // src_dur is the unpadded source duration in seconds, agnostic of audio vs
@@ -432,8 +423,21 @@ static bool adjust_region_coords(SynthState & s, float src_dur) {
     if (refuse_empty_region(s, s.re, s.rs)) {
         return false;
     }
-    fprintf(stderr, "[Region] %.1fs..%.1fs (canvas=%.1fs)\n", s.rs, s.re, latent_frames_sec(s.T_cover));
+    fprintf(stderr, "[Region] %.1fs..%.1fs\n", s.rs, s.re);
     return true;
+}
+
+// The source padded for its region (pad_for_region), the region shifted into
+// it (adjust_region_coords), and refused there if it covers no frame of it --
+// before the source's encode and the text encode, not after (#1137). False,
+// said, for any refusal.
+static bool apply_outpainting_padding(const AceSynth *   ctx,
+                                      const AceRequest & r,
+                                      const SynthInput & src,
+                                      SynthState &       s,
+                                      SynthInput &       enc) {
+    return pad_for_region(ctx, r, src, s, enc) && adjust_region_coords(s, src.duration_sec()) &&
+           !refuse_region_no_frame(ctx, s, enc);
 }
 
 // Uppercase track name for instruction templates, warn on unknown names.
@@ -513,8 +517,7 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
     // this is the source a task encodes, padded or not. Its frames are
     // rounded up to the DiT's patch, as ops_resolve_T rounds T, so the two
     // bounds agree for any patch_size, not only one that divides the most.
-    const long long patch            = ctx->meta->cfg.patch_size > 0 ? ctx->meta->cfg.patch_size : 1;
-    if (refuse_past_run_most(s, (src.frames() + patch - 1) / patch * patch, "the source")) {
+    if (refuse_past_run_most(s, frames_to_patch(src.frames(), ctx->meta->cfg.patch_size), "the source")) {
         return false;
     }
     bool        need_vae_pin     = (have_src_audio || have_ref_audio);
@@ -663,9 +666,6 @@ static int run_repaint(AceSynth *          ctx,
     if (!pinned_encode_src_and_timbre(ctx, enc, in.ref, s, progress)) {
         return -1;
     }
-    if (!adjust_region_coords(s, in.src.duration_sec())) {
-        return -1;
-    }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {
         return -1;
     }
@@ -711,9 +711,6 @@ static int run_lego(AceSynth *          ctx,
     }
 
     if (!pinned_encode_src_and_timbre(ctx, enc, in.ref, s, progress)) {
-        return -1;
-    }
-    if (s.is_lego_region && !adjust_region_coords(s, in.src.duration_sec())) {
         return -1;
     }
     if (run_tail(ctx, reqs, batch_n, s, progress) != 0) {

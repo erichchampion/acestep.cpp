@@ -251,10 +251,13 @@ inline bool lego_asks_region(float rs, float re) {
     return rs > 0.0f ? sec_latent_frame(rs) > 0 : sec_latent_frame_end(-rs) > 0;
 }
 
-// A run's frames for the DiT: `frames` rounded up to its patch, as
-// ops_resolve_T rounds them (cadenza-audio #1137).
-inline int frames_to_patch(int frames, int patch) {
-    return ((frames + patch - 1) / patch) * patch;
+// A run's frames for the DiT: `frames` rounded up to its patch (a patch of
+// none read as 1), in 64 bits -- the one rounding ops_resolve_T, the source's
+// bound and the region's frame check read, so they agree for any patch_size
+// (cadenza-audio #1137, #1144).
+inline long long frames_to_patch(long long frames, long long patch) {
+    patch = patch > 0 ? patch : 1;
+    return (frames + patch - 1) / patch * patch;
 }
 
 // The frames [t0, t1) a region from rs to re seconds (in the padded frame)

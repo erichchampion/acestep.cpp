@@ -2129,28 +2129,35 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // A repaint whose region covers no latent frame -- an outpaint of latents
     // within the frame slack of none, so nothing padded -- is refused before
     // its DiT, not run to give back its source unsaid (cadenza-audio #1129).
-    // Refused before its text encode, by the check where its source is
-    // padded -- not ops_build_context's after it -- a repaint's and a lego
+    // Refused before its encodes, by the check where its source is padded --
+    // not ops_build_context's after the text encode -- a repaint's and a lego
     // region's alike: also a region within the slack of none at the source's
-    // end, which pads nothing (#1137).
+    // end, which pads nothing; and as audio, its VAE encode not run either,
+    // or the failed run would hand its encode out (#1137).
     {
         struct Case {
             const char * task;
             float        rs, re;
+            bool         latents;
         };
 
         for (const Case & c : {
-                 Case{ "repaint", -0.0001f,        -1.0f                     },
-                 Case{ "repaint", (float) seconds, (float) seconds + 0.0001f },
-                 Case{ "lego",    (float) seconds, (float) seconds + 0.0001f }
+                 Case{ "repaint", -0.0001f,        -1.0f,                     true  },
+                 Case{ "repaint", (float) seconds, (float) seconds + 0.0001f, true  },
+                 Case{ "lego",    (float) seconds, (float) seconds + 0.0001f, true  },
+                 Case{ "repaint", (float) seconds, (float) seconds + 0.0001f, false }
         }) {
             AceSynthEncodes none;
             const int       before = ace_test_region_no_frame();
-            if (cover.src_latents.empty() || !run(c.task, NULL, NULL, none, true, 0, &cover.src_latents, c.rs, c.re) ||
+            if (cover.src_latents.empty() ||
+                !run(c.task, c.latents ? NULL : source.data(), NULL, none, true, 0,
+                     c.latents ? &cover.src_latents : nullptr, c.rs, c.re) ||
                 !none.src_latents.empty() || !none.ref_latents.empty() || !last_refusal.reason ||
                 strcmp(last_refusal.reason, kAceRefusalRegionNoFrame) || ace_test_region_no_frame() != before + 1) {
-                fprintf(stderr, "[Test] FAIL: the %s from %.4f s to %.4f s, of no frame, was not refused before its encodes\n",
-                        c.task, c.rs, c.re);
+                fprintf(stderr,
+                        "[Test] FAIL: the %s from %.4f s to %.4f s (%s), of no frame, was not refused before its "
+                        "encodes\n",
+                        c.task, c.rs, c.re, c.latents ? "latents" : "audio");
                 rc = 1;
             }
         }
