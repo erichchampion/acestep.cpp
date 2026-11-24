@@ -433,6 +433,7 @@ static bool prepare_region(const AceSynth *   ctx,
         return false;
     }
     int padded_total = (int) padded;
+    s.take_samples   = padded_total;
     if (run_on) {
         const int frame_end = samples_frames_ceil(padded_total) * ACE_LATENT_HOP;
         rpad_s += frame_end - padded_total;

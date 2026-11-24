@@ -119,6 +119,11 @@ struct SynthState {
     float              left_pad_sec;    // seconds of silence prepended (coordinate shift)
     std::vector<float> padded_src;      // interleaved stereo buffer with silence padding (audio path)
     std::vector<float> padded_latents;  // [T_padded, 64] f32 with silence_full padding (latent path)
+    // The take's length in samples, for a run whose source is spliced back
+    // after its decode as audio: the source with its pads, as asked -- not
+    // the whole frames the decode gives, nor the pad's run-on to a frame
+    // (cadenza-audio #1142). 0 for any other run.
+    int                take_samples = 0;
 
     // mode flags
     bool  is_repaint;

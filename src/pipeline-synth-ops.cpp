@@ -1056,6 +1056,42 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
     out->samples   = audio;
     out->n_samples = T_audio;
 
+    // A take spliced from its source as audio is as long as its source with
+    // its pads, in samples: not the whole frames the decode gives, which
+    // drop the source's part frame or keep the pad's run-on to a frame, so
+    // two takes of one source came out at different lengths (cadenza-audio
+    // #1142). The decode is held to it; a part it gives short of it is the
+    // source's, as every sample outside the region is. Planar: the second
+    // channel moved to the new stride.
+    if (splices_source_after_decode(s) && s.take_samples > 0 && T_audio != s.take_samples &&
+        (size_t) s.take_samples * 2 <= s.padded_src.size()) {
+        const int T_take = s.take_samples;
+        bool      held   = false;
+        if (T_take < T_audio) {
+            memmove(audio + T_take, audio + T_audio, (size_t) T_take * sizeof(float));
+            if (float * fit = (float *) realloc(audio, (size_t) 2 * T_take * sizeof(float))) {
+                audio = fit;
+            }
+            held = true;
+        } else if (float * grown = (float *) realloc(audio, (size_t) 2 * T_take * sizeof(float))) {
+            audio = grown;
+            memmove(audio + T_take, audio + T_audio, (size_t) T_audio * sizeof(float));
+            for (int ch = 0; ch < 2; ch++) {
+                for (int si = T_audio; si < T_take; si++) {
+                    audio[(size_t) ch * T_take + si] = s.padded_src[(size_t) si * 2 + ch];
+                }
+            }
+            held = true;
+        } else {
+            fprintf(stderr, "[VAE-Decode Batch%d] WARNING: OOM holding the take to %d samples\n", b, T_take);
+        }
+        if (held) {
+            out->samples   = audio;
+            out->n_samples = T_take;
+            T_audio        = T_take;
+        }
+    }
+
     // Waveform hard splice (audio path only): replace out-of-zone samples
     // with the original source PCM. The VAE roundtrip is lossy, so this
     // restores bit-exact fidelity outside the region. Skipped on the

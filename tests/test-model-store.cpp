@@ -2168,6 +2168,61 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             }
         }
     }
+    // take TASK SOURCE LEN LATENTS START END OUT: a region run to its end and
+    // decoded, two steps, into OUT (planar; ace_audio_free). False for a run
+    // or a decode that failed.
+    auto take = [&](const char * task, const float * src, int src_len, const std::vector<float> * lat, float rs,
+                    float re, AceAudio & out) {
+        AceRequest r;
+        request_init(&r);
+        r.caption          = "a short test";
+        r.duration         = (float) seconds;
+        r.seed             = 1;
+        r.inference_steps  = 2;
+        r.task_type        = task;
+        r.repainting_start = rs;
+        r.repainting_end   = re;
+        out                = AceAudio{ nullptr, 0, 0 };
+        AceSynthJob * job  = ace_synth_job_run_dit(synth, &r, src, src ? src_len : 0, lat ? lat->data() : NULL,
+                                                   lat ? (int) (lat->size() / 64) : 0, NULL, 0, NULL, 0, 1);
+        if (!job) {
+            return false;
+        }
+        const int vae = ace_synth_job_run_vae(synth, job, &out);
+        ace_synth_job_free(job);
+        return vae == 0 && out.samples && out.n_samples > 0;
+    };
+    // Whether a take's samples in [from, to) are its source's, exactly: a
+    // region spliced back from its source as audio keeps it bit for bit.
+    auto keeps_source = [&](const AceAudio & a, int from, int to) {
+        for (int ch = 0; ch < 2; ch++) {
+            for (int si = from; si < to && si < a.n_samples; si++) {
+                if (a.samples[(size_t) ch * a.n_samples + si] != source[(size_t) si * 2 + ch]) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    // An audio repaint's take is its source's length in samples, not its
+    // whole frames': a 2.03 s source (50.75 frames) gives 2.03 s takes, a
+    // region inside it and one to its end alike -- not 2.00 s, the part frame
+    // dropped, nor 2.04 s, the pad's run-on kept (cadenza-audio #1142).
+    {
+        const int len = ACE_SAMPLE_RATE * 203 / 100;
+        for (const float re : { 1.5f, -1.0f }) {
+            AceAudio a;
+            if (!take("repaint", source.data(), len, nullptr, 1.0f, re, a) || a.n_samples != len ||
+                !keeps_source(a, 0, ACE_SAMPLE_RATE) ||
+                (re > 0.0f && !keeps_source(a, (int) (re * ACE_SAMPLE_RATE), len))) {
+                fprintf(stderr, "[Test] FAIL: a repaint of a 2.03 s source from 1.0 s to %.1f s gave %d samples, "
+                                "want %d, its source kept outside the region\n",
+                        re, a.n_samples, len);
+                rc = 1;
+            }
+            ace_audio_free(&a);
+        }
+    }
     {
         // Nor a region whose end is far past what a run holds: refused before
         // its pad is allocated -- gigabytes of one, for 1e10 s (#1139) -- by
