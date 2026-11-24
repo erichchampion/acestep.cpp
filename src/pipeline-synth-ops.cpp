@@ -802,7 +802,7 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
                 int ret = detok_ggml_decode(detok, codes_b.data(), T_5Hz, decoded_per_b[b].data());
                 if (ret < 0) {
                     fprintf(stderr, "[Build-Context Batch%d] FATAL: detokenizer decode failed\n", b);
-                    return synth_failed(s, AceSynthFailure::other, "the audio codes' detokenizer decode failed");
+                    return synth_failed(s, AceSynthFailure::encode_failed, "the audio codes' detokenizer decode failed");
                 }
                 fprintf(stderr, "[Build-Context Batch%d] Detokenizer: %.1f ms, %d codes\n", b, s.timer.ms(), T_5Hz);
 

@@ -22,7 +22,22 @@
 #include "ace-fatal.h"
 #include "gpu-compute.h"
 
+#include <cctype>
 #include <string>
+
+// A fatal's words for a job's error: its log line less the "[Tag] FATAL: "
+// it is printed with, and the newline after it (cadenza-audio #1194).
+inline std::string ace_fatal_words(const char * line) {
+    std::string words = line ? line : "";
+    const size_t at   = words.find("FATAL: ");
+    if (at != std::string::npos) {
+        words.erase(0, at + 7);
+    }
+    while (!words.empty() && std::isspace((unsigned char) words.back())) {
+        words.pop_back();
+    }
+    return words;
+}
 
 // Runs `fn`: -1 when it returns, else the status of the fatal or graph
 // allocation failure it threw, its words in `what` when given -- so a server
@@ -33,12 +48,12 @@ template <class F> inline int ace_tool_catch(F && fn, std::string * what = nullp
         fn();
     } catch (const ace_fatal_error & e) {
         if (what) {
-            *what = e.what();
+            *what = ace_fatal_words(e.what());
         }
         return e.code;
     } catch (const ace_graph_alloc_error & e) {
         if (what) {
-            *what = e.what();
+            *what = ace_fatal_words(e.what());
         }
         return 1;
     }

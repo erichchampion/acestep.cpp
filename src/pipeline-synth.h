@@ -99,7 +99,8 @@ inline int ace_synth_request_takes(int synth_batch_size) {
 enum class AceSynthFailure {
     none,               // not failed, or refused (`reason` says why)
     model_unavailable,  // a model the run needs could not be had from the store
-    encode_failed,      // an encode, or the FSQ roundtrip, made nothing
+    encode_failed,      // an encode, a detokenize -- the FSQ roundtrip's or the
+                        // audio codes' -- made nothing: one kind for one fault
     cancelled,          // the progress callback asked to cancel
     other,              // any other failure: the engine's diagnostic is on stderr
 };
