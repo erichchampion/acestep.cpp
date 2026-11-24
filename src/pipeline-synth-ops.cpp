@@ -156,7 +156,7 @@ int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s,
         VAEEncoder * vae_enc = store_require_vae_enc(ctx->store, ctx->vae_enc_key);
         if (!vae_enc) {
             fprintf(stderr, "[Encode-Src] FATAL: store_require_vae_enc failed\n");
-            return -1;
+            return synth_failed(s, AceSynthFailure::model_unavailable, "the VAE encoder could not be loaded");
         }
         ModelHandle vae_enc_guard(ctx->store, vae_enc);
 
@@ -168,13 +168,15 @@ int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s,
         if (s.T_cover < 0) {
             // -1 is both cancel and failure; both abort here (unlike the timbre
             // path, which tolerates a failure by falling back to silence), so
-            // this only sharpens the diagnostic.
+            // this only sharpens the diagnostic -- and the failure the run
+            // says: a cancel is run_task's to say, seen from the callback,
+            // not an encode that failed (cadenza-audio #1092).
             if (ace_cancelled(progress, ACE_STAGE_VAE_ENCODE)) {
                 fprintf(stderr, "[Encode-Src] Cancelled\n");
-            } else {
-                fprintf(stderr, "[Encode-Src] FATAL: encode failed\n");
+                return -1;
             }
-            return -1;
+            fprintf(stderr, "[Encode-Src] FATAL: encode failed\n");
+            return synth_failed(s, AceSynthFailure::encode_failed, "the source's VAE encode failed");
         }
         s.cover_latents.resize(s.T_cover * 64);
         fprintf(stderr, "[Encode-Src] Encoded: T_cover=%d (%.2fs), %.1f ms\n", s.T_cover, latent_frames_sec(s.T_cover),
@@ -194,27 +196,17 @@ int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s,
     return 0;
 }
 
-// ace_test_fail_next_fsq_require's: the next roundtrip's require fails; and
-// the requires it has failed.
+// ace_test_fail_next_fsq_require's: the next roundtrip's require fails.
 static std::atomic<bool> g_test_fail_fsq_require{ false };
-static std::atomic<int>  g_test_fsq_require_failures{ 0 };
 
 void ace_test_fail_next_fsq_require(bool armed) {
     g_test_fail_fsq_require.store(armed);
 }
 
-int ace_test_fsq_require_failures() {
-    return g_test_fsq_require_failures.load();
-}
-
 // Whether this require is the one the hook fails: a relaxed load first, so a
 // shipping run pays no read-modify-write (as ace_gpu_injected).
 static bool fsq_require_failed_by_test() {
-    if (!g_test_fail_fsq_require.load(std::memory_order_relaxed) || !g_test_fail_fsq_require.exchange(false)) {
-        return false;
-    }
-    g_test_fsq_require_failures.fetch_add(1);
-    return true;
+    return g_test_fail_fsq_require.load(std::memory_order_relaxed) && g_test_fail_fsq_require.exchange(false);
 }
 
 int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
@@ -238,7 +230,7 @@ int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
         TokGGML * tok = fsq_require_failed_by_test() ? nullptr : store_require_fsq_tok(ctx->store, ctx->fsq_tok_key);
         if (!tok) {
             fprintf(stderr, "[FSQ-Roundtrip] FATAL: store_require_fsq_tok failed\n");
-            return -1;
+            return synth_failed(s, AceSynthFailure::model_unavailable, "the FSQ tokenizer could not be loaded");
         }
         ModelHandle tok_guard(ctx->store, tok);
         if (!ctx->params.use_fa) {
@@ -250,7 +242,7 @@ int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
     }
     if (T_5Hz_actual <= 0) {
         fprintf(stderr, "[FSQ-Roundtrip] FATAL: the tokenizer made no codes\n");
-        return -1;
+        return synth_failed(s, AceSynthFailure::encode_failed, "the FSQ roundtrip's tokenizer made no codes");
     }
 
     // Detokenizer scope: acquire, decode 5Hz codes back to 25Hz latents, release.
@@ -263,7 +255,7 @@ int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
         DetokGGML * detok = store_require_fsq_detok(ctx->store, ctx->fsq_detok_key);
         if (!detok) {
             fprintf(stderr, "[FSQ-Roundtrip] FATAL: store_require_fsq_detok failed\n");
-            return -1;
+            return synth_failed(s, AceSynthFailure::model_unavailable, "the FSQ detokenizer could not be loaded");
         }
         ModelHandle detok_guard(ctx->store, detok);
         if (!ctx->params.use_fa) {
@@ -274,7 +266,7 @@ int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
     }
     if (ret < 0) {
         fprintf(stderr, "[FSQ-Roundtrip] FATAL: the detokenizer failed\n");
-        return -1;
+        return synth_failed(s, AceSynthFailure::encode_failed, "the FSQ roundtrip's detokenizer failed");
     }
     // The degraded latents condition the run from here; the clean ones move
     // to fsq_clean_latents, which clean_src_latents reads (#1042). Two
@@ -554,7 +546,7 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
     BPETokenizer * bpe = store_bpe(ctx->store, ctx->params.text_encoder_path, ctx->text_enc_key.file_id);
     if (!bpe) {
         fprintf(stderr, "[Encode-Text] FATAL: store_bpe failed\n");
-        return -1;
+        return synth_failed(s, AceSynthFailure::model_unavailable, "the text encoder's tokenizer could not be loaded");
     }
 
     std::vector<TextEncForward> main_fwd(batch_n);
@@ -566,7 +558,7 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
         Qwen3GGML * te = store_require_text_enc(ctx->store, ctx->text_enc_key);
         if (!te) {
             fprintf(stderr, "[Encode-Text] FATAL: store_require_text_enc failed\n");
-            return -1;
+            return synth_failed(s, AceSynthFailure::model_unavailable, "the text encoder could not be loaded");
         }
         ModelHandle te_guard(ctx->store, te);
         if (!ctx->params.use_fa) {
@@ -634,7 +626,7 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
         CondGGML * ce = store_require_cond_enc(ctx->store, ctx->cond_enc_key);
         if (!ce) {
             fprintf(stderr, "[Encode-Text] FATAL: store_require_cond_enc failed\n");
-            return -1;
+            return synth_failed(s, AceSynthFailure::model_unavailable, "the condition encoder could not be loaded");
         }
         ModelHandle ce_guard(ctx->store, ce);
         if (!ctx->params.use_fa) {
@@ -790,7 +782,7 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
             DetokGGML * detok = store_require_fsq_detok(ctx->store, ctx->fsq_detok_key);
             if (!detok) {
                 fprintf(stderr, "[Build-Context] FATAL: store_require_fsq_detok failed\n");
-                return -1;
+                return synth_failed(s, AceSynthFailure::model_unavailable, "the FSQ detokenizer could not be loaded");
             }
             ModelHandle detok_guard(ctx->store, detok);
             if (!ctx->params.use_fa) {
@@ -810,7 +802,7 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
                 int ret = detok_ggml_decode(detok, codes_b.data(), T_5Hz, decoded_per_b[b].data());
                 if (ret < 0) {
                     fprintf(stderr, "[Build-Context Batch%d] FATAL: detokenizer decode failed\n", b);
-                    return -1;
+                    return synth_failed(s, AceSynthFailure::other, "the audio codes' detokenizer decode failed");
                 }
                 fprintf(stderr, "[Build-Context Batch%d] Detokenizer: %.1f ms, %d codes\n", b, s.timer.ms(), T_5Hz);
 
@@ -956,7 +948,7 @@ int ops_dit_generate(const AceSynth * ctx, int batch_n, SynthState & s, AceProgr
     DiTGGML * dit = store_require_dit(ctx->store, ctx->dit_key);
     if (!dit) {
         fprintf(stderr, "[DiT-Generate] FATAL: store_require_dit failed\n");
-        return -1;
+        return synth_failed(s, AceSynthFailure::model_unavailable, "the DiT could not be loaded");
     }
     ModelHandle dit_guard(ctx->store, dit);
     if (!ctx->params.use_fa) {
@@ -972,7 +964,9 @@ int ops_dit_generate(const AceSynth * ctx, int batch_n, SynthState & s, AceProgr
         s.per_enc_S_nc_final.empty() ? nullptr : s.per_enc_S_nc_final.data(), s.seeds.data(), ctx->params.use_batch_cfg,
         s.rr.dcw_scaler, s.rr.dcw_high_scaler, s.rr.dcw_mode.c_str(), s.rr.solver.c_str(), s.rr.stork_substeps);
     if (dit_rc != 0) {
-        return -1;
+        // A cancel, or a graph the DiT could not allocate: run_task says a
+        // cancel over this, as it saw the callback ask (cadenza-audio #1092).
+        return synth_failed(s, AceSynthFailure::other, "the DiT's denoise did not run");
     }
     fprintf(stderr, "[DiT-Generate] Total: %.1f ms (%.1f ms/sample)\n", s.timer.ms(), s.timer.ms() / batch_n);
 

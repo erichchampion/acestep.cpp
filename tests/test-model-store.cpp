@@ -1847,9 +1847,21 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     const size_t    frames  = (size_t) seconds * 25;
     const int       ignores = ace_test_source_ignores();
     AceSynthEncodes cover, text, repaint, nofsq;
-    if (!run("cover", source.data(), NULL, cover) || !run("text2music", NULL, reference.data(), text) ||
-        !run("repaint", source.data(), NULL, repaint, true) || !run("cover-nofsq", source.data(), NULL, nofsq)) {
-        fprintf(stderr, "[Test] FAIL: a run returned a job, or failed before its DiT's first poll\n");
+    // Each run cancelled at its DiT says so: a cancel, not another failure
+    // and not a refusal -- the one kind a caller answers as the user's own
+    // stop (cadenza-audio #1092).
+    auto            said_cancel = [&] {
+        return last_refusal.request == -1 && !last_refusal.reason &&
+               last_refusal.failure == AceSynthFailure::cancelled && last_refusal.failed;
+    };
+    if (!run("cover", source.data(), NULL, cover) || !said_cancel() ||
+        !run("text2music", NULL, reference.data(), text) || !said_cancel() ||
+        !run("repaint", source.data(), NULL, repaint, true) || !said_cancel() ||
+        !run("cover-nofsq", source.data(), NULL, nofsq) || !said_cancel()) {
+        fprintf(stderr,
+                "[Test] FAIL: a run returned a job, failed before its DiT's first poll, or did not say it was "
+                "cancelled (failure %d: %s)\n",
+                (int) last_refusal.failure, last_refusal.failed ? last_refusal.failed : "none said");
         rc = 1;
     }
     // A run cancelled at its DiT was not refused: the call says none (#1160).
@@ -2081,14 +2093,14 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     }
     // Every task the table says needs a source refuses a run given none,
     // by the table's refusal -- not by a failure further in, which a
-    // sourceless task also reaches -- with nothing handed out: the table's
+    // sourceless task also reaches: its reason, said by the table alone, and
+    // no failure (#1092) -- with nothing handed out: the table's
     // needs_source column, row by row (#1057).
     for (const char * task : { "cover", "cover-nofsq", "repaint", "lego", "extract", "complete" }) {
         AceSynthEncodes none;
-        const int       refused = ace_test_source_refusals();
-        if (!run(task, NULL, NULL, none, false, 0) || ace_test_source_refusals() != refused + 1 ||
-            !none.src_latents.empty() || !none.ref_latents.empty() || last_refusal.request != -1 ||
-            !last_refusal.reason || !strstr(last_refusal.reason, "requires source")) {
+        if (!run(task, NULL, NULL, none, false, 0) || !none.src_latents.empty() || !none.ref_latents.empty() ||
+            last_refusal.request != -1 || !last_refusal.reason || !strstr(last_refusal.reason, "requires source") ||
+            last_refusal.failure != AceSynthFailure::none || last_refusal.failed) {
             fprintf(stderr, "[Test] FAIL: a %s given no source was not refused by the task table\n", task);
             rc = 1;
         }
@@ -2531,13 +2543,19 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     }
     // A cover whose FSQ roundtrip cannot run fails before its DiT, and still
     // hands out its clean encode -- the one a cover-nofsq hands out (#1056).
+    // It says why: the FSQ tokenizer the store could not give, a model
+    // unavailable, not a refusal -- which is also how the test sees the
+    // hook fired (#1092).
     AceSynthEncodes failed;
-    const int       fired = ace_test_fsq_require_failures();
     ace_test_fail_next_fsq_require(true);
     const bool failed_early = run("cover", source.data(), NULL, failed, false, 0);
     ace_test_fail_next_fsq_require(false);
-    if (ace_test_fsq_require_failures() != fired + 1) {
-        fprintf(stderr, "[Test] FAIL: the cover never reached the FSQ require the hook fails\n");
+    if (last_refusal.failure != AceSynthFailure::model_unavailable || !last_refusal.failed ||
+        !strstr(last_refusal.failed, "FSQ tokenizer") || last_refusal.reason) {
+        fprintf(stderr,
+                "[Test] FAIL: the cover did not fail at the FSQ require the hook fails: failure %d (%s), refusal %s\n",
+                (int) last_refusal.failure, last_refusal.failed ? last_refusal.failed : "none said",
+                last_refusal.reason ? last_refusal.reason : "none");
         rc = 1;
     } else if (!failed_early) {
         fprintf(stderr, "[Test] FAIL: a cover whose FSQ roundtrip failed returned a job, or reached its DiT\n");
@@ -2570,12 +2588,12 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             continue;
         }
         AceSynthEncodes given;
-        const int       refused = ace_test_source_refusals(), ignored = ace_test_source_ignores();
+        const int       ignored = ace_test_source_ignores();
         const bool ran = as_latents ? run("text2music", NULL, reference.data(), given, false, 1, &cover.src_latents) :
                                       run("text2music", source.data(), reference.data(), given);
-        // The counters first: a refusal stops the run before its DiT, which
-        // is said as that, not as a failure further in.
-        if (ace_test_source_refusals() != refused) {
+        // A refusal first: it stops the run before its DiT, which is said as
+        // that, not as a failure further in -- by the call's reason (#1092).
+        if (last_refusal.reason) {
             fprintf(stderr, "[Test] FAIL: a text2music given %s was refused\n", form);
             rc = 1;
         } else if (ace_test_source_ignores() != ignored + 1) {

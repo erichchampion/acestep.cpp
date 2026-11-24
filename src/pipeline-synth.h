@@ -91,10 +91,27 @@ inline int ace_synth_request_takes(int synth_batch_size) {
 // "requests differ in <field>" leads with too, so a tool can word
 // it its own way without reading `reason` (cadenza-audio #1165); NULL for
 // any other refusal.
+// A run that failed without refusing its request says why in `failure` and
+// `failed` instead (cadenza-audio #1092): `reason` stays NULL for it, so a
+// caller reading `reason` as "refused" -- an invalid request -- reads only
+// refusals. ace_synth_batch_refused and ace_synth_inputs_refused never set
+// them.
+enum class AceSynthFailure {
+    none,               // not failed, or refused (`reason` says why)
+    model_unavailable,  // a model the run needs could not be had from the store
+    encode_failed,      // an encode, or the FSQ roundtrip, made nothing
+    cancelled,          // the progress callback asked to cancel
+    other,              // any other failure: the engine's diagnostic is on stderr
+};
+
 struct AceSynthBatchRefusal {
-    int          request = -1;
-    const char * reason  = nullptr;
-    const char * field   = nullptr;
+    int             request = -1;
+    const char *    reason  = nullptr;
+    const char *    field   = nullptr;
+    // Why a run failed that was not refused: a static string -- which model,
+    // which encode -- set with every failure but `none`.
+    AceSynthFailure failure = AceSynthFailure::none;
+    const char *    failed  = nullptr;
 };
 
 // Phase 1: encode sources, build context, run all DiT denoising steps.
@@ -139,9 +156,12 @@ struct AceSynthBatchRefusal {
 //   run, for the request itself (request -1, the kAceRefusal* reasons above:
 //   its region, its length), which may come after the source's and the
 //   text's encodes. So a caller can answer an invalid request as that, not
-//   as the pipeline failing (cadenza-audio #1160, #1193). Left {-1, NULL} by
-//   a call that was not refused: one that ran, failed for another reason,
-//   or was cancelled.
+//   as the pipeline failing (cadenza-audio #1160, #1193). Its reason is left
+//   NULL by a call that was not refused: one that ran, failed for another
+//   reason, or was cancelled. One that failed so says which in `failure` and
+//   `failed` -- a model the store could not give, an encode that made
+//   nothing, a cancel, or another failure -- and one that ran leaves them
+//   unset (cadenza-audio #1092). A throw (a GPU error, bad_alloc) sets none.
 // Returns NULL on error or cancellation.
 AceSynthJob * ace_synth_job_run_dit(AceSynth *             ctx,
                                     const AceRequest *     reqs,
@@ -323,15 +343,10 @@ int ace_test_batch_refusals();
 // tokenizer could not be had (store_require_fsq_tok returning NULL), once --
 // a path no input reaches, which a test drives to see the Cover fail and
 // still hand out its clean encode (cadenza-audio #1056); without, the hook
-// is disarmed, fired or not. ace_test_fsq_require_failures counts the
-// requires it has failed, so a test can see it fired.
+// is disarmed, fired or not. A test sees it fired by the run's failure,
+// model_unavailable for the FSQ tokenizer (cadenza-audio #1092), as it
+// tells the task table's refusal of a sourceless task by its reason.
 void ace_test_fail_next_fsq_require(bool armed);
-int  ace_test_fsq_require_failures();
-
-// Tests only: how many runs the task table has refused for a task that needs
-// a source given none -- so a test can tell that refusal from a failure
-// further in, which a sourceless task also reaches (cadenza-audio #1057).
-int ace_test_source_refusals();
 
 // Tests only: how many runs the task table has warned of a source given to
 // a task that takes none, run without it (cadenza-audio #1095).

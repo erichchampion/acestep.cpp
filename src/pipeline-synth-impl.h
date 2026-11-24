@@ -197,6 +197,11 @@ struct SynthState {
     // reason run_task hands out through ace_synth_job_run_dit's `refused`
     // (cadenza-audio #1193). NULL for a run that failed otherwise.
     const char * refusal = nullptr;
+    // Why the run failed otherwise, where an op could tell (synth_failed):
+    // the first failure said, which run_task hands out through `refused`'s
+    // failure and failed (cadenza-audio #1092). none for a run that has not.
+    AceSynthFailure failure = AceSynthFailure::none;
+    const char *    failed  = nullptr;
 
     // stacked encoder hidden states
     int                max_enc_S;
@@ -219,6 +224,17 @@ struct SynthState {
     DebugDumper dbg;
     Timer       timer;
 };
+
+// Say why the run failed, `why` a static string, and return -1 for the op to
+// return: the first failure said holds, so an op failing in turn for an
+// earlier one's cause does not overwrite it (cadenza-audio #1092).
+inline int synth_failed(SynthState & s, AceSynthFailure kind, const char * why) {
+    if (s.failure == AceSynthFailure::none) {
+        s.failure = kind;
+        s.failed  = why;
+    }
+    return -1;
+}
 
 // Whether the run splices its source back in after the decode -- a repaint,
 // or a lego region -- so its encode is not what a run again needs: one rule

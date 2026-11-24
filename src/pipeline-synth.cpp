@@ -547,6 +547,7 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
     ModelHandle vae_pin(ctx->store, need_vae_pin ? store_require_vae_enc(ctx->store, ctx->vae_enc_key) : NULL);
     if (need_vae_pin && !vae_pin.ptr) {
         fprintf(stderr, "[Pipeline-Synth] FATAL: store_require_vae_enc (pin) failed\n");
+        synth_failed(s, AceSynthFailure::model_unavailable, "the VAE encoder could not be loaded");
         return false;
     }
     if (have_src) {
@@ -1077,13 +1078,6 @@ int ace_test_batch_refusals() {
     return g_test_batch_refusals.load();
 }
 
-// The runs run_task has refused for want of a source (ace_test_source_refusals).
-static std::atomic<int> g_test_source_refusals{ 0 };
-
-int ace_test_source_refusals() {
-    return g_test_source_refusals.load();
-}
-
 // The runs run_task has warned of a source their task ignores
 // (ace_test_source_ignores).
 static std::atomic<int> g_test_source_ignores{ 0 };
@@ -1117,6 +1111,37 @@ int ace_test_cover_knob_fixes() {
     return g_test_cover_knob_fixes.load();
 }
 
+// The run's progress, passed through to the caller's, seeing whether the
+// callback ever asked to cancel: so run_task can say a run that stopped for
+// it was cancelled, with no poll of its own -- a poll a caller would see, and
+// one a callback that cancels once would answer otherwise (cadenza-audio
+// #1092). PCM passes through too, though phase 1 streams none.
+struct CancelSeen {
+    AceProgress inner;
+    bool        cancelled = false;
+
+    static bool poll(void * data, AceStage stage, int step, int total) {
+        CancelSeen * self = static_cast<CancelSeen *>(data);
+        const bool   stop = self->inner.fn(self->inner.data, stage, step, total);
+        self->cancelled   = self->cancelled || stop;
+        return stop;
+    }
+
+    static void pcm(void * data, const float * left, const float * right, int n_frames) {
+        const CancelSeen * self = static_cast<const CancelSeen *>(data);
+        self->inner.pcm(self->inner.data, left, right, n_frames);
+    }
+
+    // No callback stays none, as a caller's empty progress never cancels.
+    AceProgress progress() {
+        AceProgress p;
+        p.fn   = inner.fn ? &CancelSeen::poll : nullptr;
+        p.pcm  = inner.pcm ? &CancelSeen::pcm : nullptr;
+        p.data = this;
+        return p;
+    }
+};
+
 // Dispatches on reqs[0].task_type to the right task function. task_type is
 // always set: request_init defaults it to text2music, the JSON parser ignores
 // empty strings.
@@ -1145,7 +1170,6 @@ static AceSynthJob * run_task(AceSynth *             ctx,
     const std::string & task  = reqs[0].task_type;
     const SynthTask *   entry = find_synth_task(task);
     if (ace_synth_inputs_refused(task.c_str(), in.src.given(), &refused)) {
-        g_test_source_refusals.fetch_add(1);
         fprintf(stderr, "[Synth-Run] ERROR: task '%s' requires source audio or latents\n", task.c_str());
         return NULL;
     }
@@ -1215,11 +1239,26 @@ static AceSynthJob * run_task(AceSynth *             ctx,
         }
     } record{ s };
 
-    const int rc = entry->run(ctx, reqs, in, batch_n, s, progress);
+    CancelSeen seen{ progress };
+    const int  rc = entry->run(ctx, reqs, in, batch_n, s, seen.progress());
     // A request the run refused partway -- its region, its length -- is
     // handed out as a refusal, as one refused before the job is (#1193).
+    // Any other failure is said as its kind (#1092): a cancel the callback
+    // asked for first, over what the op that stopped for it said; then the
+    // op's own; else a failure no op named.
     if (rc != 0 && s.refusal) {
         refused = { -1, s.refusal };
+    } else if (rc != 0) {
+        if (seen.cancelled) {
+            refused.failure = AceSynthFailure::cancelled;
+            refused.failed  = "the run was cancelled";
+        } else if (s.failure != AceSynthFailure::none) {
+            refused.failure = s.failure;
+            refused.failed  = s.failed;
+        } else {
+            refused.failure = AceSynthFailure::other;
+            refused.failed  = "the run failed";
+        }
     }
     return rc == 0 ? job_owner.release() : NULL;
 }
@@ -1239,8 +1278,8 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *             ctx,
                                     AceProgress            progress,
                                     AceSynthEncodes *      failed_encodes,
                                     AceSynthBatchRefusal * refused) {
-    // Unset, and filled only by a refusal before the job (#1160); a caller
-    // that asks for none gets one of its own to fill.
+    // Unset, and filled only by a refusal or a failure (#1160, #1092); a
+    // caller that asks for none gets one of its own to fill.
     AceSynthBatchRefusal   none;
     AceSynthBatchRefusal & why = refused ? *refused : none;
     why                        = {};
