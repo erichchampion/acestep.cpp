@@ -732,9 +732,11 @@ static void synth_worker(std::shared_ptr<Job>    job,
                          bool                    output_wav,
                          WavFormat               wav_fmt,
                          int                     peak_clip) {
-    // The buffers are this worker's, freed however it ends -- a throw from
-    // the load or the run included, which work_push_job reports -- not by
-    // hand at each return (cadenza-audio #1194).
+    // The source and reference buffers are this worker's, freed however it
+    // ends -- a throw from the load or the run included, which work_push_job
+    // reports -- not by hand at each return (cadenza-audio #1194). A throw
+    // still leaves the run's own jobs and takes, and the synth: those are
+    // synth_batch_run's to unwind, and a synth is not freed under its jobs.
     malloc_guard own_src{ src_interleaved }, own_ref{ ref_interleaved };
     // Generate every request in one DiT batch. synth_batch_size expands each
     // request into per-seed variants. Total clamped to DiT max kAceSynthMaxTakes,
@@ -798,8 +800,6 @@ static void synth_worker(std::shared_ptr<Job>    job,
             ace_reqs[0].adapter.empty() ? "" : " Adapter=", ace_reqs[0].adapter.c_str());
 
     AceSynth * ctx = ace_synth_load(g_store, &p);
-    // Freed however the run ends, as the buffers are.
-    std::unique_ptr<AceSynth, void (*)(AceSynth *)> own_ctx(ctx, ace_synth_free);
     if (!ctx) {
         fail_before_run("the synth could not be loaded (DiT " + dit_name + ", VAE " + vae_name +
                         (ace_reqs[0].adapter.empty() ? std::string() : ", adapter " + ace_reqs[0].adapter) +
@@ -860,7 +860,7 @@ static void synth_worker(std::shared_ptr<Job>    job,
             refused.failed ? std::string("the run failed: ") + refused.failed : std::string("the VAE decode failed");
         fprintf(stderr, "[Server] job %s: %s\n", job->id.c_str(), job->error.c_str());
     }
-    own_ctx.reset();
+    ace_synth_free(ctx);
 
     if (rc != 0) {
         for (auto & a : audio) {

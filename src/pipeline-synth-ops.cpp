@@ -966,7 +966,7 @@ int ops_dit_generate(const AceSynth * ctx, int batch_n, SynthState & s, AceProgr
     if (dit_rc != 0) {
         // A cancel, or a graph the DiT could not allocate: run_task says a
         // cancel over this, as it saw the callback ask (cadenza-audio #1092).
-        return synth_failed(s, AceSynthFailure::other, "the DiT's denoise did not run");
+        return synth_failed(s, AceSynthFailure::other, "the DiT's denoise did not run (a graph it could not allocate -- memory, most likely -- or a step that failed; on stderr)");
     }
     fprintf(stderr, "[DiT-Generate] Total: %.1f ms (%.1f ms/sample)\n", s.timer.ms(), s.timer.ms() / batch_n);
 
