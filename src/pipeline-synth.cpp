@@ -203,14 +203,11 @@ static void shifted_region(float rs_raw, float re_raw, float src_dur, float left
     re = asked_region_end(rs_raw, re_raw, src_dur) + left_pad_sec;
 }
 
-// The frame a region (shifted) ends at when it lies wholly past the first
-// `held` frames, so a pad of `held` would give it none -- the frame the pad
-// then runs on to -- else 0. By region_frames_in, the frame rule the run
-// reads, over a run that ends nowhere (#1138, cadenza-audio #1282).
-static int region_end_past(float rs, float re, int64_t held) {
-    int t0 = 0, t1 = 0;
+// The frames [t0, t1) a region (shifted) covers in a run that ends nowhere:
+// by region_frames_in, the frame rule the run reads -- so the pad's run-on
+// decides as the run will (#1138, cadenza-audio #1282).
+static void region_frames_unbounded(float rs, float re, int & t0, int & t1) {
     region_frames_in(rs, re, std::numeric_limits<int>::max(), t0, t1);
-    return (t0 >= held && t1 > held) ? t1 : 0;
 }
 
 // The runs refused for a region that ends at or before its start, once its
@@ -375,7 +372,9 @@ static bool prepare_region(const AceSynth *   ctx,
         shifted_region(rs_raw, re_raw, src_dur, latent_frames_sec(lpad_T), rs, re);
         // A region wholly past the frames padded has the frames it reaches.
         const int64_t held   = (int64_t) lpad_T + src.T_latent + rpad_T;
-        const int     past   = region_end_past(rs, re, held);
+        int           t0 = 0, t1 = 0;
+        region_frames_unbounded(rs, re, t0, t1);
+        const int past = (t0 >= held && t1 > held) ? t1 : 0;
         // The frames the run will hold, in 64 bits -- the region's end for one
         // lying wholly past the padded frames -- against the run's most,
         // before any is added or allocated: each pad is held to 1e9 frames,
@@ -417,15 +416,20 @@ static bool prepare_region(const AceSynth *   ctx,
     int lpad_s                = sec_samples_nearest(lpad);
     int rpad_s                = sec_samples_nearest(rpad);
     s.left_pad_sec            = samples_sec(lpad_s);
-    // The encoder keeps whole frames only, so a region wholly past the last
+    // The encoder keeps whole frames only, so a region reaching past the last
     // whole frame -- to a source's end inside one, or into a pad of less
-    // than a frame -- would have no frame, and be refused as covering none.
-    // Then the pad runs on to the next frame's end (#1138).
+    // than a frame -- would not be generated there: wholly past it, it would
+    // have no frame and be refused as covering none (#1138); else its part
+    // frame would be the source's, the take cut back to it (#1142). Then the
+    // pad runs on to that frame's end, and the take is held to the source's
+    // own length after its decode.
     const int64_t padded = (int64_t) lpad_s + src.len + rpad_s;
     const int64_t whole  = padded / ACE_LATENT_HOP;
     float         rs = 0.0f, re = 0.0f;
     shifted_region(rs_raw, re_raw, src_dur, s.left_pad_sec, rs, re);
-    const bool run_on = region_end_past(rs, re, whole) > 0;
+    int t0 = 0, t1 = 0;
+    region_frames_unbounded(rs, re, t0, t1);
+    const bool run_on = t1 > whole;
     // The frames the encoder will keep -- whole ones, or the one the pad runs
     // on to -- against the run's most, before any is allocated: a 600 s
     // take is the most, though a float pad lands a sample past it (#1139).

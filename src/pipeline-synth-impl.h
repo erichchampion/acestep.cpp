@@ -128,10 +128,12 @@ struct SynthState {
     // inside a frame -- [0] its start's, [1] its end's -- for the crossfade
     // back to the source at the edge's own sample (cadenza-audio #1140):
     // planar, edge_src_T samples from sample edge_src_at. Decoded once, for
-    // every take; edge_src_at -1 until then.
+    // every take; edge_src_at -1 until then, -2 for a decode that failed
+    // (not asked again). edge_src_frame: the frame each is about.
     std::vector<float> edge_src[2];
-    int                edge_src_at[2] = { -1, -1 };
-    int                edge_src_T[2]  = { 0, 0 };
+    int                edge_src_at[2]    = { -1, -1 };
+    int                edge_src_T[2]     = { 0, 0 };
+    int                edge_src_frame[2] = { -1, -1 };
 
     // mode flags
     bool  is_repaint;

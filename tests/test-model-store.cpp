@@ -2207,16 +2207,18 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // An audio repaint's take is its source's length in samples, not its
     // whole frames': a 2.03 s source (50.75 frames) gives 2.03 s takes, a
     // region inside it and one to its end alike -- not 2.00 s, the part frame
-    // dropped, nor 2.04 s, the pad's run-on kept (cadenza-audio #1142).
+    // dropped, nor 2.04 s, the pad's run-on kept (cadenza-audio #1142). The
+    // region to its end is generated to it: its last 30 ms not the source's.
     {
         const int len = ACE_SAMPLE_RATE * 203 / 100;
         for (const float re : { 1.5f, -1.0f }) {
             AceAudio a;
             if (!take("repaint", source.data(), len, nullptr, 1.0f, re, a) || a.n_samples != len ||
                 !keeps_source(a, 0, ACE_SAMPLE_RATE) ||
-                (re > 0.0f && !keeps_source(a, (int) (re * ACE_SAMPLE_RATE), len))) {
+                (re > 0.0f && !keeps_source(a, (int) (re * ACE_SAMPLE_RATE), len)) ||
+                (re < 0.0f && keeps_source(a, ACE_SAMPLE_RATE * 2, len))) {
                 fprintf(stderr, "[Test] FAIL: a repaint of a 2.03 s source from 1.0 s to %.1f s gave %d samples, "
-                                "want %d, its source kept outside the region\n",
+                                "want %d, its source kept outside the region and the region generated to its end\n",
                         re, a.n_samples, len);
                 rc = 1;
             }

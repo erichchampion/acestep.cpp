@@ -1013,40 +1013,73 @@ static constexpr int kEdgeFadeSamples = 480;
 // they do in the whole run.
 static constexpr int kEdgeContextFrames = 16;
 
+// The job's progress with its reports said only as cancel polls (step and
+// total -1), and no PCM: a decode the take is not, which must not stream its
+// audio to the player as more of the take, nor show as a decode pass.
+struct CancelOnlyProgress {
+    AceProgress inner;
+
+    static bool poll(void * data, AceStage stage, int, int) {
+        const AceProgress & p = static_cast<CancelOnlyProgress *>(data)->inner;
+        return p.fn && p.fn(p.data, stage, -1, -1);
+    }
+
+    AceProgress progress() {
+        AceProgress p;
+        p.fn   = &CancelOnlyProgress::poll;
+        p.data = this;
+        return p;
+    }
+};
+
 // The source's latents (cover_latents, as the latent splice keeps them)
-// decoded about frame `frame`, into s.edge_src[k] -- once a job. 0, decoded
-// or held already; 1, a decode that failed (the edge left as generated);
-// -1, cancelled.
+// decoded about frame `frame`, into s.edge_src[k] -- once a job, and once for
+// both edges in one frame. 0, decoded or held already; 1, no source there or
+// a decode that failed (the edge left as generated); -1, cancelled.
 static int ops_edge_source(VAEGGML * vae, const AceSynth * ctx, SynthState & s, int k, int frame,
                            AceProgress progress) {
     if (s.edge_src_at[k] >= 0) {
         return 0;
     }
-    const int w0 = std::max(frame - kEdgeContextFrames, 0);
-    const int w1 = std::min(frame + 1 + kEdgeContextFrames, s.T_cover);
-    if (w1 <= w0) {
+    if (s.edge_src_at[k] == -2) {
         return 1;
     }
+    const int other = 1 - k;
+    if (s.edge_src_at[other] >= 0 && s.edge_src_frame[other] == frame) {
+        s.edge_src[k]       = s.edge_src[other];
+        s.edge_src_at[k]    = s.edge_src_at[other];
+        s.edge_src_T[k]     = s.edge_src_T[other];
+        s.edge_src_frame[k] = frame;
+        return 0;
+    }
+    // A frame past the source's (a patch's rounding, a pad's end) has no
+    // source to decode.
+    const int w0 = std::max(frame - kEdgeContextFrames, 0);
+    const int w1 = std::min(frame + 1 + kEdgeContextFrames, s.T_cover);
+    if (frame >= s.T_cover || w1 <= w0) {
+        s.edge_src_at[k] = -2;
+        return 1;
+    }
+    CancelOnlyProgress quiet{ progress };
     std::vector<float> win((size_t) 2 * (w1 - w0) * ACE_LATENT_HOP);
+    // Planar at the decode's own length, as ops_vae_decode_track reads it.
     const int          got = vae_ggml_decode_tiled(vae, s.cover_latents.data() + (size_t) w0 * 64, w1 - w0, win.data(),
                                                    (w1 - w0) * ACE_LATENT_HOP, ctx->params.vae_chunk,
-                                                   ctx->params.vae_overlap, progress);
-    if (got < 0) {
+                                                   ctx->params.vae_overlap, quiet.progress());
+    if (got <= 0) {
         if (ace_cancelled(progress, ACE_STAGE_VAE_DECODE)) {
             return -1;
         }
         fprintf(stderr, "[Latent-Edge] WARNING: the source's decode about frame %d failed: the edge as generated\n",
                 frame);
+        s.edge_src_at[k] = -2;
         return 1;
     }
-    if (got < (w1 - w0) * ACE_LATENT_HOP) {
-        // Planar at the decode's own stride.
-        memmove(win.data() + got, win.data() + (size_t) (w1 - w0) * ACE_LATENT_HOP, (size_t) got * sizeof(float));
-        win.resize((size_t) 2 * got);
-    }
-    s.edge_src[k]    = std::move(win);
-    s.edge_src_at[k] = w0 * ACE_LATENT_HOP;
-    s.edge_src_T[k]  = got;
+    win.resize((size_t) 2 * got);
+    s.edge_src[k]       = std::move(win);
+    s.edge_src_at[k]    = w0 * ACE_LATENT_HOP;
+    s.edge_src_T[k]     = got;
+    s.edge_src_frame[k] = frame;
     return 0;
 }
 
@@ -1072,9 +1105,10 @@ static int ops_latent_edges(VAEGGML * vae, const AceSynth * ctx, SynthState & s,
     };
     // Blend [a, b) from `from` to `to` (each: true the source's, false the
     // take's), linear.
+    // Held to the source's decode: a blend past it is cut short there.
     auto      blend   = [&](int k, int a, int b, bool from_src, bool to_src) {
-        a = std::max(a, 0);
-        b = std::min(b, T_audio);
+        a = std::max({ a, 0, s.edge_src_at[k] });
+        b = std::min({ b, T_audio, s.edge_src_at[k] + s.edge_src_T[k] });
         for (int ch = 0; ch < 2; ch++) {
             float * pred = audio + (size_t) ch * T_audio;
             for (int si = a; si < b; si++) {
