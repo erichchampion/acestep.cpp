@@ -32,8 +32,10 @@
 //   T_track = entry.size() / 64. Pass NULL to skip the capture.
 // refused: when non-NULL, why the engine refused a group's run -- before its
 //   job or partway, as ace_synth_job_run_dit says it (cadenza-audio #1160,
-//   #1193) -- its request counted across every group, as audio_out is; left
-//   unset by any other failure.
+//   #1193) -- its request counted across every group, as audio_out is; or
+//   why a group's run failed otherwise, its failure and failed
+//   (cadenza-audio #1092). Left unset by a failed VAE decode, which says
+//   none.
 // Returns 0 on success, -1 on any error or cancellation.
 static int synth_batch_run(AceSynth *                             ctx,
                            std::vector<std::vector<AceRequest>> & groups,

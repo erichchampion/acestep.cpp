@@ -317,9 +317,15 @@ static int synth_main(int argc, char ** argv) {
     if (rc != 0) {
         if (refused.reason) {
             fprintf(stderr, "[Ace-Synth] ERROR: the engine refused %s: %s\n",
-                    refused.request >= 0 ? all_basenames[refused.request].c_str() : "the batch", refused.reason);
+                    refused.request >= 0 && refused.request < (int) all_basenames.size() ?
+                        all_basenames[(size_t) refused.request].c_str() :
+                        "the batch",
+                    refused.reason);
+        } else if (refused.failed) {
+            // The engine's failure, said as it named it (cadenza-audio #1092).
+            fprintf(stderr, "[Ace-Synth] ERROR: batch run failed: %s\n", refused.failed);
         } else {
-            fprintf(stderr, "[Ace-Synth] ERROR: batch run failed\n");
+            fprintf(stderr, "[Ace-Synth] ERROR: batch run failed: the VAE decode failed\n");
         }
         for (auto & a : all_audio) {
             ace_audio_free(&a);
