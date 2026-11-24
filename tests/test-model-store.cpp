@@ -2133,7 +2133,8 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // not ops_build_context's after the text encode -- a repaint's and a lego
     // region's alike: also a region within the slack of none at the source's
     // end, which pads nothing; and as audio. No encode pass is reached: not
-    // the source's, nor the text's after it (#1137).
+    // the source's, nor the text's after it (#1137); nor is the source copied
+    // for its pad, a latent one or the audio's (#1282).
     {
         struct Case {
             const char * task;
@@ -2145,19 +2146,23 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                  Case{ "repaint", -0.0001f,        -1.0f,                     true  },
                  Case{ "repaint", (float) seconds, (float) seconds + 0.0001f, true  },
                  Case{ "lego",    (float) seconds, (float) seconds + 0.0001f, true  },
-                 Case{ "repaint", (float) seconds, (float) seconds + 0.0001f, false }
+                 Case{ "repaint", (float) seconds, (float) seconds + 0.0001f, false },
+                 // Past the source, so padded: twelve frames of pad, the
+                 // region at the twelfth's end (#1282).
+                 Case{ "repaint", seconds + 0.48f, seconds + 0.4801f, true  }
         }) {
             AceSynthEncodes none;
-            const int       before = ace_test_region_no_frame(), passes = ace_test_encode_passes();
+            const int       before = ace_test_region_no_frame(), passes = ace_test_encode_passes(),
+                      pads = ace_test_region_pads();
             if (cover.src_latents.empty() ||
                 !run(c.task, c.latents ? NULL : source.data(), NULL, none, true, 0,
                      c.latents ? &cover.src_latents : nullptr, c.rs, c.re) ||
                 !none.src_latents.empty() || !none.ref_latents.empty() || !last_refusal.reason ||
                 strcmp(last_refusal.reason, kAceRefusalRegionNoFrame) || ace_test_region_no_frame() != before + 1 ||
-                ace_test_encode_passes() != passes) {
+                ace_test_encode_passes() != passes || ace_test_region_pads() != pads) {
                 fprintf(stderr,
                         "[Test] FAIL: the %s from %.4f s to %.4f s (%s), of no frame, was not refused before its "
-                        "encodes\n",
+                        "pad and its encodes\n",
                         c.task, c.rs, c.re, c.latents ? "latents" : "audio");
                 rc = 1;
             }

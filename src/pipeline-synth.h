@@ -345,13 +345,18 @@ int ace_test_source_too_long();
 
 // Tests only: how many runs have been refused for a region that ends at or
 // before its start -- by the check before its pad and its source's encode, or
-// by adjust_region_coords' after the pad's shift (cadenza-audio #1134).
+// by refuse_region's after the pad's shift (cadenza-audio #1134, #1282).
 int ace_test_region_empty();
 
 // Tests only: how many runs have been refused for a region that covers no
 // latent frame by the check before its source's encode and its text encode,
 // not ops_build_context's after them (cadenza-audio #1137).
 int ace_test_region_no_frame();
+
+// Tests only: how many runs have had their source copied for their region
+// (padded, or for the audio path's splice) -- after the region's check, never
+// for a region it refuses (cadenza-audio #1282).
+int ace_test_region_pads();
 
 // Tests only: how many runs have reached their encodes -- the source's and
 // the timbre's, which come before the text's -- so a test can tell a run

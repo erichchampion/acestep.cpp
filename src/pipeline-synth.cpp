@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -189,22 +190,27 @@ struct SynthInputs {
 // Where a region asked for ends, in the source's own seconds (before any pad):
 // its repainting_end, or for the -1 sentinel the left pad's end (an outpaint
 // before the source) or the source's end. The one reading of the sentinel, for
-// the pads and for adjust_region_coords (#1138).
+// the pads and for the shift (shifted_region, #1138).
 static float asked_region_end(float rs_raw, float re_raw, float src_dur) {
     return re_raw >= 0.0f ? re_raw : (rs_raw < 0.0f ? 0.0f : src_dur);
 }
 
-// The frames a region spans once the source is padded by left_pad_sec, by the
-// rule resolve_region_frames reads them with: its first frame, and its end
-// rounded up (#1138).
-struct RegionFrames {
-    int first;
-    int end;
-};
+// A region asked from rs_raw to re_raw, its -1 end read, shifted into the
+// source padded by left_pad_sec: the one shift, which the pad's run-on and the
+// run's own region both read (#1138, cadenza-audio #1282).
+static void shifted_region(float rs_raw, float re_raw, float src_dur, float left_pad_sec, float & rs, float & re) {
+    rs = rs_raw + left_pad_sec;
+    re = asked_region_end(rs_raw, re_raw, src_dur) + left_pad_sec;
+}
 
-static RegionFrames asked_region_frames(float rs_raw, float re_raw, float src_dur, float left_pad_sec) {
-    return { sec_latent_frame(std::max(rs_raw, -left_pad_sec) + left_pad_sec),
-             sec_latent_frame_end(asked_region_end(rs_raw, re_raw, src_dur) + left_pad_sec) };
+// The frame a region (shifted) ends at when it lies wholly past the first
+// `held` frames, so a pad of `held` would give it none -- the frame the pad
+// then runs on to -- else 0. By region_frames_in, the frame rule the run
+// reads, over a run that ends nowhere (#1138, cadenza-audio #1282).
+static int region_end_past(float rs, float re, int64_t held) {
+    int t0 = 0, t1 = 0;
+    region_frames_in(rs, re, std::numeric_limits<int>::max(), t0, t1);
+    return (t0 >= held && t1 > held) ? t1 : 0;
 }
 
 // The runs refused for a region that ends at or before its start, once its
@@ -216,8 +222,8 @@ int ace_test_region_empty() {
 }
 
 // True, said and counted, for a region that ends at or before its start: the
-// one rule pad_for_region asks before the pad and the encode, and
-// adjust_region_coords after the pad's shift (#1134).
+// one rule prepare_region asks before the pad and the encode, and
+// refuse_region after the pad's shift (#1134).
 static bool refuse_empty_region(SynthState & s, float end, float start) {
     if (end > start) {
         return false;
@@ -244,27 +250,45 @@ int ace_test_region_no_frame() {
     return g_test_region_no_frame.load();
 }
 
-// True, said and counted, for a region (s.rs, s.re, shifted by
-// adjust_region_coords) that covers no latent frame of `enc`, the source as
-// padded: by the frame rule ops_build_context reads, over the frames the
-// encoder keeps rounded up to the patch as ops_resolve_T rounds them. Asked
-// before the source's encode and the text encode, which a region of none
-// would run for nothing (cadenza-audio #1137). A source past a run's most is
-// left to its own refusal, after (#1144): that is what is wrong with it.
-static bool refuse_region_no_frame(const AceSynth * ctx, SynthState & s, const SynthInput & enc) {
-    const long long T = frames_to_patch(enc.frames(), ctx->meta->cfg.patch_size);
-    if (frames_past_run_most(T)) {
-        return false;
+// The runs whose source was copied for its region: into s.padded_latents, or
+// s.padded_src (ace_test_region_pads).
+static std::atomic<int> g_test_region_pads{ 0 };
+
+int ace_test_region_pads() {
+    return g_test_region_pads.load();
+}
+
+// The region's one check after its shift, once the pad is sized and before it
+// is allocated or any encode run: the region shifted into the source padded
+// by s.left_pad_sec (into s.rs, s.re), refused if the shift leaves it empty
+// -- float noise at an edge -- or if it covers no frame of the `frames` the
+// encoder will keep, rounded up to the patch as ops_resolve_T rounds them, by
+// the frame rule ops_build_context reads. A region of none would run the
+// source's encode and the text encode for nothing (cadenza-audio #1137), and
+// copy the whole source first (#1282). A run past its most was refused before
+// this, for that is what is wrong with it (#1144). ops_build_context's check
+// is a backstop, uncounted. True, said and counted, for a refusal.
+static bool refuse_region(const AceSynth * ctx, const AceRequest & r, SynthState & s, float src_dur,
+                          long long frames) {
+    shifted_region(r.repainting_start, r.repainting_end, src_dur, s.left_pad_sec, s.rs, s.re);
+    if (refuse_empty_region(s, s.re, s.rs)) {
+        return true;
     }
-    int t0 = 0, t1 = 0;
-    region_frames_in(s.rs, s.re, (int) T, t0, t1);
-    if (t1 > t0) {
-        return false;
+    // A run its patch rounds past its most is left to the source's own
+    // refusal, after (#1144).
+    const long long T = frames_to_patch(frames, ctx->meta->cfg.patch_size);
+    if (!frames_past_run_most(T)) {
+        int t0 = 0, t1 = 0;
+        region_frames_in(s.rs, s.re, (int) T, t0, t1);
+        if (t1 <= t0) {
+            g_test_region_no_frame.fetch_add(1);
+            s.refusal = kAceRefusalRegionNoFrame;
+            fprintf(stderr, "[Region] ERROR: the region %.3fs..%.3fs covers no latent frame\n", s.rs, s.re);
+            return true;
+        }
     }
-    g_test_region_no_frame.fetch_add(1);
-    s.refusal = kAceRefusalRegionNoFrame;
-    fprintf(stderr, "[Region] ERROR: the region %.3fs..%.3fs covers no latent frame\n", s.rs, s.re);
-    return true;
+    fprintf(stderr, "[Region] %.1fs..%.1fs\n", s.rs, s.re);
+    return false;
 }
 
 // The runs refused for a source, with its pads if any, past a run's most
@@ -301,11 +325,13 @@ static bool refuse_past_run_most(SynthState & s, long long frames, const char * 
 // Either path pads on to one more frame only for a region that would else lie
 // wholly past the source's last whole frame -- a region of none, refused --
 // so a region with frames inside the source pads as it always did (#1138).
-// Sets s.left_pad_sec for adjust_region_coords. False, nothing allocated, for
-// a pad that would take the run past its most frames (ACE_MAX_LATENT_FRAMES):
-// a far region bound -- a repainting_end of 1e10 s -- is refused before its
-// pad is, not after gigabytes of one (#1139).
-static bool pad_for_region(const AceSynth *   ctx,
+// Sets s.left_pad_sec, and the region shifted into the padded source (s.rs,
+// s.re). False, said, nothing allocated, for a pad that would take the run
+// past its most frames (ACE_MAX_LATENT_FRAMES) -- a far region bound, a
+// repainting_end of 1e10 s, is refused before its pad is, not after gigabytes
+// of one (#1139) -- or a region refuse_region refuses: before the pad, the
+// source's encode and the text encode (#1137, cadenza-audio #1282).
+static bool prepare_region(const AceSynth *   ctx,
                            const AceRequest & r,
                            const SynthInput & src,
                            SynthState &       s,
@@ -321,7 +347,7 @@ static bool pad_for_region(const AceSynth *   ctx,
     // A region that ends at or before its start -- an inverted repaint, or a
     // start at or past the source's end with the -1 end, which reads as the
     // source's end -- is refused here, before its pad or its source's encode,
-    // as adjust_region_coords would refuse it after (#1134).
+    // as refuse_region would refuse it after (#1134).
     if (refuse_empty_region(s, end_time, rs_raw)) {
         return false;
     }
@@ -335,22 +361,26 @@ static bool pad_for_region(const AceSynth *   ctx,
 
     if (src.has_latents()) {
         if (lpad <= 0.0f && rpad <= 0.0f) {
-            return true;
+            return !refuse_region(ctx, r, s, src_dur, src.T_latent);
         }
         // Latent pad: whole 25Hz frames, the nearest, silence_full spliced at
         // the edges. The left one places the source as near as a frame can to
         // where it was asked, and is a frame, not none, for a pad past the
         // slack (#1138).
-        int                lpad_T = std::max(sec_latent_frames_nearest(lpad), sec_latent_frame_end(lpad) > 0 ? 1 : 0);
-        int                rpad_T = sec_latent_frames_nearest(rpad);
+        int           lpad_T = std::max(sec_latent_frames_nearest(lpad), sec_latent_frame_end(lpad) > 0 ? 1 : 0);
+        int           rpad_T = sec_latent_frames_nearest(rpad);
+        // The region is shifted by the pad as padded, not as asked: a 0.03 s
+        // pad is one frame, 0.04 s (cadenza-audio #1129).
+        float         rs = 0.0f, re = 0.0f;
+        shifted_region(rs_raw, re_raw, src_dur, latent_frames_sec(lpad_T), rs, re);
         // A region wholly past the frames padded has the frames it reaches.
-        const RegionFrames region = asked_region_frames(rs_raw, re_raw, src_dur, latent_frames_sec(lpad_T));
-        const int64_t      held   = (int64_t) lpad_T + src.T_latent + rpad_T;
+        const int64_t held   = (int64_t) lpad_T + src.T_latent + rpad_T;
+        const int     past   = region_end_past(rs, re, held);
         // The frames the run will hold, in 64 bits -- the region's end for one
         // lying wholly past the padded frames -- against the run's most,
         // before any is added or allocated: each pad is held to 1e9 frames,
         // and two can pass an int.
-        const int64_t      total  = (region.first >= held && region.end > held) ? (int64_t) region.end : held;
+        const int64_t total  = past > 0 ? (int64_t) past : held;
         if (too_long(total)) {
             return false;
         }
@@ -359,13 +389,15 @@ static bool pad_for_region(const AceSynth *   ctx,
         // given, the region not shifted (#1129).
         if (lpad_T == 0 && rpad_T == 0) {
             s.left_pad_sec = 0.0f;
-            return true;
+            return !refuse_region(ctx, r, s, src_dur, src.T_latent);
         }
-        int           total_T = lpad_T + src.T_latent + rpad_T;
-        const float * sil     = ctx->meta->silence_full.data();
-        // The region is shifted by the pad as padded, not as asked: a 0.03 s
-        // pad is one frame, 0.04 s (cadenza-audio #1129).
-        s.left_pad_sec        = latent_frames_sec(lpad_T);
+        int total_T    = lpad_T + src.T_latent + rpad_T;
+        s.left_pad_sec = latent_frames_sec(lpad_T);
+        if (refuse_region(ctx, r, s, src_dur, total_T)) {
+            return false;
+        }
+        const float * sil = ctx->meta->silence_full.data();
+        g_test_region_pads.fetch_add(1);
         s.padded_latents.resize((size_t) total_T * 64);
         memcpy(s.padded_latents.data(), sil, (size_t) lpad_T * 64 * sizeof(float));
         memcpy(s.padded_latents.data() + (size_t) lpad_T * 64, src.latents, (size_t) src.T_latent * 64 * sizeof(float));
@@ -389,10 +421,11 @@ static bool pad_for_region(const AceSynth *   ctx,
     // whole frame -- to a source's end inside one, or into a pad of less
     // than a frame -- would have no frame, and be refused as covering none.
     // Then the pad runs on to the next frame's end (#1138).
-    const int64_t      padded = (int64_t) lpad_s + src.len + rpad_s;
-    const int64_t      whole  = padded / ACE_LATENT_HOP;
-    const RegionFrames region = asked_region_frames(rs_raw, re_raw, src_dur, s.left_pad_sec);
-    const bool         run_on = region.first >= whole && region.end > whole;
+    const int64_t padded = (int64_t) lpad_s + src.len + rpad_s;
+    const int64_t whole  = padded / ACE_LATENT_HOP;
+    float         rs = 0.0f, re = 0.0f;
+    shifted_region(rs_raw, re_raw, src_dur, s.left_pad_sec, rs, re);
+    const bool run_on = region_end_past(rs, re, whole) > 0;
     // The frames the encoder will keep -- whole ones, or the one the pad runs
     // on to -- against the run's most, before any is allocated: a 600 s
     // take is the most, though a float pad lands a sample past it (#1139).
@@ -405,6 +438,11 @@ static bool pad_for_region(const AceSynth *   ctx,
         rpad_s += frame_end - padded_total;
         padded_total = frame_end;
     }
+    // The frames the encoder keeps: whole ones (SynthInput::frames).
+    if (refuse_region(ctx, r, s, src_dur, samples_frames_floor(padded_total))) {
+        return false;
+    }
+    g_test_region_pads.fetch_add(1);
     s.padded_src.resize((size_t) padded_total * 2);
     if (lpad_s > 0 || rpad_s > 0) {
         memset(s.padded_src.data(), 0, s.padded_src.size() * sizeof(float));
@@ -417,35 +455,6 @@ static bool pad_for_region(const AceSynth *   ctx,
                 lpad_s, samples_sec(rpad_s), rpad_s, samples_sec(padded_total));
     }
     return true;
-}
-
-// Shift region coords into the padded reference frame, resolve sentinel end
-// (-1) to either left pad boundary (outpaint) or source end (inpaint).
-// src_dur is the unpadded source duration in seconds, agnostic of audio vs
-// latent input. Returns false when the resolved range is empty or inverted.
-static bool adjust_region_coords(SynthState & s, float src_dur) {
-    // Both bounds are finite (run_task's batch rule, #1150): a NaN would read
-    // as frame 0 and repaint from the start, unsaid (#1129).
-    s.rs += s.left_pad_sec;
-    s.re = asked_region_end(s.rr.repainting_start, s.re, src_dur) + s.left_pad_sec;
-    if (refuse_empty_region(s, s.re, s.rs)) {
-        return false;
-    }
-    fprintf(stderr, "[Region] %.1fs..%.1fs\n", s.rs, s.re);
-    return true;
-}
-
-// The source padded for its region (pad_for_region), the region shifted into
-// it (adjust_region_coords), and refused there if it covers no frame of it --
-// before the source's encode and the text encode, not after (#1137). False,
-// said, for any refusal.
-static bool prepare_region(const AceSynth *   ctx,
-                           const AceRequest & r,
-                           const SynthInput & src,
-                           SynthState &       s,
-                           SynthInput &       enc) {
-    return pad_for_region(ctx, r, src, s, enc) && adjust_region_coords(s, src.duration_sec()) &&
-           !refuse_region_no_frame(ctx, s, enc);
 }
 
 // Uppercase track name for instruction templates, warn on unknown names.

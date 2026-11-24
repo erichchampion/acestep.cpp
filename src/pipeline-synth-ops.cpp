@@ -179,6 +179,14 @@ int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s,
         s.cover_latents.resize(s.T_cover * 64);
         fprintf(stderr, "[Encode-Src] Encoded: T_cover=%d (%.2fs), %.1f ms\n", s.T_cover, latent_frames_sec(s.T_cover),
                 s.timer.ms());
+        // The checks before the encode -- the source's length bound and the
+        // region's frames -- read SynthInput::frames(), the whole frames the
+        // encoder keeps. Said should the encoder ever keep other than that
+        // (cadenza-audio #1282).
+        if ((long long) s.T_cover != src.frames()) {
+            fprintf(stderr, "[Encode-Src] WARNING: encoded %d frames, not the %lld checked before the encode\n",
+                    s.T_cover, src.frames());
+        }
 
         s.have_cover = true;
     }
