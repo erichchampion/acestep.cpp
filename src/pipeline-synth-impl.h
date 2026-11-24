@@ -124,6 +124,14 @@ struct SynthState {
     // the whole frames the decode gives, nor the pad's run-on to a frame
     // (cadenza-audio #1142). 0 for any other run.
     int                take_samples = 0;
+    // The source's latents decoded about a latent region's edge that falls
+    // inside a frame -- [0] its start's, [1] its end's -- for the crossfade
+    // back to the source at the edge's own sample (cadenza-audio #1140):
+    // planar, edge_src_T samples from sample edge_src_at. Decoded once, for
+    // every take; edge_src_at -1 until then.
+    std::vector<float> edge_src[2];
+    int                edge_src_at[2] = { -1, -1 };
+    int                edge_src_T[2]  = { 0, 0 };
 
     // mode flags
     bool  is_repaint;

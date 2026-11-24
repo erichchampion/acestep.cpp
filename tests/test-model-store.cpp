@@ -2243,6 +2243,44 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         }
         ace_audio_free(&a);
     }
+    // A latent region ends at its own sample, not its last frame's end
+    // (cadenza-audio #1140). 1.00..1.01 s and 1.00..1.04 s both generate frame
+    // 25, the same frame with the same seed: so the takes differ only past
+    // 1.01 s, where the first crossfades back to its source's decode. There
+    // it is near a take of the source's frame 25 (a region elsewhere,
+    // 0.00..0.04 s), and far from the generated; and before the region, and
+    // a fade past its frame, the two are the same, sample for sample.
+    if (!cover.src_latents.empty()) {
+        AceAudio  a, b, c;
+        const int end_s = 48480, frame_e = 49920, fade = 240;
+        const bool ran = take("repaint", NULL, 0, &cover.src_latents, 1.00f, 1.01f, a) &&
+                         take("repaint", NULL, 0, &cover.src_latents, 1.00f, 1.04f, b) &&
+                         take("repaint", NULL, 0, &cover.src_latents, 0.00f, 0.04f, c) &&
+                         a.n_samples == b.n_samples && a.n_samples == c.n_samples && a.n_samples > frame_e + 1000;
+        float      to_src = 0.0f, gen_src = 0.0f, apart = 0.0f;
+        for (int ch = 0; ran && ch < 2; ch++) {
+            const size_t o = (size_t) ch * a.n_samples;
+            for (int si = end_s; si < frame_e; si++) {
+                to_src  = std::max(to_src, fabsf(a.samples[o + si] - c.samples[o + si]));
+                gen_src = std::max(gen_src, fabsf(b.samples[o + si] - c.samples[o + si]));
+            }
+            for (int si = 0; si < a.n_samples; si++) {
+                if (si < end_s - fade || si >= frame_e + fade) {
+                    apart = std::max(apart, fabsf(a.samples[o + si] - b.samples[o + si]));
+                }
+            }
+        }
+        if (!ran || apart != 0.0f || gen_src < 1e-3f || to_src > 0.25f * gen_src) {
+            fprintf(stderr,
+                    "[Test] FAIL: a latent region 1.00..1.01 s ran %d: past its end %.5f from the source's "
+                    "decode (generated: %.5f), %.5f from 1.00..1.04 s's take elsewhere\n",
+                    ran, to_src, gen_src, apart);
+            rc = 1;
+        }
+        ace_audio_free(&a);
+        ace_audio_free(&b);
+        ace_audio_free(&c);
+    }
     {
         // Nor a region whose end is far past what a run holds: refused before
         // its pad is allocated -- gigabytes of one, for 1e10 s (#1139) -- by

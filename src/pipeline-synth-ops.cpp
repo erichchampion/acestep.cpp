@@ -1004,6 +1004,115 @@ static void ops_vae_splice_track(SynthState & s, int b) {
     }
 }
 
+// The crossfade at a latent region's edge, in samples (10 ms): no more than
+// half the region.
+static constexpr int kEdgeFadeSamples = 480;
+
+// The frames of context either side of a latent region's edge frame that its
+// source's decode there is given, so the samples about the edge decode as
+// they do in the whole run.
+static constexpr int kEdgeContextFrames = 16;
+
+// The source's latents (cover_latents, as the latent splice keeps them)
+// decoded about frame `frame`, into s.edge_src[k] -- once a job. 0, decoded
+// or held already; 1, a decode that failed (the edge left as generated);
+// -1, cancelled.
+static int ops_edge_source(VAEGGML * vae, const AceSynth * ctx, SynthState & s, int k, int frame,
+                           AceProgress progress) {
+    if (s.edge_src_at[k] >= 0) {
+        return 0;
+    }
+    const int w0 = std::max(frame - kEdgeContextFrames, 0);
+    const int w1 = std::min(frame + 1 + kEdgeContextFrames, s.T_cover);
+    if (w1 <= w0) {
+        return 1;
+    }
+    std::vector<float> win((size_t) 2 * (w1 - w0) * ACE_LATENT_HOP);
+    const int          got = vae_ggml_decode_tiled(vae, s.cover_latents.data() + (size_t) w0 * 64, w1 - w0, win.data(),
+                                                   (w1 - w0) * ACE_LATENT_HOP, ctx->params.vae_chunk,
+                                                   ctx->params.vae_overlap, progress);
+    if (got < 0) {
+        if (ace_cancelled(progress, ACE_STAGE_VAE_DECODE)) {
+            return -1;
+        }
+        fprintf(stderr, "[Latent-Edge] WARNING: the source's decode about frame %d failed: the edge as generated\n",
+                frame);
+        return 1;
+    }
+    if (got < (w1 - w0) * ACE_LATENT_HOP) {
+        // Planar at the decode's own stride.
+        memmove(win.data() + got, win.data() + (size_t) (w1 - w0) * ACE_LATENT_HOP, (size_t) got * sizeof(float));
+        win.resize((size_t) 2 * got);
+    }
+    s.edge_src[k]    = std::move(win);
+    s.edge_src_at[k] = w0 * ACE_LATENT_HOP;
+    s.edge_src_T[k]  = got;
+    return 0;
+}
+
+// A latent region's edges at their own samples (cadenza-audio #1140). With no
+// source audio to splice from, its frames round out to every frame it
+// touches, so a region 5.00..5.01 s was generated to 5.04 s. At an edge
+// inside a frame, the samples between the edge and the frame's bound are
+// the source's decode (ops_edge_source); the take crossfades to it over
+// kEdgeFadeSamples inside the region, and back to the whole run's decode
+// over as many past the frame's bound. An edge on a frame's bound is left
+// as it was. 0, or -1 for a cancel.
+static int ops_latent_edges(VAEGGML * vae, const AceSynth * ctx, SynthState & s, float * audio, int T_audio,
+                            AceProgress progress) {
+    const int start_s = std::clamp(sec_samples_nearest(s.rs), 0, T_audio);
+    const int end_s   = std::clamp(sec_samples_nearest(s.re), start_s, T_audio);
+    const int frame_s = std::min(s.repaint_t0 * ACE_LATENT_HOP, T_audio);
+    const int frame_e = std::min(s.repaint_t1 * ACE_LATENT_HOP, T_audio);
+    const int fade    = std::max(std::min(kEdgeFadeSamples, (end_s - start_s) / 2), 1);
+    // The take's sample si on channel ch, from the source's decode k.
+    auto      src     = [&](int k, int ch, int si) {
+        const int at = si - s.edge_src_at[k];
+        return at >= 0 && at < s.edge_src_T[k] ? s.edge_src[k][(size_t) ch * s.edge_src_T[k] + at] : 0.0f;
+    };
+    // Blend [a, b) from `from` to `to` (each: true the source's, false the
+    // take's), linear.
+    auto      blend   = [&](int k, int a, int b, bool from_src, bool to_src) {
+        a = std::max(a, 0);
+        b = std::min(b, T_audio);
+        for (int ch = 0; ch < 2; ch++) {
+            float * pred = audio + (size_t) ch * T_audio;
+            for (int si = a; si < b; si++) {
+                const float w  = (b - a) > 0 ? (si - a + 0.5f) / (float) (b - a) : 1.0f;
+                const float sv = src(k, ch, si);
+                const float f  = from_src ? sv : pred[si];
+                const float tv = to_src ? sv : pred[si];
+                pred[si]       = f + (tv - f) * w;
+            }
+        }
+    };
+    if (start_s > frame_s) {
+        const int rc = ops_edge_source(vae, ctx, s, 0, s.repaint_t0, progress);
+        if (rc < 0) {
+            return -1;
+        }
+        if (rc == 0) {
+            blend(0, frame_s - fade, frame_s, false, true);
+            blend(0, frame_s, start_s, true, true);
+            blend(0, start_s, start_s + fade, true, false);
+            fprintf(stderr, "[Latent-Edge] start at sample %d, not frame %d's %d\n", start_s, s.repaint_t0, frame_s);
+        }
+    }
+    if (end_s < frame_e) {
+        const int rc = ops_edge_source(vae, ctx, s, 1, s.repaint_t1 - 1, progress);
+        if (rc < 0) {
+            return -1;
+        }
+        if (rc == 0) {
+            blend(1, end_s - fade, end_s, false, true);
+            blend(1, end_s, frame_e, true, true);
+            blend(1, frame_e, frame_e + fade, true, false);
+            fprintf(stderr, "[Latent-Edge] end at sample %d, not frame %d's %d\n", end_s, s.repaint_t1, frame_e);
+        }
+    }
+    return 0;
+}
+
 // Decode ONE track: run the tiled VAE decoder over track b's latent and fill
 // *out. A decode failure nulls *out and returns 0 (soft fail -- the batch
 // loop continues to other tracks, exactly as it always has); a cancellation
@@ -1055,6 +1164,16 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
     }
     out->samples   = audio;
     out->n_samples = T_audio;
+
+    // A latent region, its edges at their own samples (#1140).
+    if (splices_source_after_decode(s) && s.padded_src.empty() && s.have_cover && s.T_cover > 0 &&
+        ops_latent_edges(vae, ctx, s, audio, T_audio, progress) != 0) {
+        free(audio);
+        out->samples   = NULL;
+        out->n_samples = 0;
+        fprintf(stderr, "[VAE-Decode Batch%d] Cancelled\n", b);
+        return -1;
+    }
 
     // A take spliced from its source as audio is as long as its source with
     // its pads, in samples: not the whole frames the decode gives, which
