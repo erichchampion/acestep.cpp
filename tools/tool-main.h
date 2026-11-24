@@ -22,18 +22,28 @@
 #include "ace-fatal.h"
 #include "gpu-compute.h"
 
+#include <string>
+
 // Runs `fn`: -1 when it returns, else the status of the fatal or graph
-// allocation failure it threw.
-template <class F> inline int ace_tool_catch(F && fn) {
+// allocation failure it threw, its words in `what` when given -- so a server
+// job can say why it failed (cadenza-audio #1194).
+template <class F> inline int ace_tool_catch(F && fn, std::string * what = nullptr) {
 #ifdef ACESTEP_FATAL_THROWS
     try {
         fn();
     } catch (const ace_fatal_error & e) {
+        if (what) {
+            *what = e.what();
+        }
         return e.code;
-    } catch (const ace_graph_alloc_error &) {
+    } catch (const ace_graph_alloc_error & e) {
+        if (what) {
+            *what = e.what();
+        }
         return 1;
     }
 #else
+    (void) what;
     fn();
 #endif
     return -1;
@@ -45,7 +55,8 @@ inline int ace_tool_main(int (*body)(int, char **), int argc, char ** argv) {
     return thrown < 0 ? rc : thrown;
 }
 
-// Whether `job` ran to its end, rather than throwing a fatal.
-template <class F> inline bool ace_tool_job(F && job) {
-    return ace_tool_catch(job) < 0;
+// Whether `job` ran to its end, rather than throwing a fatal: its words in
+// `what` when it threw one.
+template <class F> inline bool ace_tool_job(F && job, std::string * what = nullptr) {
+    return ace_tool_catch(job, what) < 0;
 }

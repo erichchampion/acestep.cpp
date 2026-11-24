@@ -78,14 +78,24 @@ export function synthSubmitWithAudio(
 	return submitJob('synth', { method: 'POST', body: form });
 }
 
+// A job's state as GET /job says it: its status, and for a failed job the
+// server's reason when it gave one (cadenza-audio #1194).
+export interface JobState {
+	status: string;
+	error?: string;
+}
+
 // GET /job?id=X: poll job status
-export async function jobStatus(id: string): Promise<string> {
+export async function jobStatus(id: string): Promise<JobState> {
 	const res = await fetch(`job?id=${encodeURIComponent(id)}`, {
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
 	});
 	if (!res.ok) throw new Error(`${res.status} Job not found`);
 	const data = await res.json();
-	return data.status;
+	return {
+		status: data.status,
+		error: typeof data.error === 'string' && data.error ? data.error : undefined
+	};
 }
 
 // poll until done, throws on failure or cancel.
@@ -96,9 +106,11 @@ export async function jobStatus(id: string): Promise<string> {
 export async function pollJob(id: string): Promise<void> {
 	for (;;) {
 		try {
-			const status = await jobStatus(id);
+			const { status, error } = await jobStatus(id);
 			if (status === 'done') return;
-			if (status === 'failed') throw new Error('Generation failed');
+			// The server's reason, when it said one: a refused request, a
+			// model missing, a run that failed (cadenza-audio #1194).
+			if (status === 'failed') throw new Error(error ? `Generation failed: ${error}` : 'Generation failed');
 			if (status === 'cancelled') throw new Error('Cancelled');
 		} catch (e) {
 			if (e instanceof TypeError || e instanceof DOMException) {
