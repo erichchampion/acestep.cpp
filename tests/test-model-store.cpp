@@ -2223,6 +2223,26 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             ace_audio_free(&a);
         }
     }
+    // A lego region run to its end: the source kept outside the region, bit
+    // for bit, and generated inside it -- so a lego that masked no frame, its
+    // source given back, fails here, as no golden runs one (cadenza-audio
+    // #1130, #1133).
+    {
+        AceAudio  a;
+        const int s0 = ACE_SAMPLE_RATE / 2, s1 = ACE_SAMPLE_RATE * 3 / 2;
+        float     moved = 0.0f;
+        const bool ran  = take("lego", source.data(), n, nullptr, 0.5f, 1.5f, a);
+        for (int si = s0; ran && si < s1 && si < a.n_samples; si++) {
+            moved = std::max(moved, fabsf(a.samples[si] - source[(size_t) si * 2]));
+        }
+        if (!ran || a.n_samples != n || !keeps_source(a, 0, s0) || !keeps_source(a, s1, n) || moved < 1e-3f) {
+            fprintf(stderr, "[Test] FAIL: a lego region 0.5..1.5 s ran %d, %d samples, its source kept outside "
+                            "%d/%d, inside it moved %.5f\n",
+                    ran, a.n_samples, ran && keeps_source(a, 0, s0), ran && keeps_source(a, s1, n), moved);
+            rc = 1;
+        }
+        ace_audio_free(&a);
+    }
     {
         // Nor a region whose end is far past what a run holds: refused before
         // its pad is allocated -- gigabytes of one, for 1e10 s (#1139) -- by
