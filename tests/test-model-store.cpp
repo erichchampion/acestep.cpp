@@ -2194,10 +2194,11 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     };
     // Whether a take's samples in [from, to) are its source's, exactly: a
     // region spliced back from its source as audio keeps it bit for bit.
-    auto keeps_source = [&](const AceAudio & a, int from, int to) {
+    auto keeps_source = [&](const AceAudio & a, int from, int to, const std::vector<float> & src = {}) {
+        const std::vector<float> & from_src = src.empty() ? source : src;
         for (int ch = 0; ch < 2; ch++) {
-            for (int si = from; si < to && si < a.n_samples; si++) {
-                if (a.samples[(size_t) ch * a.n_samples + si] != source[(size_t) si * 2 + ch]) {
+            for (int si = from; si < to && si < a.n_samples && (size_t) si * 2 + ch < from_src.size(); si++) {
+                if (a.samples[(size_t) ch * a.n_samples + si] != from_src[(size_t) si * 2 + ch]) {
                     return false;
                 }
             }
@@ -2210,13 +2211,19 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // dropped, nor 2.04 s, the pad's run-on kept (cadenza-audio #1142). The
     // region to its end is generated to it: its last 30 ms not the source's.
     {
-        const int len = ACE_SAMPLE_RATE * 203 / 100;
+        // Its own 2.03 s of the source's tone.
+        const int          len = ACE_SAMPLE_RATE * 203 / 100;
+        std::vector<float> longer((size_t) len * 2);
+        for (int i = 0; i < len; i++) {
+            longer[(size_t) i * 2] = longer[(size_t) i * 2 + 1] =
+                0.3f * sinf(2.0f * 3.14159265f * 220.0f * i / (float) ACE_SAMPLE_RATE);
+        }
         for (const float re : { 1.5f, -1.0f }) {
             AceAudio a;
-            if (!take("repaint", source.data(), len, nullptr, 1.0f, re, a) || a.n_samples != len ||
-                !keeps_source(a, 0, ACE_SAMPLE_RATE) ||
-                (re > 0.0f && !keeps_source(a, (int) (re * ACE_SAMPLE_RATE), len)) ||
-                (re < 0.0f && keeps_source(a, ACE_SAMPLE_RATE * 2, len))) {
+            if (!take("repaint", longer.data(), len, nullptr, 1.0f, re, a) || a.n_samples != len ||
+                !keeps_source(a, 0, ACE_SAMPLE_RATE, longer) ||
+                (re > 0.0f && !keeps_source(a, (int) (re * ACE_SAMPLE_RATE), len, longer)) ||
+                (re < 0.0f && keeps_source(a, ACE_SAMPLE_RATE * 2, len, longer))) {
                 fprintf(stderr, "[Test] FAIL: a repaint of a 2.03 s source from 1.0 s to %.1f s gave %d samples, "
                                 "want %d, its source kept outside the region and the region generated to its end\n",
                         re, a.n_samples, len);

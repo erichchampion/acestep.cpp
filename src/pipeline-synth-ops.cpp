@@ -1020,8 +1020,7 @@ struct CancelOnlyProgress {
     AceProgress inner;
 
     static bool poll(void * data, AceStage stage, int, int) {
-        const AceProgress & p = static_cast<CancelOnlyProgress *>(data)->inner;
-        return p.fn && p.fn(p.data, stage, -1, -1);
+        return ace_cancelled(static_cast<CancelOnlyProgress *>(data)->inner, stage);
     }
 
     AceProgress progress() {
@@ -1137,7 +1136,12 @@ static int ops_latent_edges(VAEGGML * vae, const AceSynth * ctx, SynthState & s,
         if (rc < 0) {
             return -1;
         }
-        if (rc == 0) {
+        // The fade back needs the source's decode past the frame's bound: a
+        // region ending in the source's last frame, the run going on past it
+        // (a patch's rounding), has none, and is left as generated -- not
+        // cut from the source's decode to the run's at the bound, a click.
+        const int past = std::min(frame_e + fade, T_audio);
+        if (rc == 0 && s.edge_src_at[1] + s.edge_src_T[1] >= past) {
             blend(1, end_s - fade, end_s, false, true);
             blend(1, end_s, frame_e, true, true);
             blend(1, frame_e, frame_e + fade, true, false);
