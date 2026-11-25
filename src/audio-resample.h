@@ -3,7 +3,9 @@
 // Kaiser-windowed sinc filter. No external dependencies.
 // Part of acestep.cpp. MIT license.
 
+#include <climits>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -112,8 +114,18 @@ static float * audio_resample(const float * in, int n_in, int sr_in, int sr_out,
         return out;
     }
 
-    double ratio = (double) sr_out / (double) sr_in;
-    *n_out       = (int) ((double) n_in * ratio);
+    double       ratio   = (double) sr_out / (double) sr_in;
+    // The output's length in double first: one past an int is refused, not
+    // cast (cadenza-audio #1266) -- the readers refuse an implausible rate
+    // before this, and a long enough source at a plausible one still gets here.
+    const double n_out_d = (double) n_in * ratio;
+    if (n_out_d >= (double) INT_MAX) {
+        fprintf(stderr, "[Audio-Resample] Refused: %d samples at %d Hz is past an int's samples at %d Hz\n", n_in,
+                sr_in, sr_out);
+        *n_out = 0;
+        return NULL;
+    }
+    *n_out = (int) n_out_d;
     if (*n_out <= 0) {
         *n_out = 0;
         return NULL;
@@ -132,8 +144,8 @@ static float * audio_resample(const float * in, int n_in, int sr_in, int sr_out,
     double fc = 0.5 * ((ratio < 1.0) ? ratio : 1.0);
 
     // build polyphase filter table (one-time cost: ~16K coeff, microseconds)
-    float(*table)[RESAMPLE_N_TAPS] =
-        (float(*)[RESAMPLE_N_TAPS]) malloc(RESAMPLE_N_PHASES * RESAMPLE_N_TAPS * sizeof(float));
+    float (*table)[RESAMPLE_N_TAPS] =
+        (float (*)[RESAMPLE_N_TAPS]) malloc(RESAMPLE_N_PHASES * RESAMPLE_N_TAPS * sizeof(float));
     if (!table) {
         free(out);
         *n_out = 0;

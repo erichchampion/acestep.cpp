@@ -118,6 +118,11 @@ static int understand_main(int argc, char ** argv) {
         usage(argv[0]);
         return 1;
     }
+    // Tiles the VAE can run, refused before any model loads (cadenza-audio #1266).
+    if (const char * why = vae_tiling_refused(params.vae_chunk, params.vae_overlap)) {
+        fprintf(stderr, "[CLI] ERROR: %s\n", why);
+        return 1;
+    }
 
     // Parse request JSON (if provided). Sampling params come from JSON.
     // When no JSON, understand defaults apply (temperature=0.3 for transcription).
@@ -218,8 +223,10 @@ static int understand_main(int argc, char ** argv) {
     }
 
     // write output JSON
-    if (output_path) {
-        request_write(&out, output_path);
+    // A failed write fails the tool (cadenza-audio #1266).
+    if (output_path && !request_write(&out, output_path)) {
+        fprintf(stderr, "[Ace-Understand] FATAL: failed to write %s\n", output_path);
+        return 1;
     }
     return 0;
 }

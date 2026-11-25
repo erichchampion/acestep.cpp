@@ -255,37 +255,10 @@ static const int                                             MAX_JOBS = 32;
 // directly when padding context, so any T_latent above 15000 would walk
 // past the buffer. Same hard limit ops_resolve_T enforces on s.T.
 
-// Latent payload format: raw f32 [T * 64] little-endian, no header. Same
-// layout neural-codec emits in --encode -f f32 mode and what /synth,
-// /understand, /vae return as the latent multipart part or raw body.
-static const int LATENT_CHANNELS    = 64;
-static const int LATENT_FRAME_BYTES = LATENT_CHANNELS * (int) sizeof(float);
-
-// Validate a latent payload coming from the wire: size must be a strict
-// multiple of one frame, T must be in (0, ACE_MAX_LATENT_FRAMES]. Returns the frame
-// count or -1 on failure (with the HTTP code the caller should reply).
-static int latent_payload_validate(size_t size, int * http_code_out) {
-    if (size == 0 || (size % LATENT_FRAME_BYTES) != 0) {
-        if (http_code_out) {
-            *http_code_out = 400;
-        }
-        return -1;
-    }
-    int T = (int) (size / (size_t) LATENT_FRAME_BYTES);
-    if (T <= 0) {
-        if (http_code_out) {
-            *http_code_out = 400;
-        }
-        return -1;
-    }
-    if (frames_past_run_most(T)) {
-        if (http_code_out) {
-            *http_code_out = 413;
-        }
-        return -1;
-    }
-    return T;
-}
+// Latent payload format: raw f32 [T * 64] little-endian, no header
+// (ACE_LATENT_CHANNELS, ACE_LATENT_FRAME_BYTES). Same layout neural-codec
+// emits in --encode -f f32 mode and what /synth, /understand, /vae return as
+// the latent multipart part or raw body. Read by read_latent_part.
 
 // Build a multipart/mixed body that bundles the primary payload with its
 // latents. The audio variant pairs one audio part with one latent part per
@@ -337,7 +310,7 @@ static std::string multipart_build_json_latent(const std::string &        json_p
         body += MULTIPART_BOUNDARY;
         body += "\r\nContent-Type: application/octet-stream\r\n";
         body += "Content-Disposition: form-data; name=\"latent\"\r\n\r\n";
-        body.append(reinterpret_cast<const char *>(latent.data()), (size_t) T_latent * LATENT_FRAME_BYTES);
+        body.append(reinterpret_cast<const char *>(latent.data()), (size_t) T_latent * ACE_LATENT_FRAME_BYTES);
         body += "\r\n";
     }
     body += "--";
@@ -578,6 +551,50 @@ static void json_error(httplib::Response & res, int status, const char * msg) {
     res.status = status;
     res.set_content(json, "application/json");
     free(json);
+}
+
+// Read a latent part coming from the wire into `out`: its frame count, or -1
+// when it is refused -- a size that is no whole number of frames, none, or
+// more than a run holds, by the rule neural-codec's files share
+// (latent_payload_frames, cadenza-audio #1266) -- answered as a 400, or a 413
+// for too many.
+static int read_latent_part(httplib::Response &  res,
+                            const std::string &  content,
+                            const char *         name,
+                            std::vector<float> & out) {
+    const AceLatentFrames frames = latent_payload_frames(content.size());
+    if (frames.fault != AceLatentFault::none) {
+        const bool too_long = frames.fault == AceLatentFault::past_run_most;
+        json_error(
+            res, too_long ? 413 : 400,
+            (std::string(name) + (too_long ? " exceeds max frames" : " size not a multiple of 64*4 bytes")).c_str());
+        return -1;
+    }
+    const float * data = reinterpret_cast<const float *>(content.data());
+    out.assign(data, data + (size_t) frames.frames * ACE_LATENT_CHANNELS);
+    return frames.frames;
+}
+
+// An audio part decoded to 48 kHz interleaved stereo, its samples in
+// *T_audio: NULL when it has no sample, its rate is refused, or memory ran
+// out, with nothing left to free -- the planar decode freed on every path
+// (cadenza-audio #1266). With `past_run_most`, a source of more whole frames
+// than a run holds is NULL too, said there, before its interleaved copy.
+static float * read_audio_part(const std::string & content, int * T_audio, bool * past_run_most = nullptr) {
+    float * planar = audio_read_48k_buf((const uint8_t *) content.data(), content.size(), T_audio);
+    if (!planar) {
+        return NULL;
+    }
+    if (past_run_most) {
+        *past_run_most = frames_past_run_most(samples_frames_floor(*T_audio));
+        if (*past_run_most) {
+            free(planar);
+            return NULL;
+        }
+    }
+    float * interleaved = audio_planar_to_interleaved(planar, *T_audio);
+    free(planar);
+    return interleaved;
 }
 
 // resolve model name: explicit request > already loaded > first in bucket
@@ -1016,17 +1033,10 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         // already cached the latent skips the VAE encode regardless of
         // whether it also attached the original audio for fallback.
         if (!src_ignored && req.form.has_file("src_latents")) {
-            const auto & file      = req.form.get_file("src_latents");
-            int          http_code = 0;
-            int          T         = latent_payload_validate(file.content.size(), &http_code);
+            const int T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents);
             if (T < 0) {
-                json_error(res, http_code,
-                           http_code == 413 ? "src_latents exceeds max frames" :
-                                              "src_latents size not a multiple of 64*4 bytes");
                 return;
             }
-            src_latents.assign(reinterpret_cast<const float *>(file.content.data()),
-                               reinterpret_cast<const float *>(file.content.data()) + (size_t) T * LATENT_CHANNELS);
             src_T_latent = T;
             fprintf(stderr, "[Server] Source latents: %d frames (%.2fs), VAE encode skipped\n", T,
                     latent_frames_sec(T));
@@ -1038,30 +1048,21 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                 json_error(res, 400, "Multipart: empty 'audio' part");
                 return;
             }
-            int     T_audio = 0;
-            float * planar  = audio_read_48k_buf((const uint8_t *) file.content.data(), file.content.size(), &T_audio);
-            if (!planar || T_audio <= 0) {
+            int T_audio     = 0;
+            src_interleaved = read_audio_part(file.content, &T_audio);
+            if (!src_interleaved) {
                 json_error(res, 400, "Failed to decode audio");
                 return;
             }
             fprintf(stderr, "[Server] Source audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
-            src_interleaved = audio_planar_to_interleaved(planar, T_audio);
-            free(planar);
             src_len = T_audio;
         }
 
         if (req.form.has_file("ref_latents")) {
-            const auto & file      = req.form.get_file("ref_latents");
-            int          http_code = 0;
-            int          T         = latent_payload_validate(file.content.size(), &http_code);
+            const int T = read_latent_part(res, req.form.get_file("ref_latents").content, "ref_latents", ref_latents);
             if (T < 0) {
-                json_error(res, http_code,
-                           http_code == 413 ? "ref_latents exceeds max frames" :
-                                              "ref_latents size not a multiple of 64*4 bytes");
                 return;
             }
-            ref_latents.assign(reinterpret_cast<const float *>(file.content.data()),
-                               reinterpret_cast<const float *>(file.content.data()) + (size_t) T * LATENT_CHANNELS);
             ref_T_latent = T;
             fprintf(stderr, "[Server] Reference latents: %d frames (%.2fs), VAE encode skipped\n", T,
                     latent_frames_sec(T));
@@ -1070,13 +1071,10 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         if (req.form.has_file("ref_audio")) {
             auto file = req.form.get_file("ref_audio");
             if (!file.content.empty()) {
-                int     T_audio = 0;
-                float * planar =
-                    audio_read_48k_buf((const uint8_t *) file.content.data(), file.content.size(), &T_audio);
-                if (planar && T_audio > 0) {
+                int T_audio     = 0;
+                ref_interleaved = read_audio_part(file.content, &T_audio);
+                if (ref_interleaved) {
                     fprintf(stderr, "[Server] Reference audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
-                    ref_interleaved = audio_planar_to_interleaved(planar, T_audio);
-                    free(planar);
                     ref_len = T_audio;
                 } else {
                     fprintf(stderr, "[Server] WARNING: failed to decode ref_audio, ignoring\n");
@@ -1312,17 +1310,10 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
     std::vector<float> src_latents;
     int                src_T_latent = 0;
     if (req.form.has_file("src_latents")) {
-        const auto & file      = req.form.get_file("src_latents");
-        int          http_code = 0;
-        int          T         = latent_payload_validate(file.content.size(), &http_code);
+        const int T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents);
         if (T < 0) {
-            json_error(
-                res, http_code,
-                http_code == 413 ? "src_latents exceeds max frames" : "src_latents size not a multiple of 64*4 bytes");
             return;
         }
-        src_latents.assign(reinterpret_cast<const float *>(file.content.data()),
-                           reinterpret_cast<const float *>(file.content.data()) + (size_t) T * LATENT_CHANNELS);
         src_T_latent = T;
         fprintf(stderr, "[Server] Understand source: %d latent frames (%.2fs)\n", T, latent_frames_sec(T));
     }
@@ -1335,17 +1326,15 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
             json_error(res, 400, "Multipart: empty 'audio' part");
             return;
         }
-        // decode directly from multipart buffer (WAV/MP3 auto-detected)
-        int     T_audio = 0;
-        float * planar  = audio_read_48k_buf((const uint8_t *) file.content.data(), file.content.size(), &T_audio);
-        if (!planar || T_audio <= 0) {
+        // decode directly from multipart buffer (WAV/MP3 auto-detected), to
+        // the interleaved [L0,R0,L1,R1,...] the pipeline takes
+        int T_audio     = 0;
+        src_interleaved = read_audio_part(file.content, &T_audio);
+        if (!src_interleaved) {
             json_error(res, 400, "Failed to decode audio");
             return;
         }
         fprintf(stderr, "[Server] Understand source: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
-        // convert planar [L:T][R:T] to interleaved [L0,R0,L1,R1,...] for pipeline
-        src_interleaved = audio_planar_to_interleaved(planar, T_audio);
-        free(planar);
         src_len = T_audio;
     }
 
@@ -1495,7 +1484,7 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
     if (T_latent_max > ACE_MAX_LATENT_FRAMES + 64) {
         T_latent_max = ACE_MAX_LATENT_FRAMES + 64;
     }
-    std::vector<float> latent((size_t) T_latent_max * LATENT_CHANNELS);
+    std::vector<float> latent((size_t) T_latent_max * ACE_LATENT_CHANNELS);
     int                T_latent =
         vae_enc_encode_tiled(vae, src_interleaved, src_len, latent.data(), T_latent_max, g_synth_params.vae_chunk,
                              g_synth_params.vae_overlap, AceProgress{ server_progress, (void *) &job->cancel });
@@ -1503,6 +1492,15 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
         bool cancelled = job->cancel.load();
         fprintf(stderr, "[Server] encode: %s\n", cancelled ? "cancelled" : "vae_enc_encode_tiled failed");
         job->status.store(cancelled ? JobStatus::CANCELLED : JobStatus::FAILED);
+        return;
+    }
+    // An encode of no frame is a failed job, not an empty latent /vae could
+    // not decode (cadenza-audio #1266) -- held, though the VAE rounds a
+    // source of a sample up to a frame today.
+    if (T_latent == 0) {
+        job->error = std::string("the encode made ") + latent_fault_words(AceLatentFault::empty);
+        fprintf(stderr, "[Server] encode: %s\n", job->error.c_str());
+        job->status.store(JobStatus::FAILED);
         return;
     }
     fprintf(stderr, "[Server] encode: %d audio samples (%.2fs) -> %d latent frames, %.0fms\n", src_len,
@@ -1518,7 +1516,7 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
     // Content-Type, no multipart: the client still holds the source audio
     // it just uploaded, only the fresh latents need to travel back.
     std::string body;
-    body.resize((size_t) T_latent * LATENT_FRAME_BYTES);
+    body.resize((size_t) T_latent * ACE_LATENT_FRAME_BYTES);
     std::memcpy(body.data(), latent.data(), body.size());
     job->result_body = std::move(body);
     job->result_mime = "application/octet-stream";
@@ -1580,23 +1578,15 @@ static void handle_vae(const httplib::Request & req, httplib::Response & res) {
             json_error(res, 400, "Multipart: empty 'audio' part");
             return;
         }
-        int     T_audio = 0;
-        float * planar  = audio_read_48k_buf((const uint8_t *) file.content.data(), file.content.size(), &T_audio);
-        if (!planar || T_audio <= 0) {
-            if (planar) {
-                free(planar);
-            }
-            json_error(res, 400, "Failed to decode audio");
-            return;
-        }
         // The engine's bound: 600 s of whole frames runs (cadenza-audio #1144).
-        if (frames_past_run_most(samples_frames_floor(T_audio))) {
-            free(planar);
-            json_error(res, 413, "audio exceeds max duration (10 min)");
+        int     T_audio         = 0;
+        bool    too_long        = false;
+        float * src_interleaved = read_audio_part(file.content, &T_audio, &too_long);
+        if (!src_interleaved) {
+            json_error(res, too_long ? 413 : 400,
+                       too_long ? "audio exceeds max duration (10 min)" : "Failed to decode audio");
             return;
         }
-        float * src_interleaved = audio_planar_to_interleaved(planar, T_audio);
-        free(planar);
         int src_len = T_audio;
 
         auto job = job_create();
@@ -1612,17 +1602,11 @@ static void handle_vae(const httplib::Request & req, httplib::Response & res) {
     }
 
     // decode path: raw latents in -> audio out
-    const auto & file      = req.form.get_file("src_latents");
-    int          http_code = 0;
-    int          T         = latent_payload_validate(file.content.size(), &http_code);
+    std::vector<float> src_latents;
+    const int          T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents);
     if (T < 0) {
-        json_error(
-            res, http_code,
-            http_code == 413 ? "src_latents exceeds max frames" : "src_latents size not a multiple of 64*4 bytes");
         return;
     }
-    std::vector<float> src_latents(reinterpret_cast<const float *>(file.content.data()),
-                                   reinterpret_cast<const float *>(file.content.data()) + (size_t) T * LATENT_CHANNELS);
 
     bool      output_wav = false;
     WavFormat wav_fmt    = WAV_S16;
@@ -1823,6 +1807,12 @@ static int server_main(int argc, char ** argv) {
     if (!models_dir) {
         fprintf(stderr, "[Server] ERROR: --models is required\n");
         usage(argv[0]);
+        return 1;
+    }
+    // Tiles the VAE can run, refused at start, not by a job's division by a
+    // stride of 0 (cadenza-audio #1266). /understand shares them.
+    if (const char * why = vae_tiling_refused(g_synth_params.vae_chunk, g_synth_params.vae_overlap)) {
+        fprintf(stderr, "[Server] ERROR: %s\n", why);
         return 1;
     }
 

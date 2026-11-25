@@ -168,15 +168,18 @@ static int lm_main(int argc, char ** argv) {
         ext  = base.substr(dot);
         base = base.substr(0, dot);
     }
+    // A take that could not be written fails the tool, the others still
+    // written (cadenza-audio #1266).
+    bool wrote_all = true;
     for (int b = 0; b < lm_batch_size; b++) {
         char path[512];
         snprintf(path, sizeof(path), "%s%d%s", base.c_str(), b, ext.c_str());
-        request_write(&out[b], path);
+        wrote_all = request_write(&out[b], path) && wrote_all;
     }
 
     ace_lm_free(ctx);
     store_free(store);
-    return 0;
+    return wrote_all ? 0 : 1;
 }
 
 int main(int argc, char ** argv) {

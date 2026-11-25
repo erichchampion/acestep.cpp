@@ -100,6 +100,24 @@ static uint8_t * audio_io_load_file(const char * path, size_t * size_out) {
     return buf;
 }
 
+// Write `size` bytes to a new file: whether every byte reached it, the close
+// included, so a full disk is a failed write, not a short file the tool calls
+// done (cadenza-audio #1266).
+static bool audio_io_save_file(const char * path, const void * data, size_t size) {
+    FILE * fp = fopen(path, "wb");
+    if (!fp) {
+        fprintf(stderr, "[Audio] Cannot open %s for writing\n", path);
+        return false;
+    }
+    const bool wrote  = fwrite(data, 1, size, fp) == size;
+    const bool closed = fclose(fp) == 0;
+    if (!wrote || !closed) {
+        fprintf(stderr, "[Audio] Failed writing %s\n", path);
+        return false;
+    }
+    return true;
+}
+
 // Decode MP3 from memory buffer. Returns planar stereo float [L:T][R:T].
 static float * audio_io_read_mp3_buf(const uint8_t * data, size_t size, int * T_out, int * sr_out) {
     *T_out  = 0;
@@ -208,13 +226,37 @@ static float * audio_read_buf(const uint8_t * data, size_t size, int * T_out, in
     return audio_io_read_mp3_buf(data, size, T_out, sr_out);
 }
 
-// Decode WAV or MP3 from memory buffer and resample to 48000 Hz stereo.
-// Returns planar stereo float [L:T][R:T]. Caller frees.
-static float * audio_read_48k_buf(const uint8_t * data, size_t size, int * T_out) {
-    int     T = 0, sr = 0;
-    float * raw = audio_read_buf(data, size, &T, &sr);
-    if (!raw) {
-        *T_out = 0;
+// The source sample rates a read takes: 8 kHz, the least an MP3 carries, to
+// 768 kHz, the most a WAV is recorded at. A header outside them is refused
+// before any resample: a WAV that claims 1 Hz would ask audio_resample for
+// 48000 times its samples -- past an int, then a ~16 GB allocation -- before
+// ace-server's 600 s check ever ran (cadenza-audio #1266).
+inline constexpr int ACE_SOURCE_RATE_MIN = 8000;
+inline constexpr int ACE_SOURCE_RATE_MAX = 768000;
+
+inline constexpr bool source_rate_plausible(int sr) {
+    return sr >= ACE_SOURCE_RATE_MIN && sr <= ACE_SOURCE_RATE_MAX;
+}
+
+static_assert(source_rate_plausible(ACE_SAMPLE_RATE) && source_rate_plausible(44100) && !source_rate_plausible(1) &&
+                  !source_rate_plausible(0) && !source_rate_plausible(ACE_SOURCE_RATE_MAX + 1),
+              "the rates a source is read at");
+
+// A decoded source at 48000 Hz: `raw`, `T` samples at `sr`, taken and freed
+// or handed back. Neither a source of no sample nor one at an implausible
+// rate is: both are NULL, said why (cadenza-audio #1266) -- so no caller
+// holds a zero-length buffer it must remember to free.
+static float * audio_io_to_48k(float * raw, int T, int sr, int * T_out) {
+    *T_out = 0;
+    if (T <= 0) {
+        fprintf(stderr, "[Audio] No audio: the source holds no sample\n");
+        free(raw);
+        return NULL;
+    }
+    if (!source_rate_plausible(sr)) {
+        fprintf(stderr, "[Audio] Refused: a sample rate of %d Hz (a source is read at %d to %d Hz)\n", sr,
+                ACE_SOURCE_RATE_MIN, ACE_SOURCE_RATE_MAX);
+        free(raw);
         return NULL;
     }
 
@@ -230,7 +272,6 @@ static float * audio_read_48k_buf(const uint8_t * data, size_t size, int * T_out
 
     if (!resampled) {
         fprintf(stderr, "[Audio-Resample] Resample failed\n");
-        *T_out = 0;
         return NULL;
     }
 
@@ -238,6 +279,19 @@ static float * audio_read_48k_buf(const uint8_t * data, size_t size, int * T_out
 
     *T_out = T_rs;
     return resampled;
+}
+
+// Decode WAV or MP3 from memory buffer and resample to 48000 Hz stereo.
+// Returns planar stereo float [L:T][R:T], at least one sample, or NULL
+// (audio_io_to_48k). Caller frees.
+static float * audio_read_48k_buf(const uint8_t * data, size_t size, int * T_out) {
+    int     T = 0, sr = 0;
+    float * raw = audio_read_buf(data, size, &T, &sr);
+    if (!raw) {
+        *T_out = 0;
+        return NULL;
+    }
+    return audio_io_to_48k(raw, T, sr, T_out);
 }
 
 // File-based wrappers: load file into memory, delegate to buffer functions.
@@ -275,7 +329,8 @@ static float * audio_read(const char * path, int * T_out, int * sr_out) {
 }
 
 // Read WAV or MP3 and resample to 48000 Hz stereo.
-// Returns planar stereo float [L: T][R: T]. Caller frees.
+// Returns planar stereo float [L: T][R: T], at least one sample, or NULL
+// (audio_io_to_48k). Caller frees.
 static float * audio_read_48k(const char * path, int * T_out) {
     int     T = 0, sr = 0;
     float * raw = audio_read(path, &T, &sr);
@@ -283,27 +338,7 @@ static float * audio_read_48k(const char * path, int * T_out) {
         *T_out = 0;
         return NULL;
     }
-
-    if (sr == ACE_SAMPLE_RATE) {
-        *T_out = T;
-        return raw;
-    }
-
-    int T_rs = 0;
-    fprintf(stderr, "[Audio-Resample] %d Hz -> %d Hz, %d samples...\n", sr, ACE_SAMPLE_RATE, T);
-    float * resampled = audio_resample(raw, T, sr, ACE_SAMPLE_RATE, 2, &T_rs);
-    free(raw);
-
-    if (!resampled) {
-        fprintf(stderr, "[Audio-Resample] Resample failed\n");
-        *T_out = 0;
-        return NULL;
-    }
-
-    fprintf(stderr, "[Audio-Resample] Done: %d -> %d samples\n", T, T_rs);
-
-    *T_out = T_rs;
-    return resampled;
+    return audio_io_to_48k(raw, T, sr, T_out);
 }
 
 // maximize perceived loudness via percentile normalization.
@@ -565,13 +600,9 @@ static bool audio_write_wav(const char * path, const float * audio, int T_audio,
         return false;
     }
 
-    FILE * fp = fopen(path, "wb");
-    if (!fp) {
-        fprintf(stderr, "[Audio] Cannot open %s for writing\n", path);
+    if (!audio_io_save_file(path, wav.data(), wav.size())) {
         return false;
     }
-    fwrite(wav.data(), 1, wav.size(), fp);
-    fclose(fp);
 
     fprintf(stderr, "[WAV] Wrote %s: %d samples, %d Hz, stereo\n", path, T_audio, sr);
     return true;
@@ -790,13 +821,9 @@ static bool audio_write_mp3(const char * path, const float * audio, int T_audio,
         return false;
     }
 
-    FILE * fp = fopen(path, "wb");
-    if (!fp) {
-        fprintf(stderr, "[Audio] Cannot open %s for writing\n", path);
+    if (!audio_io_save_file(path, mp3.data(), mp3.size())) {
         return false;
     }
-    fwrite(mp3.data(), 1, mp3.size(), fp);
-    fclose(fp);
 
     fprintf(stderr, "[MP3] Wrote %s\n", path);
     return true;

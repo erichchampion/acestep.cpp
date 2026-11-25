@@ -109,6 +109,11 @@ static int synth_main(int argc, char ** argv) {
         usage(argv[0]);
         return 1;
     }
+    // Tiles the VAE can run, refused before any model loads (cadenza-audio #1266).
+    if (const char * why = vae_tiling_refused(vae_chunk, vae_overlap)) {
+        fprintf(stderr, "[CLI] ERROR: %s\n", why);
+        return 1;
+    }
     if (request_paths.empty()) {
         fprintf(stderr, "[CLI] ERROR: --request required\n");
         usage(argv[0]);
@@ -337,7 +342,10 @@ static int synth_main(int argc, char ** argv) {
         return 1;
     }
 
-    // Write output files
+    // Write output files. A take that could not be written fails the tool,
+    // the others still written: no script reads success into a missing file
+    // (cadenza-audio #1266).
+    bool wrote_all = true;
     for (int b = 0; b < (int) all_audio.size(); b++) {
         if (!all_audio[b].samples) {
             continue;
@@ -348,6 +356,7 @@ static int synth_main(int argc, char ** argv) {
         if (!audio_write(out_path, all_audio[b].samples, all_audio[b].n_samples, ACE_SAMPLE_RATE,
                          groups[0][b].mp3_bitrate, wav_fmt)) {
             fprintf(stderr, "[Ace-Synth Batch%d] FATAL: failed to write %s\n", b, out_path);
+            wrote_all = false;
         }
         ace_audio_free(&all_audio[b]);
     }
@@ -356,6 +365,9 @@ static int synth_main(int argc, char ** argv) {
     free(ref_interleaved);
     ace_synth_free(ctx);
     store_free(store);
+    if (!wrote_all) {
+        return 1;
+    }
     fprintf(stderr, "[Ace-Synth] All done\n");
     return 0;
 }

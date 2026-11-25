@@ -44,123 +44,197 @@ static const char NAC8_MAGIC[4] = { 'N', 'A', 'C', '8' };
 static const int  NAC8_HEADER   = 8;   // 4B magic + 4B T_latent
 static const int  NAC8_FRAME    = 66;  // 2B f16 scale + 64B int8
 
-// Write Q8 quantized latent
-static bool write_latent_q8(const char * path, const float * data, int T_latent) {
-    FILE * f = fopen(path, "wb");
-    if (!f) {
-        return false;
-    }
-
-    fwrite(NAC8_MAGIC, 1, 4, f);
-    uint32_t t = (uint32_t) T_latent;
-    fwrite(&t, 4, 1, f);
-
-    for (int i = 0; i < T_latent; i++) {
-        const float * frame = data + i * 64;
-
-        // find max abs for symmetric quant
-        float amax = 0.0f;
-        for (int j = 0; j < 64; j++) {
-            float a = fabsf(frame[j]);
-            if (a > amax) {
-                amax = a;
-            }
-        }
-        float       scale     = amax / 127.0f;
-        ggml_fp16_t scale_f16 = ggml_fp32_to_fp16(scale);
-        fwrite(&scale_f16, 2, 1, f);
-
-        // quantize
-        int8_t q[64];
-        float  inv = (scale > 0.0f) ? 127.0f / amax : 0.0f;
-        for (int j = 0; j < 64; j++) {
-            int v = (int) roundf(frame[j] * inv);
-            q[j]  = (int8_t) (v < -127 ? -127 : (v > 127 ? 127 : v));
-        }
-        fwrite(q, 1, 64, f);
-    }
-    fclose(f);
-
-    size_t bytes    = NAC8_HEADER + (size_t) T_latent * NAC8_FRAME;
-    float  duration = latent_frames_sec(T_latent);
-    float  kbps     = (float) bytes * 8.0f / (duration * 1000.0f);
-    fprintf(stderr, "[Latent] Wrote %s: Q8, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, T_latent, duration,
-            (float) bytes / 1024.0f, kbps);
-    return true;
-}
-
 // Q4 format constants
 static const char NAC4_MAGIC[4] = { 'N', 'A', 'C', '4' };
 static const int  NAC4_HEADER   = 8;   // 4B magic + 4B T_latent
 static const int  NAC4_FRAME    = 34;  // 2B f16 scale + 32B packed nibbles
 
-// Write Q4 quantized latent
-// Symmetric 4-bit: range [-7, 7], scale = amax / 7.0
-// Packing: byte = (low & 0x0F) | (high << 4), two signed nibbles per byte
-static bool write_latent_q4(const char * path, const float * data, int T_latent) {
-    FILE * f = fopen(path, "wb");
-    if (!f) {
-        return false;
-    }
+static_assert(NAC8_FRAME == 2 + ACE_LATENT_CHANNELS && NAC4_FRAME == 2 + ACE_LATENT_CHANNELS / 2,
+              "a quantized frame is its f16 scale and its 64 channels");
 
-    fwrite(NAC4_MAGIC, 1, 4, f);
+// A latent file's line in the log: its frames, length, size and rate. Only
+// for a latent of at least one frame -- a read or an encode of none is
+// refused first, so the rate is never inf or nan kbit/s (cadenza-audio #1266).
+static void latent_log(const char * verb, const char * path, const char * kind, int T_latent, size_t bytes) {
+    const float duration = latent_frames_sec(T_latent);
+    fprintf(stderr, "[Latent] %s %s: %s, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", verb, path, kind, T_latent,
+            duration, (float) bytes / 1024.0f, (float) bytes * 8.0f / (duration * 1000.0f));
+}
+
+static void append_bytes(std::string & out, const void * p, size_t n) {
+    out.append((const char *) p, n);
+}
+
+// A frame's largest magnitude: the range its symmetric quantization spans.
+static float frame_amax(const float * frame) {
+    float amax = 0.0f;
+    for (int j = 0; j < ACE_LATENT_CHANNELS; j++) {
+        float a = fabsf(frame[j]);
+        if (a > amax) {
+            amax = a;
+        }
+    }
+    return amax;
+}
+
+// Q8 quantized latent: symmetric per-frame int8.
+static std::string encode_latent_q8(const float * data, int T_latent) {
+    std::string out;
+    out.reserve(NAC8_HEADER + (size_t) T_latent * NAC8_FRAME);
+    append_bytes(out, NAC8_MAGIC, 4);
     uint32_t t = (uint32_t) T_latent;
-    fwrite(&t, 4, 1, f);
+    append_bytes(out, &t, 4);
 
     for (int i = 0; i < T_latent; i++) {
-        const float * frame = data + i * 64;
+        const float * frame = data + (size_t) i * ACE_LATENT_CHANNELS;
 
-        // find max abs for symmetric quant
-        float amax = 0.0f;
-        for (int j = 0; j < 64; j++) {
-            float a = fabsf(frame[j]);
-            if (a > amax) {
-                amax = a;
-            }
+        float       amax      = frame_amax(frame);
+        float       scale     = amax / 127.0f;
+        ggml_fp16_t scale_f16 = ggml_fp32_to_fp16(scale);
+        append_bytes(out, &scale_f16, 2);
+
+        // quantize
+        int8_t q[ACE_LATENT_CHANNELS];
+        float  inv = (scale > 0.0f) ? 127.0f / amax : 0.0f;
+        for (int j = 0; j < ACE_LATENT_CHANNELS; j++) {
+            int v = (int) roundf(frame[j] * inv);
+            q[j]  = (int8_t) (v < -127 ? -127 : (v > 127 ? 127 : v));
         }
+        append_bytes(out, q, sizeof(q));
+    }
+    return out;
+}
+
+// Q4 quantized latent
+// Symmetric 4-bit: range [-7, 7], scale = amax / 7.0
+// Packing: byte = (low & 0x0F) | (high << 4), two signed nibbles per byte
+static std::string encode_latent_q4(const float * data, int T_latent) {
+    std::string out;
+    out.reserve(NAC4_HEADER + (size_t) T_latent * NAC4_FRAME);
+    append_bytes(out, NAC4_MAGIC, 4);
+    uint32_t t = (uint32_t) T_latent;
+    append_bytes(out, &t, 4);
+
+    for (int i = 0; i < T_latent; i++) {
+        const float * frame = data + (size_t) i * ACE_LATENT_CHANNELS;
+
+        float       amax      = frame_amax(frame);
         float       scale     = amax / 7.0f;
         ggml_fp16_t scale_f16 = ggml_fp32_to_fp16(scale);
-        fwrite(&scale_f16, 2, 1, f);
+        append_bytes(out, &scale_f16, 2);
 
         // quantize and pack pairs into bytes
         float   inv = (scale > 0.0f) ? 7.0f / amax : 0.0f;
-        uint8_t packed[32];
-        for (int j = 0; j < 32; j++) {
+        uint8_t packed[ACE_LATENT_CHANNELS / 2];
+        for (int j = 0; j < ACE_LATENT_CHANNELS / 2; j++) {
             int lo    = (int) roundf(frame[j * 2 + 0] * inv);
             int hi    = (int) roundf(frame[j * 2 + 1] * inv);
             lo        = lo < -7 ? -7 : (lo > 7 ? 7 : lo);
             hi        = hi < -7 ? -7 : (hi > 7 ? 7 : hi);
             packed[j] = (uint8_t) ((lo & 0x0F) | (hi << 4));
         }
-        fwrite(packed, 1, 32, f);
+        append_bytes(out, packed, sizeof(packed));
     }
-    fclose(f);
+    return out;
+}
 
-    size_t bytes    = NAC4_HEADER + (size_t) T_latent * NAC4_FRAME;
-    float  duration = latent_frames_sec(T_latent);
-    float  kbps     = (float) bytes * 8.0f / (duration * 1000.0f);
-    fprintf(stderr, "[Latent] Wrote %s: Q4, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, T_latent, duration,
-            (float) bytes / 1024.0f, kbps);
+// Write a latent of at least one frame as f32 (quant 0, no header), Q8 or
+// Q4: whether all of it reached the file (cadenza-audio #1266).
+static bool write_latent(const char * path, const float * data, int T_latent, int quant) {
+    std::string  bytes;
+    const char * kind = "f32";
+    if (quant == 8) {
+        bytes = encode_latent_q8(data, T_latent);
+        kind  = "Q8";
+    } else if (quant == 4) {
+        bytes = encode_latent_q4(data, T_latent);
+        kind  = "Q4";
+    } else {
+        append_bytes(bytes, data, (size_t) T_latent * ACE_LATENT_FRAME_BYTES);
+    }
+    if (!audio_io_save_file(path, bytes.data(), bytes.size())) {
+        return false;
+    }
+    latent_log("Wrote", path, kind, T_latent, bytes.size());
     return true;
 }
 
-// Write f32 raw latent (no header)
-static bool write_latent_f32(const char * path, const float * data, int T_latent) {
-    FILE * f = fopen(path, "wb");
-    if (!f) {
-        return false;
+// A latent's frame count refused, said why: true when it is (cadenza-audio
+// #1266). A quantized file's header is asked before its size is, so a count
+// past a run's most is refused before anything is sized by it.
+static bool latent_refused(const char * path, AceLatentFault fault) {
+    if (const char * why = latent_fault_words(fault)) {
+        fprintf(stderr, "[Latent] Refused %s: %s\n", path, why);
+        return true;
     }
-    size_t bytes = (size_t) T_latent * 64 * sizeof(float);
-    fwrite(data, 1, bytes, f);
-    fclose(f);
-    float duration = latent_frames_sec(T_latent);
-    fprintf(stderr, "[Latent] Wrote %s: f32, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, T_latent, duration,
-            (float) bytes / 1024.0f, (float) bytes * 8.0f / (duration * 1000.0f));
-    return true;
+    return false;
+}
+
+// Read a Q8 or Q4 latent's frames, its magic already read: [T_latent, 64] f32,
+// dequantized. Caller frees.
+static float * read_latent_quant(FILE * f, long fsize, const char * path, int quant, int * T_latent) {
+    const int    header = quant == 8 ? NAC8_HEADER : NAC4_HEADER;
+    const int    frame  = quant == 8 ? NAC8_FRAME : NAC4_FRAME;
+    const char * kind   = quant == 8 ? "Q8" : "Q4";
+
+    uint32_t t;
+    if (fread(&t, 4, 1, f) != 1) {
+        return NULL;
+    }
+    if (latent_refused(path, latent_frames_fault(t))) {
+        return NULL;
+    }
+
+    long expected = header + (long) t * frame;
+    if (fsize != expected) {
+        fprintf(stderr, "[Latent] %s size mismatch: expected %ld, got %ld\n", kind, expected, fsize);
+        return NULL;
+    }
+
+    float * data = (float *) malloc((size_t) t * ACE_LATENT_FRAME_BYTES);
+    if (!data) {
+        fprintf(stderr, "[Latent] OOM allocating %s decode buffer for %u frames\n", kind, t);
+        return NULL;
+    }
+    uint8_t q[NAC8_FRAME - 2];
+    for (int i = 0; i < (int) t; i++) {
+        ggml_fp16_t scale_f16;
+        if (fread(&scale_f16, 2, 1, f) != 1 || fread(q, 1, (size_t) frame - 2, f) != (size_t) frame - 2) {
+            free(data);
+            return NULL;
+        }
+        float   scale = ggml_fp16_to_fp32(scale_f16);
+        float * out   = data + (size_t) i * ACE_LATENT_CHANNELS;
+        if (quant == 8) {
+            for (int j = 0; j < ACE_LATENT_CHANNELS; j++) {
+                out[j] = (float) (int8_t) q[j] * scale;
+            }
+            continue;
+        }
+        // unpack signed nibbles
+        for (int j = 0; j < ACE_LATENT_CHANNELS / 2; j++) {
+            int lo = (int) (q[j] & 0x0F);
+            int hi = (int) (q[j] >> 4);
+            if (lo >= 8) {
+                lo -= 16;
+            }
+            if (hi >= 8) {
+                hi -= 16;
+            }
+            out[j * 2 + 0] = (float) lo * scale;
+            out[j * 2 + 1] = (float) hi * scale;
+        }
+    }
+
+    *T_latent = (int) t;
+    latent_log("Read", path, kind, *T_latent, (size_t) fsize);
+    return data;
 }
 
 // Read latent, auto-detect format (NAC8 -> Q8, NAC4 -> Q4, else f32).
-// Returns [T_latent, 64] f32 (dequantized if quantized). Caller frees.
+// Returns [T_latent, 64] f32 (dequantized if quantized), 1 to a run's most
+// frames -- the bound ace-server's latent payloads have (cadenza-audio
+// #1266) -- or NULL, said why. Caller frees.
 static float * read_latent(const char * path, int * T_latent) {
     FILE * f = fopen(path, "rb");
     if (!f) {
@@ -170,6 +244,11 @@ static float * read_latent(const char * path, int * T_latent) {
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
+    if (fsize < 0) {
+        fprintf(stderr, "[Latent] Cannot size %s\n", path);
+        fclose(f);
+        return NULL;
+    }
 
     // Check magic
     char magic[4] = {};
@@ -180,129 +259,21 @@ static float * read_latent(const char * path, int * T_latent) {
         }
     }
 
-    if (memcmp(magic, NAC8_MAGIC, 4) == 0) {
-        // Q8 format
-        uint32_t t;
-        if (fread(&t, 4, 1, f) != 1) {
-            fclose(f);
-            return NULL;
-        }
-        *T_latent = (int) t;
-
-        long expected = NAC8_HEADER + (long) t * NAC8_FRAME;
-        if (fsize != expected) {
-            fprintf(stderr, "[Latent] Q8 size mismatch: expected %ld, got %ld\n", expected, fsize);
-            fclose(f);
-            return NULL;
-        }
-
-        float * data = (float *) malloc((size_t) t * 64 * sizeof(float));
-        if (!data) {
-            fprintf(stderr, "[Latent] OOM allocating Q8 decode buffer for %u frames\n", t);
-            fclose(f);
-            return NULL;
-        }
-        for (int i = 0; i < (int) t; i++) {
-            ggml_fp16_t scale_f16;
-            if (fread(&scale_f16, 2, 1, f) != 1) {
-                fclose(f);
-                free(data);
-                return NULL;
-            }
-            float scale = ggml_fp16_to_fp32(scale_f16);
-
-            int8_t q[64];
-            if (fread(q, 1, 64, f) != 64) {
-                fclose(f);
-                free(data);
-                return NULL;
-            }
-
-            float * frame = data + i * 64;
-            for (int j = 0; j < 64; j++) {
-                frame[j] = (float) q[j] * scale;
-            }
-        }
+    const int quant = memcmp(magic, NAC8_MAGIC, 4) == 0 ? 8 : (memcmp(magic, NAC4_MAGIC, 4) == 0 ? 4 : 0);
+    if (quant) {
+        float * data = read_latent_quant(f, fsize, path, quant, T_latent);
         fclose(f);
-
-        float duration = latent_frames_sec(*T_latent);
-        float kbps     = (float) fsize * 8.0f / (duration * 1000.0f);
-        fprintf(stderr, "[Latent] Read %s: Q8, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, *T_latent, duration,
-                (float) fsize / 1024.0f, kbps);
-        return data;
-    }
-
-    if (memcmp(magic, NAC4_MAGIC, 4) == 0) {
-        // Q4 format
-        uint32_t t;
-        if (fread(&t, 4, 1, f) != 1) {
-            fclose(f);
-            return NULL;
-        }
-        *T_latent = (int) t;
-
-        long expected = NAC4_HEADER + (long) t * NAC4_FRAME;
-        if (fsize != expected) {
-            fprintf(stderr, "[Latent] Q4 size mismatch: expected %ld, got %ld\n", expected, fsize);
-            fclose(f);
-            return NULL;
-        }
-
-        float * data = (float *) malloc((size_t) t * 64 * sizeof(float));
-        if (!data) {
-            fprintf(stderr, "[Latent] OOM allocating Q4 decode buffer for %u frames\n", t);
-            fclose(f);
-            return NULL;
-        }
-        for (int i = 0; i < (int) t; i++) {
-            ggml_fp16_t scale_f16;
-            if (fread(&scale_f16, 2, 1, f) != 1) {
-                fclose(f);
-                free(data);
-                return NULL;
-            }
-            float scale = ggml_fp16_to_fp32(scale_f16);
-
-            uint8_t packed[32];
-            if (fread(packed, 1, 32, f) != 32) {
-                fclose(f);
-                free(data);
-                return NULL;
-            }
-
-            // unpack signed nibbles
-            float * frame = data + i * 64;
-            for (int j = 0; j < 32; j++) {
-                int lo = (int) (packed[j] & 0x0F);
-                int hi = (int) (packed[j] >> 4);
-                if (lo >= 8) {
-                    lo -= 16;
-                }
-                if (hi >= 8) {
-                    hi -= 16;
-                }
-                frame[j * 2 + 0] = (float) lo * scale;
-                frame[j * 2 + 1] = (float) hi * scale;
-            }
-        }
-        fclose(f);
-
-        float duration = latent_frames_sec(*T_latent);
-        float kbps     = (float) fsize * 8.0f / (duration * 1000.0f);
-        fprintf(stderr, "[Latent] Read %s: Q4, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, *T_latent, duration,
-                (float) fsize / 1024.0f, kbps);
         return data;
     }
 
     // f32 format (no header, rewind)
     fseek(f, 0, SEEK_SET);
-    if (fsize % (64 * (int) sizeof(float)) != 0) {
-        fprintf(stderr, "[Latent] File size %ld not a multiple of %d (64 * f32)\n", fsize, (int) (64 * sizeof(float)));
+    const AceLatentFrames frames = latent_payload_frames((unsigned long long) fsize);
+    if (latent_refused(path, frames.fault)) {
         fclose(f);
         return NULL;
     }
 
-    *T_latent    = (int) (fsize / (64 * sizeof(float)));
     float * data = (float *) malloc(fsize);
     if (!data) {
         fprintf(stderr, "[Latent] OOM allocating f32 decode buffer (%ld bytes)\n", fsize);
@@ -316,9 +287,8 @@ static float * read_latent(const char * path, int * T_latent) {
     }
     fclose(f);
 
-    float duration = latent_frames_sec(*T_latent);
-    fprintf(stderr, "[Latent] Read %s: f32, %d frames (%.2fs, %.1f KB, %.1f kbit/s)\n", path, *T_latent, duration,
-            (float) fsize / 1024.0f, (float) fsize * 8.0f / (duration * 1000.0f));
+    *T_latent = frames.frames;
+    latent_log("Read", path, "f32", *T_latent, (size_t) fsize);
     return data;
 }
 
@@ -410,6 +380,11 @@ static int codec_main(int argc, char ** argv) {
         print_usage(argv[0]);
         return 1;
     }
+    // Tiles the VAE can run, refused before anything is read (cadenza-audio #1266).
+    if (const char * why = vae_tiling_refused(chunk_size, overlap)) {
+        fprintf(stderr, "[VAE] FATAL: %s\n", why);
+        return 1;
+    }
 
     // Auto output names. f32 dumps land as .vae since they are the raw VAE
     // encoder output with no codec applied; nac8/nac4 keep their codec name.
@@ -456,25 +431,32 @@ static int codec_main(int argc, char ** argv) {
         vae_enc_load(&enc, vae_path);
 
         int                max_T = (T_audio / ACE_LATENT_HOP) + 64;
-        std::vector<float> latent((size_t) max_T * 64);
+        std::vector<float> latent((size_t) max_T * ACE_LATENT_CHANNELS);
 
         fprintf(stderr, "\n[VAE] Encoding %d samples (%.2fs)...\n", T_audio, samples_sec(T_audio));
         int T_latent = vae_enc_encode_tiled(&enc, audio, T_audio, latent.data(), max_T, chunk_size, overlap);
         free(audio);
+        vae_enc_free(&enc);
         if (T_latent < 0) {
-            vae_enc_free(&enc);
+            return 1;
+        }
+        // An encode of no frame writes no file of nothing (cadenza-audio
+        // #1266) -- held, though the VAE rounds a source of a sample up to a
+        // frame today.
+        if (T_latent == 0) {
+            fprintf(stderr, "[VAE] FATAL: the encode made %s\n", latent_fault_words(AceLatentFault::empty));
+            return 1;
+        }
+        if (frames_past_run_most(T_latent)) {
+            fprintf(stderr, "[VAE] WARNING: %s; --decode and ace-server refuse it\n",
+                    latent_fault_words(AceLatentFault::past_run_most));
+        }
+
+        if (!write_latent(output_path, latent.data(), T_latent, quant)) {
+            fprintf(stderr, "[VAE] FATAL: failed to write %s\n", output_path);
             return 1;
         }
 
-        if (quant == 8) {
-            write_latent_q8(output_path, latent.data(), T_latent);
-        } else if (quant == 4) {
-            write_latent_q4(output_path, latent.data(), T_latent);
-        } else {
-            write_latent_f32(output_path, latent.data(), T_latent);
-        }
-
-        vae_enc_free(&enc);
         fprintf(stderr, "[VAE] Done.\n");
         return 0;
     }
@@ -501,14 +483,15 @@ static int codec_main(int argc, char ** argv) {
             return 1;
         }
 
-        if (audio_write(output_path, audio.data(), T_audio, ACE_SAMPLE_RATE, 0, wav_fmt)) {
-            fprintf(stderr, "\n[VAE] Output: %s (%d samples, %.2fs @ %d Hz)\n", output_path, T_audio,
-                    samples_sec(T_audio), ACE_SAMPLE_RATE);
-        } else {
-            fprintf(stderr, "[VAE] FATAL: failed to write %s\n", output_path);
-        }
-
         vae_ggml_free(&dec);
+        // A failed write fails the tool: no script reads success into no file
+        // (cadenza-audio #1266).
+        if (!audio_write(output_path, audio.data(), T_audio, ACE_SAMPLE_RATE, 0, wav_fmt)) {
+            fprintf(stderr, "[VAE] FATAL: failed to write %s\n", output_path);
+            return 1;
+        }
+        fprintf(stderr, "\n[VAE] Output: %s (%d samples, %.2fs @ %d Hz)\n", output_path, T_audio, samples_sec(T_audio),
+                ACE_SAMPLE_RATE);
         fprintf(stderr, "[VAE] Done.\n");
         return 0;
     }

@@ -129,6 +129,52 @@ add_test(NAME test-synth-needs-source
          COMMAND ace-synth --request ${CMAKE_CURRENT_SOURCE_DIR}/request-cover.json --models /nonexistent)
 set_tests_properties(test-synth-needs-source PROPERTIES
     PASS_REGULAR_EXPRESSION "task 'cover': the task requires source audio" FAIL_REGULAR_EXPRESSION "cannot scan --models")
+# The tools' refusals (cadenza-audio #1266), each a failure that says why:
+# tool-refuses.cmake requires a non-zero exit and the reason, which
+# PASS_REGULAR_EXPRESSION alone would not. make-tool-inputs writes the files
+# they read first, as a fixture. None loads a model: each is refused before.
+add_executable(make-tool-inputs make-tool-inputs.cpp)
+target_include_directories(make-tool-inputs PRIVATE ${PROJECT_SOURCE_DIR}/src)
+set(ACESTEP_TOOL_INPUTS ${CMAKE_CURRENT_BINARY_DIR}/tool-inputs)
+add_test(NAME tool-inputs COMMAND ${CMAKE_COMMAND} -E make_directory ${ACESTEP_TOOL_INPUTS})
+add_test(NAME tool-inputs-write COMMAND make-tool-inputs ${ACESTEP_TOOL_INPUTS})
+set_tests_properties(tool-inputs PROPERTIES FIXTURES_SETUP tool_inputs_dir)
+set_tests_properties(tool-inputs-write PROPERTIES FIXTURES_REQUIRED tool_inputs_dir FIXTURES_SETUP tool_inputs)
+# A tool refused, saying `expect`: add_tool_refusal(<name> <expect> <tool> <args...>).
+function(add_tool_refusal name expect)
+    add_test(NAME ${name}
+             COMMAND ${CMAKE_COMMAND} "-DEXPECT=${expect}" -P ${CMAKE_CURRENT_SOURCE_DIR}/tool-refuses.cmake -- ${ARGN})
+    set_tests_properties(${name} PROPERTIES FIXTURES_REQUIRED tool_inputs)
+endfunction()
+# Tiles the VAE can't run, refused where each tool parses them: a chunk of 0
+# (a stride of 0, SIGFPE), below 0 (no tile, no error), past a run's most
+# frames (chunk * ACE_LATENT_HOP overflows past ~1.1M), an overlap below 0.
+add_tool_refusal(test-codec-chunk-zero "--vae-chunk must be 1 to 15000"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk 0)
+add_tool_refusal(test-codec-chunk-negative "--vae-chunk must be 1 to 15000"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk -1)
+add_tool_refusal(test-codec-chunk-past-most "--vae-chunk must be 1 to 15000"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk 15001)
+add_tool_refusal(test-codec-overlap-negative "--vae-overlap must be 0 to 15000"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-overlap -1)
+add_tool_refusal(test-synth-chunk-zero "--vae-chunk must be 1 to 15000"
+                 $<TARGET_FILE:ace-synth> --request ${CMAKE_CURRENT_SOURCE_DIR}/request-text2music.json
+                 --models /nonexistent --vae-chunk 0)
+add_tool_refusal(test-understand-chunk-zero "--vae-chunk must be 1 to 15000"
+                 $<TARGET_FILE:ace-understand> --models /nonexistent --src-audio /nonexistent --vae-chunk 0)
+# neural-codec's latent files, bounded as ace-server's payloads are: a header
+# claiming 1.2M frames, a file of no frame (Q4 and f32), a part frame.
+add_tool_refusal(test-codec-latent-past-most "more latent frames than a run holds"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i ${ACESTEP_TOOL_INPUTS}/past-most.nac8)
+add_tool_refusal(test-codec-latent-empty-q4 "no latent frame"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i ${ACESTEP_TOOL_INPUTS}/empty.nac4)
+add_tool_refusal(test-codec-latent-empty-f32 "no latent frame"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i ${ACESTEP_TOOL_INPUTS}/empty.vae)
+add_tool_refusal(test-codec-latent-ragged "not a whole number of 64-channel f32 frames"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i ${ACESTEP_TOOL_INPUTS}/ragged.vae)
+# A header's rate outside a source's, refused before any resample: 1 Hz.
+add_tool_refusal(test-codec-rate-1hz "a sample rate of 1 Hz"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --encode -i ${ACESTEP_TOOL_INPUTS}/rate-1hz.wav)
 set(ACESTEP_TEST_MODELS "" CACHE PATH "Directory of GGUFs for the tests that read them (empty: not run)")
 if(ACESTEP_TEST_MODELS)
     add_test(NAME test-audio-layout COMMAND test-audio-layout --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)
@@ -138,4 +184,15 @@ if(ACESTEP_TEST_MODELS)
     # runs the synth (cadenza-audio #1056): each fails, and is timed, alone.
     add_test(NAME test-model-store COMMAND test-model-store --models ${ACESTEP_TEST_MODELS} --scenarios store)
     add_test(NAME test-failed-encodes COMMAND test-model-store --models ${ACESTEP_TEST_MODELS} --scenarios encodes)
+    # neural-codec with the VAE (cadenza-audio #1266): a write that fails --
+    # to a folder that is not there -- fails the tool, encode and decode
+    # alike, rather than exiting 0. (An encode of no frame is refused too,
+    # but no input reaches one: the VAE rounds a source up, 100 samples to a
+    # frame.)
+    add_tool_refusal(test-codec-encode-write-fails "failed to write"
+                     $<TARGET_FILE:neural-codec> --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf --encode
+                     -i ${ACESTEP_TOOL_INPUTS}/one-second.wav -o /nonexistent/one-second.vae)
+    add_tool_refusal(test-codec-decode-write-fails "failed to write"
+                     $<TARGET_FILE:neural-codec> --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf --decode
+                     -i ${ACESTEP_TOOL_INPUTS}/one-frame.vae -o /nonexistent/one-frame.wav)
 endif()

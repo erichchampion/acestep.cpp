@@ -558,9 +558,15 @@ bool request_write(const AceRequest * r, const char * path) {
     char *           json = yyjson_mut_write(doc, WRITE_FLAGS | YYJSON_WRITE_NEWLINE_AT_END, &len);
     yyjson_mut_doc_free(doc);
 
-    fwrite(json, 1, len, f);
+    // Every byte and the close, or a failed write: a full disk is not a
+    // request written (cadenza-audio #1266).
+    const bool wrote  = json && fwrite(json, 1, len, f) == len;
+    const bool closed = fclose(f) == 0;
     free(json);
-    fclose(f);
+    if (!wrote || !closed) {
+        fprintf(stderr, "[Request] ERROR: failed writing %s\n", path);
+        return false;
+    }
 
     fprintf(stderr, "[Request] Wrote %s\n", path);
     return true;
