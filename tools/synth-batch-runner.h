@@ -11,7 +11,67 @@
 #include "pipeline-synth.h"
 
 #include <cstdio>
+#include <string>
 #include <vector>
+
+// A batch expanded to the takes that run: each running request's seed
+// resolved once, its takes that seed + 0, 1, ... in order, by the counts
+// ace_synth_batch_takes gave -- the one expansion both tools make, from the
+// batch computed once per job (cadenza-audio #1243, #1269). `take_request[k]`
+// is the request take k came from, `take_index[k]` (when given) its place
+// among that request's takes. reqs' seeds are resolved in place.
+static void synth_batch_expand(std::vector<AceRequest> &  reqs,
+                               const AceSynthBatchTakes & batch,
+                               std::vector<AceRequest> &  group,
+                               std::vector<int> &         take_request,
+                               std::vector<int> *         take_index = nullptr) {
+    group.clear();
+    take_request.clear();
+    group.reserve(batch.total);
+    take_request.reserve(batch.total);
+    if (take_index) {
+        take_index->clear();
+        take_index->reserve(batch.total);
+    }
+    for (int ri = 0; ri < (int) batch.takes.size() && ri < (int) reqs.size(); ri++) {
+        request_resolve_seed(&reqs[ri]);
+        const long long base_seed = reqs[ri].seed;
+        for (int i = 0; i < batch.takes[ri]; i++) {
+            AceRequest r = reqs[ri];
+            r.seed       = base_seed + i;
+            group.push_back(r);
+            take_request.push_back(ri);
+            if (take_index) {
+                take_index->push_back(i);
+            }
+        }
+    }
+}
+
+// What a tool logs of a batch of `batch_n` requests (cadenza-audio #1269):
+// the tracks and the requests that run, and, when a take asked is dropped,
+// the takes asked against the DiT's most and -- when whole requests are --
+// the last that runs and the first dropped, each said by `name(i)` (a CLI's
+// request file, the server's index). One line each, untagged.
+template <class Name>
+static std::vector<std::string> synth_batch_notes(const AceSynthBatchTakes & batch, int batch_n, Name name) {
+    std::vector<std::string> notes;
+    const int                runs = (int) batch.takes.size();
+    char                     line[256];
+    if (batch.asked > batch.total) {
+        snprintf(line, sizeof(line), "Batch %lld exceeds DiT max %d, clamping", batch.asked, kAceSynthMaxTakes);
+        notes.push_back(line);
+    }
+    if (batch.total > 1 || runs < batch_n) {
+        snprintf(line, sizeof(line), "Batch: %d track(s) from %d of %d request(s)", batch.total, runs, batch_n);
+        notes.push_back(line);
+    }
+    if (runs > 0 && runs < batch_n) {
+        notes.push_back("Runs up to " + std::string(name(runs - 1)) + "; drops " + std::string(name(runs)) +
+                        (batch_n - runs > 1 ? " and the " + std::to_string(batch_n - runs - 1) + " after it" : ""));
+    }
+    return notes;
+}
 
 // Run a batch of request groups through the two synthesis phases.
 //

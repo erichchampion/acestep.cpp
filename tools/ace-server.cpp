@@ -738,6 +738,7 @@ static void handle_lm(const httplib::Request & req, httplib::Response & res) {
 // synth worker: processes synth request, stores audio result in job.
 static void synth_worker(std::shared_ptr<Job>    job,
                          std::vector<AceRequest> ace_reqs,
+                         AceSynthBatchTakes      batch_takes,
                          float *                 src_interleaved,
                          int                     src_len,
                          std::vector<float>      src_latents,
@@ -755,15 +756,10 @@ static void synth_worker(std::shared_ptr<Job>    job,
     // still leaves the run's own jobs and takes, and the synth: those are
     // synth_batch_run's to unwind, and a synth is not freed under its jobs.
     malloc_guard own_src{ src_interleaved }, own_ref{ ref_interleaved };
-    // Generate every request in one DiT batch. synth_batch_size expands each
-    // request into per-seed variants. Total clamped to DiT max kAceSynthMaxTakes,
-    // by the engine's one rule for which requests run (ace_synth_batch_takes).
-    const int                batch_n     = (int) ace_reqs.size();
-    const AceSynthBatchTakes batch_takes = ace_synth_batch_takes(ace_reqs.data(), batch_n);
-    const int                total_alloc = batch_takes.total;
-    if (batch_takes.asked > total_alloc) {
-        fprintf(stderr, "[Server] Batch %d exceeds DiT max %d, clamping\n", batch_takes.asked, kAceSynthMaxTakes);
-    }
+    // Generate every request that runs in one DiT batch, by the batch's takes
+    // handle_synth computed once, for its refusal and for this (the engine's
+    // one rule, ace_synth_batch_takes; cadenza-audio #1243, #1269).
+    const int             total_alloc = batch_takes.total;
     std::vector<AceAudio> audio(total_alloc);
 
     if (job->cancel.load()) {
@@ -824,30 +820,15 @@ static void synth_worker(std::shared_ptr<Job>    job,
         return;
     }
 
-    // Build the flat batch. Seeds are resolved per original request, then
-    // synth_batch_size is expanded into per-seed variants in groups[0].
+    // Build the flat batch: each request that runs expanded to its per-seed
+    // takes in groups[0]. Which request the client sent each take came from:
+    // a refusal names that, not the take's place in the expanded batch (#1193).
     std::vector<std::vector<AceRequest>> groups(1);
-    groups[0].reserve(total_alloc);
-    // Which request the client sent each take came from: a refusal names
-    // that, not the take's place in the expanded batch (#1193).
-    std::vector<int> take_request;
-    take_request.reserve(total_alloc);
-    for (int ri = 0; ri < (int) batch_takes.takes.size(); ri++) {
-        auto &    r   = ace_reqs[ri];
-        const int sbs = batch_takes.takes[ri];
-        request_resolve_seed(&r);
-        const long long base_seed = r.seed;
-
-        for (int i = 0; i < sbs; i++) {
-            AceRequest v = r;
-            v.seed       = base_seed + i;
-            groups[0].push_back(v);
-            take_request.push_back(ri);
-        }
-    }
-
-    if (total_alloc > 1) {
-        fprintf(stderr, "[Server] Batch: %d track(s) from %d request(s)\n", total_alloc, batch_n);
+    std::vector<int>                     take_request;
+    synth_batch_expand(ace_reqs, batch_takes, groups[0], take_request);
+    for (const std::string & note :
+         synth_batch_notes(batch_takes, (int) ace_reqs.size(), [](int i) { return "request " + std::to_string(i); })) {
+        fprintf(stderr, "[Server] job %s: %s\n", job->id.c_str(), note.c_str());
     }
 
     // Two-phase run. The store acquires and releases GPU modules around each
@@ -1007,10 +988,11 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             return;
         }
         // The batch rule before any part is read: a request it refuses costs
-        // no decode (cadenza-audio #1157). The JSON path runs it below.
+        // no decode (cadenza-audio #1157). The JSON path runs it below. A lone
+        // request always runs, its takes its own, so it is asked of the one.
         {
             AceSynthBatchRefusal why;
-            if (ace_synth_batch_refused(&ace_req, ace_synth_requests_run(&ace_req, 1), &why)) {
+            if (ace_synth_batch_refused(&ace_req, 1, &why)) {
                 const std::string which = why.request >= 0 ? "Request 0: " : "";
                 json_error(res, 400, (which + why.reason).c_str());
                 return;
@@ -1098,10 +1080,13 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     // unknown task (said as that), requests that mix tasks, a request short
     // of its caption (#1123), a region bound or codes that are no such
     // thing, a setting the batch shares asked differently (#1159).
+    // The batch's takes, by the engine's one rule for which requests run:
+    // computed once, asked of here and handed to the worker, which expands by
+    // it (cadenza-audio #1243, #1269).
+    AceSynthBatchTakes batch_takes = ace_synth_batch_takes(ace_reqs.data(), (int) ace_reqs.size());
     {
         AceSynthBatchRefusal why;
-        const int            run = ace_synth_requests_run(ace_reqs.data(), (int) ace_reqs.size());
-        if (ace_synth_batch_refused(ace_reqs.data(), run, &why)) {
+        if (ace_synth_batch_refused(ace_reqs.data(), (int) batch_takes.takes.size(), &why)) {
             const std::string which = why.request >= 0 ? "Request " + std::to_string(why.request) + ": " : "";
             json_error(res, 400, (which + why.reason).c_str());
             return;
@@ -1138,11 +1123,11 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     auto job = job_create();
     fprintf(stderr, "[Server] Job %s created (%d requests)\n", job->id.c_str(), (int) ace_reqs.size());
 
-    work_push_job(job, [job, reqs = std::move(ace_reqs), src_interleaved, src_len, src_lat = std::move(src_latents),
-                        src_T_latent, ref_interleaved, ref_len, ref_lat = std::move(ref_latents), ref_T_latent,
-                        output_wav, wav_fmt, peak_clip]() mutable {
-        synth_worker(job, std::move(reqs), src_interleaved, src_len, std::move(src_lat), src_T_latent, ref_interleaved,
-                     ref_len, std::move(ref_lat), ref_T_latent, output_wav, wav_fmt, peak_clip);
+    work_push_job(job, [job, reqs = std::move(ace_reqs), takes = std::move(batch_takes), src_interleaved, src_len,
+                        src_lat = std::move(src_latents), src_T_latent, ref_interleaved, ref_len,
+                        ref_lat = std::move(ref_latents), ref_T_latent, output_wav, wav_fmt, peak_clip]() mutable {
+        synth_worker(job, std::move(reqs), std::move(takes), src_interleaved, src_len, std::move(src_lat), src_T_latent,
+                     ref_interleaved, ref_len, std::move(ref_lat), ref_T_latent, output_wav, wav_fmt, peak_clip);
     });
     // The worker owns the audio now: it frees it.
     src_interleaved = nullptr;

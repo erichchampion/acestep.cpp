@@ -45,6 +45,12 @@ link_ggml_backends(test-vae-tiling)
 add_executable(test-understand-cot test-understand-cot.cpp)
 target_link_libraries(test-understand-cot PRIVATE acestep-core)
 
+# test-synth-batch: the tools' batch expansion and its clamp log, by the
+# helpers ace-synth and ace-server share (cadenza-audio #1269). No model.
+add_executable(test-synth-batch test-synth-batch.cpp)
+target_link_libraries(test-synth-batch PRIVATE acestep-core)
+target_include_directories(test-synth-batch PRIVATE ${PROJECT_SOURCE_DIR}/tools)
+
 # test-philox: Philox RNG reference dumper.
 add_executable(test-philox test-philox.cpp)
 target_include_directories(test-philox PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -75,6 +81,10 @@ add_test(NAME test-backend-config COMMAND test-backend-config)
 add_test(NAME test-understand-cot COMMAND test-understand-cot)
 add_test(NAME test-gpu-fail COMMAND test-gpu-fail)
 add_test(NAME test-page-release COMMAND test-page-release)
+add_test(NAME test-synth-batch COMMAND test-synth-batch)
+# And the tools held to them: no expansion loop of their own (#1269).
+add_test(NAME lint-batch-expansion
+         COMMAND ${CMAKE_COMMAND} -DTOOLS=${PROJECT_SOURCE_DIR}/tools -P ${CMAKE_CURRENT_SOURCE_DIR}/lint-batch-expansion.cmake)
 set_tests_properties(test-page-release PROPERTIES SKIP_RETURN_CODE 77)
 # A timeout: the underlying-error walk's cycle case hangs, not fails, if the
 # walk stops ending (cadenza-audio #857). Generous: it covers the whole binary,

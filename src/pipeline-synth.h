@@ -76,11 +76,18 @@ inline constexpr const char * kAceRefusalLengthTooLong =
 // cadenza-audio's shim holds its request cap to it (cadenza-audio #1165).
 inline constexpr int kAceSynthMaxTakes = 9;
 
-// The takes a request's synth_batch_size expands to: 1..kAceSynthMaxTakes, a
-// size below 1 being one take. ace_synth_batch_takes counts a request's
-// takes by it alone, for the tools and ace_synth_requests_run.
+// The takes a request's synth_batch_size asks for: the size, a size below 1
+// being one take. What a batch's `asked` sums, uncapped (cadenza-audio #1269).
+inline int ace_synth_request_asked(int synth_batch_size) {
+    return synth_batch_size < 1 ? 1 : synth_batch_size;
+}
+
+// The takes a request's synth_batch_size expands to: what it asks for, held
+// to 1..kAceSynthMaxTakes. ace_synth_batch_takes counts a request's takes by
+// it alone, for the tools and ace_synth_requests_run.
 inline int ace_synth_request_takes(int synth_batch_size) {
-    return synth_batch_size < 1 ? 1 : (synth_batch_size > kAceSynthMaxTakes ? kAceSynthMaxTakes : synth_batch_size);
+    const int asked = ace_synth_request_asked(synth_batch_size);
+    return asked > kAceSynthMaxTakes ? kAceSynthMaxTakes : asked;
 }
 
 // Why a batch is refused before any run, or a run before its job: the
@@ -318,15 +325,20 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
 // synth_batch_size takes (ace_synth_request_takes), the batch clamped to the
 // DiT's kAceSynthMaxTakes. `takes` holds one count per request that runs, in
 // order -- the last trimmed to fit, the requests past the cap left out -- and
-// sums to `total`. `asked` is the batch's total before that clamp (each
-// request already at most kAceSynthMaxTakes), for the tools' clamp log.
-// A NULL reqs is an empty batch, whatever batch_n says.
+// sums to `total`. `asked` is the takes the batch asked for, each request's
+// raw size (ace_synth_request_asked) summed in 64 bits, so no batch
+// overflows it: more than `total` whenever a take is dropped -- a lone
+// request asking 50 included, and {50, 1} asks 51 -- for the tools' clamp
+// log (cadenza-audio #1269). A NULL reqs is an empty batch, whatever
+// batch_n says.
 // The tools allocate and expand by this, and ace_synth_requests_run counts
 // its requests, so "which requests run" is one rule (cadenza-audio #1243).
+// Each tool computes it once per job and expands by it (synth_batch_expand,
+// tools/synth-batch-runner.h).
 struct AceSynthBatchTakes {
     std::vector<int> takes;
     int              total = 0;
-    int              asked = 0;
+    long long        asked = 0;
 };
 
 AceSynthBatchTakes ace_synth_batch_takes(const AceRequest * reqs, int batch_n);

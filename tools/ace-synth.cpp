@@ -138,13 +138,17 @@ static int synth_main(int argc, char ** argv) {
             basenames[ri] = basenames[ri].substr(0, dot);
         }
     }
+    // The batch's takes, by the engine's one rule for which requests run
+    // (ace_synth_batch_takes): computed once, asked of the refusal below and
+    // expanded by after the load (cadenza-audio #1243, #1269).
+    const AceSynthBatchTakes batch_takes = ace_synth_batch_takes(reqs.data(), batch_n);
     // The engine's batch rule, before any model is loaded: an unknown task,
     // requests that mix tasks, a request short of its caption (#1123), a
     // region bound or codes that are no such thing, a setting the batch
-    // shares asked differently (#1159).
+    // shares asked differently (#1159) -- of the requests that run.
     {
         AceSynthBatchRefusal why;
-        if (ace_synth_batch_refused(reqs.data(), ace_synth_requests_run(reqs.data(), batch_n), &why)) {
+        if (ace_synth_batch_refused(reqs.data(), (int) batch_takes.takes.size(), &why)) {
             fprintf(stderr, "[Ace-Synth] FATAL: %s: %s\n", why.request >= 0 ? request_paths[why.request] : "the batch",
                     why.reason);
             return 1;
@@ -276,40 +280,21 @@ static int synth_main(int argc, char ** argv) {
         ref_len = T_audio;
     }
 
-    // Generate every request in one DiT batch. synth_batch_size expands each
-    // request into per-seed variants in groups[0]. Total clamped to DiT max kAceSynthMaxTakes,
-    // by the engine's one rule for which requests run (ace_synth_batch_takes).
-    const AceSynthBatchTakes batch_takes = ace_synth_batch_takes(reqs.data(), batch_n);
-    const int                total_alloc = batch_takes.total;
-    if (batch_takes.asked > total_alloc) {
-        fprintf(stderr, "[Ace-Synth] Batch %d exceeds DiT max %d, clamping\n", batch_takes.asked, kAceSynthMaxTakes);
-    }
-    std::vector<AceAudio>                all_audio(total_alloc);
-    std::vector<std::string>             all_basenames(total_alloc);
-    std::vector<int>                     all_synth_indices(total_alloc);
+    // Generate every request that runs in one DiT batch: each expanded to its
+    // per-seed takes in groups[0], by the batch computed above -- clamped to
+    // the DiT's kAceSynthMaxTakes, said with the requests it drops.
     std::vector<std::vector<AceRequest>> groups(1);
-    groups[0].reserve(total_alloc);
-
-    int off = 0;
-    for (int ri = 0; ri < (int) batch_takes.takes.size(); ri++) {
-        const int sbs = batch_takes.takes[ri];
-
-        // resolve seed once per original request
-        request_resolve_seed(&reqs[ri]);
-        const long long base_seed = reqs[ri].seed;
-
-        for (int i = 0; i < sbs; i++) {
-            AceRequest r = reqs[ri];
-            r.seed       = base_seed + i;
-            groups[0].push_back(r);
-            all_basenames[off + i]     = basenames[ri];
-            all_synth_indices[off + i] = i;
-        }
-        off += sbs;
+    std::vector<int>                     take_request, take_index;
+    synth_batch_expand(reqs, batch_takes, groups[0], take_request, &take_index);
+    for (const std::string & note :
+         synth_batch_notes(batch_takes, batch_n, [&](int i) { return request_paths[(size_t) i]; })) {
+        fprintf(stderr, "[Ace-Synth] %s\n", note.c_str());
     }
-
-    if (total_alloc > 1) {
-        fprintf(stderr, "[Ace-Synth] Batch: %d track(s) from %d request(s)\n", total_alloc, batch_n);
+    const int                total_alloc = batch_takes.total;
+    std::vector<AceAudio>    all_audio(total_alloc);
+    std::vector<std::string> all_basenames(total_alloc);
+    for (int b = 0; b < total_alloc; b++) {
+        all_basenames[b] = basenames[(size_t) take_request[b]];
     }
 
     // Two-phase run: DiT resident for all groups, then VAE for all jobs.
@@ -352,7 +337,7 @@ static int synth_main(int argc, char ** argv) {
         }
         const char * ext = is_mp3 ? ".mp3" : ".wav";
         char         out_path[1024];
-        snprintf(out_path, sizeof(out_path), "%s%d%s", all_basenames[b].c_str(), all_synth_indices[b], ext);
+        snprintf(out_path, sizeof(out_path), "%s%d%s", all_basenames[b].c_str(), take_index[b], ext);
         if (!audio_write(out_path, all_audio[b].samples, all_audio[b].n_samples, ACE_SAMPLE_RATE,
                          groups[0][b].mp3_bitrate, wav_fmt)) {
             fprintf(stderr, "[Ace-Synth Batch%d] FATAL: failed to write %s\n", b, out_path);

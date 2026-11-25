@@ -1057,7 +1057,7 @@ AceSynthBatchTakes ace_synth_batch_takes(const AceRequest * reqs, int batch_n) {
     }
     for (int i = 0; i < batch_n; i++) {
         const int takes = ace_synth_request_takes(reqs[i].synth_batch_size);
-        batch.asked += takes;
+        batch.asked += ace_synth_request_asked(reqs[i].synth_batch_size);
         if (batch.total < kAceSynthMaxTakes) {
             const int room = kAceSynthMaxTakes - batch.total;
             const int runs = takes < room ? takes : room;

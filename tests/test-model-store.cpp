@@ -1407,7 +1407,7 @@ static int scenario_task_table() {
             batch[2].synth_batch_size      = 3;
             const AceSynthBatchTakes eight = ace_synth_batch_takes(batch.data(), 10);
             if (eight.takes != std::vector<int>{ 4, 4, 1 } || eight.total != 9 || eight.asked != 4 + 4 + 3 + 7) {
-                fprintf(stderr, "[Test] FAIL: the batch's takes are %zu request(s), %d in all of %d asked\n",
+                fprintf(stderr, "[Test] FAIL: the batch's takes are %zu request(s), %d in all of %lld asked\n",
                         eight.takes.size(), eight.total, eight.asked);
                 rc = 1;
             }
@@ -1419,8 +1419,25 @@ static int scenario_task_table() {
             const AceSynthBatchTakes null  = ace_synth_batch_takes(nullptr, 3);
             if (under.takes != std::vector<int>{ 1, 2 } || under.total != 3 || under.asked != 3 ||
                 !none.takes.empty() || none.total != 0 || none.asked != 0 || !null.takes.empty() || null.total != 0) {
-                fprintf(stderr, "[Test] FAIL: an uncapped batch's takes are %d of %d; an empty one's %d\n", under.total,
-                        under.asked, none.total);
+                fprintf(stderr, "[Test] FAIL: an uncapped batch's takes are %d of %lld; an empty one's %d\n",
+                        under.total, under.asked, none.total);
+                rc = 1;
+            }
+            // A request's raw size is what it asks for, so a lone request
+            // over the cap asks more than runs, and the tools log its clamp:
+            // 50 asks 50 and runs 9; {50, 1} asks 51. Summed in 64 bits:
+            // two of INT_MAX ask both, not a wrapped int (#1269).
+            batch[0].synth_batch_size     = 50;
+            batch[1].synth_batch_size     = 1;
+            const AceSynthBatchTakes lone = ace_synth_batch_takes(batch.data(), 1);
+            const AceSynthBatchTakes two  = ace_synth_batch_takes(batch.data(), 2);
+            batch[0].synth_batch_size     = std::numeric_limits<int>::max();
+            batch[1].synth_batch_size     = std::numeric_limits<int>::max();
+            const AceSynthBatchTakes wide = ace_synth_batch_takes(batch.data(), 2);
+            if (lone.takes != std::vector<int>{ 9 } || lone.asked != 50 || two.takes != std::vector<int>{ 9 } ||
+                two.asked != 51 || wide.total != 9 || wide.asked != 2LL * std::numeric_limits<int>::max()) {
+                fprintf(stderr, "[Test] FAIL: a lone 50 asks %lld, {50, 1} %lld, two of INT_MAX %lld\n", lone.asked,
+                        two.asked, wide.asked);
                 rc = 1;
             }
         }
