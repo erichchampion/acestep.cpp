@@ -196,7 +196,7 @@ static float * read_latent_quant(FILE * f, long fsize, const char * path, int qu
         fprintf(stderr, "[Latent] OOM allocating %s decode buffer for %u frames\n", kind, t);
         return NULL;
     }
-    uint8_t q[NAC8_FRAME - 2];
+    uint8_t q[ACE_LATENT_CHANNELS];  // a Q8 frame's 64 bytes, or a Q4 frame's 32
     for (int i = 0; i < (int) t; i++) {
         ggml_fp16_t scale_f16;
         if (fread(&scale_f16, 2, 1, f) != 1 || fread(q, 1, (size_t) frame - 2, f) != (size_t) frame - 2) {

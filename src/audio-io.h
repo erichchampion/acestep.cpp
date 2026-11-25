@@ -227,7 +227,7 @@ static float * audio_read_buf(const uint8_t * data, size_t size, int * T_out, in
 }
 
 // The source sample rates a read takes: 8 kHz, the least an MP3 carries, to
-// 768 kHz, the most a WAV is recorded at. A header outside them is refused
+// 768 kHz, the fastest rate converters record a WAV at. A header outside them is refused
 // before any resample: a WAV that claims 1 Hz would ask audio_resample for
 // 48000 times its samples -- past an int, then a ~16 GB allocation -- before
 // ace-server's 600 s check ever ran (cadenza-audio #1266).
