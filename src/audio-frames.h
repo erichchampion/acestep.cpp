@@ -280,10 +280,10 @@ static_assert(latent_payload_frames(0, AceLatentBound::run).fault == AceLatentFa
 // the chunk. A chunk of 0 is a stride of 0 the tiled VAE divides by, a
 // negative one a run of no tile and no error, and one past ~1.1M frames
 // overflows chunk * ACE_LATENT_HOP; a run's most frames is already one tile.
-// An overlap of half the chunk or more leaves no core: the decoder halves it
-// to fit, but the encoder halves it in samples and its tiles' rounded trims
-// then cut an interior tile's core away -- --vae-chunk 4 --vae-overlap 3
-// dropped most frames (cadenza-audio #1266). The tools ask it where they
+// An overlap of half the chunk or more leaves no core: the tiled VAE halves
+// it to fit, a tiling no load measured -- before #1309 the encoder halved it
+// in samples and its rounded trims cut an interior tile's core away
+// (--vae-chunk 4 --vae-overlap 3 dropped most frames; cadenza-audio #1266). The tools ask it where they
 // parse their flags, ace_synth_load and ace_understand_load of their params,
 // and cadenza-audio's shim before either (cadenza-audio #1311).
 inline constexpr int ACE_VAE_TILE_MOST = ACE_MAX_LATENT_FRAMES;

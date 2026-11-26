@@ -374,18 +374,19 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
         // Every window starts on a frame, so a tile's frame j is the
         // source's frame win_start / ACE_LATENT_HOP + j: the core keeps the
         // frames that start in [core_start, core_end), to the source's last
-        // whole frame. A trim measured as a float from the first tile and
-        // rounded dropped a frame at a seam whose window the source's end cut
-        // short (48960 samples encoded to 24 frames, not 25).
+        // whole frame (core_end is the source's end at the last tile, so its
+        // floor is frames_total). A trim measured as a float from the first
+        // tile and rounded dropped a frame at a seam whose window the
+        // source's end cut short (48960 samples encoded to 24 frames, not 25).
         const int win_frame  = win_start / ACE_LATENT_HOP;
         const int trim_start = (core_start - win_start) / ACE_LATENT_HOP;
-        int       end_frame  = core_end == T_audio ? frames_total : core_end / ACE_LATENT_HOP;
-        if (end_frame > frames_total) {
-            end_frame = frames_total;
-        }
-        int end_idx = end_frame - win_frame;
+        const int end_idx    = core_end / ACE_LATENT_HOP - win_frame;
+        // A tile of fewer frames than its window's whole frames is the
+        // encoder's fault, not a seam to clip: failed, as the encode's other
+        // failures are (cadenza-audio #1309).
         if (end_idx > tile_T) {
-            end_idx = tile_T;
+            fprintf(stderr, "[VAE-Enc] FATAL: tile %d encoded %d frames, its core needs %d\n", i, tile_T, end_idx);
+            return -1;
         }
         int core_len = end_idx - trim_start;
         if (core_len <= 0) {

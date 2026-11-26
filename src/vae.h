@@ -546,8 +546,12 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
         // the samples of frames core_start..core_end.
         int trim_start = (core_start - win_start) * ACE_LATENT_HOP;
         int end_idx    = (core_end - win_start) * ACE_LATENT_HOP;
+        // A tile of fewer samples than its window's frames is the decoder's
+        // fault, not a seam to clip: failed, as the decode's other failures
+        // are (cadenza-audio #1309).
         if (end_idx > tile_T) {
-            end_idx = tile_T;
+            fprintf(stderr, "[VAE] FATAL: tile %d decoded %d samples, its core needs %d\n", i, tile_T, end_idx);
+            return -1;
         }
         int core_len = end_idx - trim_start;
         if (core_len <= 0) {

@@ -180,8 +180,8 @@ add_tool_refusal(test-codec-chunk-past-most "VAE chunk must be 1 to 15000 latent
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk 15001)
 add_tool_refusal(test-codec-overlap-negative "VAE overlap must be 0 to under half the chunk \\(--vae-chunk"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-overlap -1)
-# An overlap of half the chunk or more: the encoder's rounded trims cut an
-# interior tile's core away (4 and 3 dropped most frames).
+# An overlap of half the chunk or more: a tile with no core, once halved to
+# fit (4 and 3 dropped most frames before #1309).
 add_tool_refusal(test-codec-overlap-past-half "VAE overlap must be 0 to under half the chunk \\(--vae-chunk"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --encode -i /nonexistent --vae-chunk 4
                  --vae-overlap 3)
