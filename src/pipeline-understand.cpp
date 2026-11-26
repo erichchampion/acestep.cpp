@@ -71,6 +71,12 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
         fprintf(stderr, "[Understand-Load] ERROR: vae_path and dit_path are required\n");
         return NULL;
     }
+    // Tiles the VAE can run, refused at the load (cadenza-audio #1311).
+    if (const char * why = vae_tiling_refused(params->vae_chunk, params->vae_overlap)) {
+        fprintf(stderr, "[Understand-Load] ERROR: %s (vae_chunk %d, vae_overlap %d)\n", why, params->vae_chunk,
+                params->vae_overlap);
+        return NULL;
+    }
 
     auto * ctx   = new AceUnderstand();
     ctx->store   = store;

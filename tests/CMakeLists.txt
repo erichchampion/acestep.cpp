@@ -56,6 +56,13 @@ target_include_directories(test-synth-batch PRIVATE ${PROJECT_SOURCE_DIR}/tools)
 add_executable(test-resample test-resample.cpp)
 target_include_directories(test-resample PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
+# test-tiling-load: the engine's loads refuse a VAE tiling it can't run
+# (cadenza-audio #1311). Its understand half needs no model; its synth half
+# reads the DiT's metadata, so runs with --models only.
+add_executable(test-tiling-load test-tiling-load.cpp)
+target_link_libraries(test-tiling-load PRIVATE acestep-core)
+link_ggml_backends(test-tiling-load)
+
 # test-philox: Philox RNG reference dumper.
 add_executable(test-philox test-philox.cpp)
 target_include_directories(test-philox PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -165,23 +172,23 @@ endfunction()
 # Tiles the VAE can't run, refused where each tool parses them: a chunk of 0
 # (a stride of 0, SIGFPE), below 0 (no tile, no error), past a run's most
 # frames (chunk * ACE_LATENT_HOP overflows past ~1.1M), an overlap below 0.
-add_tool_refusal(test-codec-chunk-zero "--vae-chunk must be 1 to 15000"
+add_tool_refusal(test-codec-chunk-zero "chunk \\(--vae-chunk\\) must be 1 to 15000"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk 0)
-add_tool_refusal(test-codec-chunk-negative "--vae-chunk must be 1 to 15000"
+add_tool_refusal(test-codec-chunk-negative "chunk \\(--vae-chunk\\) must be 1 to 15000"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk -1)
-add_tool_refusal(test-codec-chunk-past-most "--vae-chunk must be 1 to 15000"
+add_tool_refusal(test-codec-chunk-past-most "chunk \\(--vae-chunk\\) must be 1 to 15000"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk 15001)
-add_tool_refusal(test-codec-overlap-negative "--vae-overlap must be 0 to under half --vae-chunk"
+add_tool_refusal(test-codec-overlap-negative "overlap \\(--vae-overlap\\) must be 0 to under half the chunk"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-overlap -1)
 # An overlap of half the chunk or more: the encoder's rounded trims cut an
 # interior tile's core away (4 and 3 dropped most frames).
-add_tool_refusal(test-codec-overlap-past-half "--vae-overlap must be 0 to under half --vae-chunk"
+add_tool_refusal(test-codec-overlap-past-half "overlap \\(--vae-overlap\\) must be 0 to under half the chunk"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --encode -i /nonexistent --vae-chunk 4
                  --vae-overlap 3)
-add_tool_refusal(test-synth-chunk-zero "--vae-chunk must be 1 to 15000"
+add_tool_refusal(test-synth-chunk-zero "chunk \\(--vae-chunk\\) must be 1 to 15000"
                  $<TARGET_FILE:ace-synth> --request ${CMAKE_CURRENT_SOURCE_DIR}/request-text2music.json
                  --models /nonexistent --vae-chunk 0)
-add_tool_refusal(test-understand-chunk-zero "--vae-chunk must be 1 to 15000"
+add_tool_refusal(test-understand-chunk-zero "chunk \\(--vae-chunk\\) must be 1 to 15000"
                  $<TARGET_FILE:ace-understand> --models /nonexistent --src-audio /nonexistent --vae-chunk 0)
 # neural-codec's latent files, bounded as ace-server's payloads are: a header
 # claiming 1.2M frames, a file of no frame (Q4 and f32), a part frame. The
@@ -207,6 +214,13 @@ add_test(NAME test-codec-rate-4khz
 set_tests_properties(test-codec-rate-4khz PROPERTIES FIXTURES_REQUIRED tool_inputs
                      PASS_REGULAR_EXPRESSION "Done: 400 -> 4800 samples" FAIL_REGULAR_EXPRESSION "Refused")
 set(ACESTEP_TEST_MODELS "" CACHE PATH "Directory of GGUFs for the tests that read them (empty: not run)")
+# The loads' tiling refusal (#1311): with the models when there are some, so
+# ace_synth_load's half runs too; its understand half needs none.
+if(ACESTEP_TEST_MODELS)
+    add_test(NAME test-tiling-load COMMAND test-tiling-load --models ${ACESTEP_TEST_MODELS})
+else()
+    add_test(NAME test-tiling-load COMMAND test-tiling-load)
+endif()
 if(ACESTEP_TEST_MODELS)
     add_test(NAME test-audio-layout COMMAND test-audio-layout --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)
     add_test(NAME test-vae-tiling COMMAND test-vae-tiling --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)

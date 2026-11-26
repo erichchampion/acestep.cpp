@@ -269,25 +269,33 @@ static_assert(latent_payload_frames(0, AceLatentBound::run).fault == AceLatentFa
                   latent_frames_fault(1200000, AceLatentBound::decode) == AceLatentFault::past_decode_most,
               "a latent of 1 to its bound's most frames, whole, is read; none, a part frame or one past it is not");
 
-// The VAE tiles a tool may be asked for (--vae-chunk, --vae-overlap), in
-// latent frames: a chunk of 1 to a run's most, an overlap of 0 to under half
+// The VAE tiles the engine runs (--vae-chunk, --vae-overlap to the tools,
+// vae_chunk and vae_overlap to a load), in latent frames: a chunk of 1 to a run's most, an overlap of 0 to under half
 // the chunk. A chunk of 0 is a stride of 0 the tiled VAE divides by, a
 // negative one a run of no tile and no error, and one past ~1.1M frames
 // overflows chunk * ACE_LATENT_HOP; a run's most frames is already one tile.
 // An overlap of half the chunk or more leaves no core: the decoder halves it
 // to fit, but the encoder halves it in samples and its tiles' rounded trims
 // then cut an interior tile's core away -- --vae-chunk 4 --vae-overlap 3
-// dropped most frames (cadenza-audio #1266).
+// dropped most frames (cadenza-audio #1266). The tools ask it where they
+// parse their flags, ace_synth_load and ace_understand_load of their params,
+// and cadenza-audio's shim before either (cadenza-audio #1311).
 inline constexpr int ACE_VAE_TILE_MOST = ACE_MAX_LATENT_FRAMES;
 
-// Why a tool refuses these tile settings: nullptr when it takes them.
+// Whether an overlap leaves a tile of `chunk` frames a core: 0 or more, and
+// under half the chunk -- in 64 bits, so 2 * overlap can't overflow.
+inline constexpr bool vae_overlap_fits(int chunk, int overlap) {
+    return overlap >= 0 && 2LL * overlap < chunk;
+}
+
+// Why the engine refuses these tile settings: nullptr when it takes them.
 inline constexpr const char * vae_tiling_refused(int chunk, int overlap) {
     static_assert(ACE_VAE_TILE_MOST == 15000, "the refusals below say the most");
     if (chunk < 1 || chunk > ACE_VAE_TILE_MOST) {
-        return "--vae-chunk must be 1 to 15000 latent frames";
+        return "the VAE chunk (--vae-chunk) must be 1 to 15000 latent frames";
     }
-    if (overlap < 0 || 2LL * overlap >= chunk) {
-        return "--vae-overlap must be 0 to under half --vae-chunk";
+    if (!vae_overlap_fits(chunk, overlap)) {
+        return "the VAE overlap (--vae-overlap) must be 0 to under half the chunk";
     }
     return nullptr;
 }
