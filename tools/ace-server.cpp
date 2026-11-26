@@ -380,6 +380,16 @@ static const char * job_status_str(JobStatus s) {
     return "unknown";
 }
 
+// `doc` written as JSON and freed: the server's one writer (cadenza-audio
+// #1194). "{}" should the write fail, never a NULL handed on.
+static std::string json_write_doc(yyjson_mut_doc * doc, yyjson_write_flag flags = 0) {
+    char *      json = yyjson_mut_write(doc, flags, NULL);
+    std::string body = json ? json : "{}";
+    free(json);
+    yyjson_mut_doc_free(doc);
+    return body;
+}
+
 // {"status":...} for `status` -- the job's, or what a cancel makes it -- and
 // "error" for a failed job the engine said why of (#1193).
 static std::string job_status_json(const Job & job, JobStatus status) {
@@ -390,11 +400,7 @@ static std::string job_status_json(const Job & job, JobStatus status) {
     if (status == JobStatus::FAILED && !job.error.empty()) {
         yyjson_mut_obj_add_strcpy(doc, root, "error", job.error.c_str());
     }
-    char *      json = yyjson_mut_write(doc, 0, NULL);
-    std::string body = json ? json : "{}";
-    free(json);
-    yyjson_mut_doc_free(doc);
-    return body;
+    return json_write_doc(doc);
 }
 
 // log capture: intercept stderr via pipe, forward to terminal + ring buffer.
@@ -546,11 +552,8 @@ static void json_error(httplib::Response & res, int status, const char * msg) {
     yyjson_mut_val * root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
     yyjson_mut_obj_add_str(doc, root, "error", msg);
-    char * json = yyjson_mut_write(doc, 0, NULL);
-    yyjson_mut_doc_free(doc);
     res.status = status;
-    res.set_content(json, "application/json");
-    free(json);
+    res.set_content(json_write_doc(doc), "application/json");
 }
 
 // Read a latent part coming from the wire into `out`: its frame count, or -1
@@ -1744,10 +1747,7 @@ static void handle_props(const httplib::Request &, httplib::Response & res) {
 
     // serialize
     yyjson_write_flag flags = YYJSON_WRITE_PRETTY | YYJSON_WRITE_PRETTY_TWO_SPACES | YYJSON_WRITE_FP_TO_FIXED(2);
-    char *            json  = yyjson_mut_write(doc, flags, NULL);
-    yyjson_mut_doc_free(doc);
-    res.set_content(json, "application/json");
-    free(json);
+    res.set_content(json_write_doc(doc, flags), "application/json");
 }
 
 static void usage(const char * prog) {
@@ -1773,7 +1773,7 @@ static void usage(const char * prog) {
             "\n"
             "Server:\n"
             "  --host <addr>           Listen address (default: 127.0.0.1)\n"
-            "  --port <N>              Listen port (default: 8080)\n"
+            "  --port <N>              Listen port (default: 8080; 0: a free one, said)\n"
             "  --max-batch <N>         LM batch limit (default: %d)\n"
             "  --max-seq <N>           KV cache size (default: %d)\n"
             "\n"
@@ -2033,13 +2033,20 @@ static int server_main(int argc, char ** argv) {
     std::thread worker(worker_main);
 
     fprintf(stderr, "[Server] acestep.cpp %s\n", ACE_VERSION);
-    fprintf(stderr, "[Server] Listening on %s:%d\n", host, port);
-    fprintf(stderr, "[Server] Pipelines:%s%s%s\n", have_lm ? " /lm" : "", have_synth ? " /synth" : "",
-            have_understand ? " /understand" : "");
-    fprintf(stderr, "[Server] Models: %zu LM, %zu Text-Enc, %zu DiT, %zu VAE, %zu Adapter\n", g_registry.lm.size(),
-            g_registry.text_enc.size(), g_registry.dit.size(), g_registry.vae.size(), g_registry.adapters.size());
-    if (!svr.listen(host, port)) {
+    // Bound before it says where it listens: --port 0 takes a free port, the
+    // one said, so a test starts a server without racing another for one
+    // (cadenza-audio #1194).
+    const int bound = port == 0 ? svr.bind_to_any_port(host) : (svr.bind_to_port(host, port) ? port : -1);
+    if (bound < 0) {
         fprintf(stderr, "[Server] FATAL: cannot bind %s:%d\n", host, port);
+    } else {
+        fprintf(stderr, "[Server] Listening on %s:%d\n", host, bound);
+        fprintf(stderr, "[Server] Pipelines:%s%s%s\n", have_lm ? " /lm" : "", have_synth ? " /synth" : "",
+                have_understand ? " /understand" : "");
+        fprintf(stderr, "[Server] Models: %zu LM, %zu Text-Enc, %zu DiT, %zu VAE, %zu Adapter\n",
+                g_registry.lm.size(), g_registry.text_enc.size(), g_registry.dit.size(), g_registry.vae.size(),
+                g_registry.adapters.size());
+        svr.listen_after_bind();
     }
 
     // stop worker thread (finishes current job, discards pending)

@@ -247,4 +247,13 @@ if(ACESTEP_TEST_MODELS)
     add_tool_refusal(test-codec-decode-write-fails "failed to write"
                      $<TARGET_FILE:neural-codec> --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf --decode
                      -i ${ACESTEP_TOOL_INPUTS}/one-frame.vae -o /nonexistent/one-frame.wav)
+    # ace-server's /synth refusals against a running server on a free port
+    # of 127.0.0.1 (cadenza-audio #1194): each a 400 saying why, the server
+    # answering after -- a cover's reference with no source among them, once
+    # freed twice. The script stops the server however it ends; the timeout
+    # bounds a server that never answers.
+    add_test(NAME test-server-synth
+             COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test-server-synth.sh $<TARGET_FILE:ace-server>
+                     ${ACESTEP_TEST_MODELS} ${ACESTEP_TOOL_INPUTS}/one-second.wav)
+    set_tests_properties(test-server-synth PROPERTIES FIXTURES_REQUIRED tool_inputs TIMEOUT 180)
 endif()
