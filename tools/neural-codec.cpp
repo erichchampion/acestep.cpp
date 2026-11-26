@@ -449,7 +449,7 @@ static int codec_main(int argc, char ** argv) {
             return 1;
         }
         if (frames_past_run_most(T_latent)) {
-            fprintf(stderr, "[VAE] WARNING: %s; --decode takes it, ace-server's /synth refuses it as a source\n",
+            fprintf(stderr, "[VAE] WARNING: %s; --decode takes it, ace-server refuses it\n",
                     latent_fault_words(AceLatentFault::past_run_most));
         }
 

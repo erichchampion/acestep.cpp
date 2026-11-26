@@ -557,16 +557,15 @@ static void json_error(httplib::Response & res, int status, const char * msg) {
 // when it is refused -- a size that is no whole number of frames, none, or
 // more than `bound` holds, by the rule neural-codec's files share
 // (latent_payload_frames, cadenza-audio #1266) -- answered as a 400, or a 413
-// for too many, in the words neural-codec says it in (latent_fault_words). A
-// /synth source is bound to a run's most frames, as the run takes it whole;
-// every other part only to what a decode holds -- a reference is cropped, an
-// understand source windowed, a /vae decode is a decode.
+// for too many, in the words neural-codec says it in (latent_fault_words).
+// Every part the server takes -- a source, a reference, an understand source,
+// a /vae decode -- is held to a run's most frames, as it always was; only
+// neural-codec's own files read to what a decode holds.
 static int read_latent_part(httplib::Response &  res,
                             const std::string &  content,
                             const char *         name,
-                            std::vector<float> & out,
-                            AceLatentBound       bound) {
-    const AceLatentFrames frames = latent_payload_frames(content.size(), bound);
+                            std::vector<float> & out) {
+    const AceLatentFrames frames = latent_payload_frames(content.size(), AceLatentBound::run);
     if (frames.fault != AceLatentFault::none) {
         json_error(res, latent_fault_too_long(frames.fault) ? 413 : 400,
                    (std::string(name) + ": " + latent_fault_words(frames.fault)).c_str());
@@ -1031,8 +1030,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         // latents and the long song it came from are no 413 (cadenza-audio
         // #1266).
         if (!src_ignored && req.form.has_file("src_latents")) {
-            const int T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents,
-                                           AceLatentBound::run);
+            const int T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents);
             if (T < 0) {
                 return;
             }
@@ -1057,8 +1055,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         }
 
         if (req.form.has_file("ref_latents")) {
-            const int T = read_latent_part(res, req.form.get_file("ref_latents").content, "ref_latents", ref_latents,
-                                           AceLatentBound::decode);
+            const int T = read_latent_part(res, req.form.get_file("ref_latents").content, "ref_latents", ref_latents);
             if (T < 0) {
                 return;
             }
@@ -1312,8 +1309,7 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
     std::vector<float> src_latents;
     int                src_T_latent = 0;
     if (req.form.has_file("src_latents")) {
-        const int T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents,
-                                       AceLatentBound::decode);
+        const int T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents);
         if (T < 0) {
             return;
         }
@@ -1613,8 +1609,7 @@ static void handle_vae(const httplib::Request & req, httplib::Response & res) {
 
     // decode path: raw latents in -> audio out
     std::vector<float> src_latents;
-    const int          T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents,
-                                                AceLatentBound::decode);
+    const int          T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents);
     if (T < 0) {
         return;
     }

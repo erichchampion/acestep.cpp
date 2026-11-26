@@ -172,8 +172,8 @@ inline constexpr int ACE_VAE_DEC_SLACK_SAMPLES = 4096;
 
 // The most frames a latent decodes in one buffer: its samples and the
 // decoder's slack at most ACE_MAX_AUDIO_SAMPLES, so T * ACE_LATENT_HOP and
-// the buffer's int indexing hold -- neural-codec's and /vae's bound, which a
-// latent past a run's most still meets (cadenza-audio #1266).
+// the buffer's int indexing hold -- neural-codec's bound, which a latent its
+// --encode wrote past a run's most still meets (cadenza-audio #1266).
 inline constexpr int ACE_MAX_DECODE_FRAMES = (ACE_MAX_AUDIO_SAMPLES - ACE_VAE_DEC_SLACK_SAMPLES) / ACE_LATENT_HOP;
 
 static_assert(ACE_MAX_DECODE_FRAMES == 559238 && ACE_MAX_DECODE_FRAMES > ACE_MAX_LATENT_FRAMES &&
@@ -186,9 +186,8 @@ static_assert(ACE_MAX_DECODE_FRAMES == 559238 && ACE_MAX_DECODE_FRAMES > ACE_MAX
 inline constexpr int ACE_LATENT_CHANNELS    = 64;
 inline constexpr int ACE_LATENT_FRAME_BYTES = ACE_LATENT_CHANNELS * (int) sizeof(float);
 
-// The bound a latent is read to: a run's most, where a run takes it whole (a
-// /synth source), or a decode's most, where it is only decoded (neural-codec,
-// /vae, a reference, an understand source).
+// The bound a latent is read to: a run's most -- every part ace-server takes
+// -- or a decode's most, for neural-codec's own files.
 enum class AceLatentBound { run, decode };
 
 // What is wrong with a latent read from a file or the wire: nothing, no frame
