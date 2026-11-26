@@ -165,8 +165,12 @@ static_assert(samples_frames_floor((int) ACE_MAX_RUN_SOURCE_SAMPLES) == ACE_MAX_
               "a run's source at its most, and one sample past it");
 
 // The slack a VAE output buffer is sized with past its exact length: an
-// encode's latent buffer 64 frames (its tiles' rounded trims), a decode's
-// audio buffer 4096 samples. Every tool sizes by these (cadenza-audio #1266).
+// encode's latent buffer 64 frames, a decode's audio buffer 4096 samples.
+// Every tool sizes by these (cadenza-audio #1266). Margin, not need: the
+// tiled encode now writes at most the source's whole frames and the decode
+// its frames' samples (#1309), and an untiled encode of a source shorter
+// than a frame still writes one; kept as they were, as nothing yet tests a
+// smaller one.
 inline constexpr int ACE_VAE_ENC_SLACK_FRAMES  = 64;
 inline constexpr int ACE_VAE_DEC_SLACK_SAMPLES = 4096;
 
