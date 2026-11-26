@@ -102,6 +102,27 @@ int main(int argc, char ** argv) {
         }
         CHECK(got == untiled);
     }
+    // And no tile past them: a source of two 4-frame tiles and 5 samples
+    // encodes in two tiles at 4/0, not a third of the 5 samples alone.
+    {
+        const int          n = 2 * 4 * ACE_LATENT_HOP + 5;
+        const int          m = n / ACE_LATENT_HOP + 64;
+        std::vector<float> lat((size_t) m * 64);
+        int                tiles    = 0;
+        AceProgress        progress = {};
+        progress.fn                 = [](void * data, AceStage, int, int total) {
+            if (total > *(int *) data) {
+                *(int *) data = total;
+            }
+            return false;
+        };
+        progress.data = &tiles;
+        CHECK(vae_enc_encode_tiled(enc, audio.data(), n, lat.data(), m, 4, 0, progress) == 8);
+        if (tiles != 2) {
+            fprintf(stderr, "[Test] FAIL: two tiles' frames and 5 samples encoded in %d tiles\n", tiles);
+        }
+        CHECK(tiles == 2);
+    }
     {
         const int          n = T - ACE_LATENT_HOP / 2;
         std::vector<float> whole((size_t) max_T * 64), seams((size_t) max_T * 64);

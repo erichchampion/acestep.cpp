@@ -322,16 +322,18 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
         return vae_enc_encode(m, audio, T_audio, latent_out, max_T_latent);
     }
 
-    int audio_stride = audio_chunk - 2 * audio_overlap;
-    int num_steps    = (T_audio + audio_stride - 1) / audio_stride;
+    // The source's whole frames: what an untiled encode of it gives, and the
+    // most the tiles together may write. The tiles cover them, not the part
+    // frame past them: a tile whose core would start there keeps nothing, so
+    // it is not encoded (cadenza-audio #1309).
+    const int frames_total = T_audio / ACE_LATENT_HOP;
+    int       audio_stride = audio_chunk - 2 * audio_overlap;
+    int       num_steps    = (frames_total * ACE_LATENT_HOP + audio_stride - 1) / audio_stride;
 
     fprintf(stderr, "[VAE-Enc] Tiled encode: %d tiles (chunk=%d, overlap=%d, stride=%d audio samples)\n", num_steps,
             audio_chunk, audio_overlap, audio_stride);
 
-    // The source's whole frames: what an untiled encode of it gives, and the
-    // most the tiles together may write.
-    const int frames_total     = T_audio / ACE_LATENT_HOP;
-    int       latent_write_pos = 0;
+    int latent_write_pos = 0;
 
     if (ace_cancelled(progress,
                       ACE_STAGE_VAE_ENCODE)) {  // honour a cancel before the loop; the loop's step-0 poll sizes the bar
