@@ -110,7 +110,8 @@ export async function pollJob(id: string): Promise<void> {
 			if (status === 'done') return;
 			// The server's reason, when it said one: a refused request, a
 			// model missing, a run that failed (cadenza-audio #1194).
-			if (status === 'failed') throw new Error(error ? `Generation failed: ${error}` : 'Generation failed');
+			if (status === 'failed')
+				throw new Error(error ? `Generation failed: ${error}` : 'Generation failed');
 			if (status === 'cancelled') throw new Error('Cancelled');
 		} catch (e) {
 			if (e instanceof TypeError || e instanceof DOMException) {
