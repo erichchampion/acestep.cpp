@@ -1835,8 +1835,7 @@ static int server_main(int argc, char ** argv) {
     }
     // Tiles the VAE can run, refused at start, not by a job's division by a
     // stride of 0 (cadenza-audio #1266). /understand shares them.
-    if (const char * why = vae_tiling_refused(g_synth_params.vae_chunk, g_synth_params.vae_overlap)) {
-        fprintf(stderr, "[Server] ERROR: %s\n", why);
+    if (ace_tool_tiling_refused("Server", g_synth_params.vae_chunk, g_synth_params.vae_overlap)) {
         return 1;
     }
 

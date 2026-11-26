@@ -292,10 +292,10 @@ inline constexpr bool vae_overlap_fits(int chunk, int overlap) {
 inline constexpr const char * vae_tiling_refused(int chunk, int overlap) {
     static_assert(ACE_VAE_TILE_MOST == 15000, "the refusals below say the most");
     if (chunk < 1 || chunk > ACE_VAE_TILE_MOST) {
-        return "the VAE chunk (--vae-chunk) must be 1 to 15000 latent frames";
+        return "the VAE chunk must be 1 to 15000 latent frames";
     }
     if (!vae_overlap_fits(chunk, overlap)) {
-        return "the VAE overlap (--vae-overlap) must be 0 to under half the chunk";
+        return "the VAE overlap must be 0 to under half the chunk";
     }
     return nullptr;
 }

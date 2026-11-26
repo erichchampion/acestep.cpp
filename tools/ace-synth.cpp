@@ -110,8 +110,7 @@ static int synth_main(int argc, char ** argv) {
         return 1;
     }
     // Tiles the VAE can run, refused before any model loads (cadenza-audio #1266).
-    if (const char * why = vae_tiling_refused(vae_chunk, vae_overlap)) {
-        fprintf(stderr, "[CLI] ERROR: %s\n", why);
+    if (ace_tool_tiling_refused("CLI", vae_chunk, vae_overlap)) {
         return 1;
     }
     if (request_paths.empty()) {

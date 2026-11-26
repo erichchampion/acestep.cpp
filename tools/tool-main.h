@@ -20,16 +20,18 @@
 //   int main(int argc, char ** argv) { return ace_tool_main(synth_main, argc, argv); }
 
 #include "ace-fatal.h"
+#include "audio-frames.h"
 #include "gpu-compute.h"
 
 #include <cctype>
+#include <cstdio>
 #include <string>
 
 // A fatal's words for a job's error: its log line less the "[Tag] FATAL: "
 // it is printed with, and the newline after it (cadenza-audio #1194).
 inline std::string ace_fatal_words(const char * line) {
-    std::string words = line ? line : "";
-    const size_t at   = words.find("FATAL: ");
+    std::string  words = line ? line : "";
+    const size_t at    = words.find("FATAL: ");
     if (at != std::string::npos) {
         words.erase(0, at + 7);
     }
@@ -68,6 +70,17 @@ inline int ace_tool_main(int (*body)(int, char **), int argc, char ** argv) {
     int       rc     = 0;
     const int thrown = ace_tool_catch([&] { rc = body(argc, argv); });
     return thrown < 0 ? rc : thrown;
+}
+
+// Whether a tool refuses its --vae-chunk and --vae-overlap: the engine's rule
+// (vae_tiling_refused), said with the flags as given (cadenza-audio #1266,
+// #1311). Every tool asks it where it parses them, before anything loads.
+inline bool ace_tool_tiling_refused(const char * tag, int chunk, int overlap) {
+    const char * why = vae_tiling_refused(chunk, overlap);
+    if (why) {
+        fprintf(stderr, "[%s] ERROR: %s (--vae-chunk %d, --vae-overlap %d)\n", tag, why, chunk, overlap);
+    }
+    return why != nullptr;
 }
 
 // Whether `job` ran to its end, rather than throwing a fatal: its words in

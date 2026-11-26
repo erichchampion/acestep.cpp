@@ -380,8 +380,7 @@ static int codec_main(int argc, char ** argv) {
         return 1;
     }
     // Tiles the VAE can run, refused before anything is read (cadenza-audio #1266).
-    if (const char * why = vae_tiling_refused(chunk_size, overlap)) {
-        fprintf(stderr, "[VAE] FATAL: %s\n", why);
+    if (ace_tool_tiling_refused("VAE", chunk_size, overlap)) {
         return 1;
     }
 

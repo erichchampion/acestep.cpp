@@ -172,23 +172,23 @@ endfunction()
 # Tiles the VAE can't run, refused where each tool parses them: a chunk of 0
 # (a stride of 0, SIGFPE), below 0 (no tile, no error), past a run's most
 # frames (chunk * ACE_LATENT_HOP overflows past ~1.1M), an overlap below 0.
-add_tool_refusal(test-codec-chunk-zero "chunk \\(--vae-chunk\\) must be 1 to 15000"
+add_tool_refusal(test-codec-chunk-zero "VAE chunk must be 1 to 15000 latent frames \\(--vae-chunk"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk 0)
-add_tool_refusal(test-codec-chunk-negative "chunk \\(--vae-chunk\\) must be 1 to 15000"
+add_tool_refusal(test-codec-chunk-negative "VAE chunk must be 1 to 15000 latent frames \\(--vae-chunk"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk -1)
-add_tool_refusal(test-codec-chunk-past-most "chunk \\(--vae-chunk\\) must be 1 to 15000"
+add_tool_refusal(test-codec-chunk-past-most "VAE chunk must be 1 to 15000 latent frames \\(--vae-chunk"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk 15001)
-add_tool_refusal(test-codec-overlap-negative "overlap \\(--vae-overlap\\) must be 0 to under half the chunk"
+add_tool_refusal(test-codec-overlap-negative "VAE overlap must be 0 to under half the chunk \\(--vae-chunk"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-overlap -1)
 # An overlap of half the chunk or more: the encoder's rounded trims cut an
 # interior tile's core away (4 and 3 dropped most frames).
-add_tool_refusal(test-codec-overlap-past-half "overlap \\(--vae-overlap\\) must be 0 to under half the chunk"
+add_tool_refusal(test-codec-overlap-past-half "VAE overlap must be 0 to under half the chunk \\(--vae-chunk"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --encode -i /nonexistent --vae-chunk 4
                  --vae-overlap 3)
-add_tool_refusal(test-synth-chunk-zero "chunk \\(--vae-chunk\\) must be 1 to 15000"
+add_tool_refusal(test-synth-chunk-zero "VAE chunk must be 1 to 15000 latent frames \\(--vae-chunk"
                  $<TARGET_FILE:ace-synth> --request ${CMAKE_CURRENT_SOURCE_DIR}/request-text2music.json
                  --models /nonexistent --vae-chunk 0)
-add_tool_refusal(test-understand-chunk-zero "chunk \\(--vae-chunk\\) must be 1 to 15000"
+add_tool_refusal(test-understand-chunk-zero "VAE chunk must be 1 to 15000 latent frames \\(--vae-chunk"
                  $<TARGET_FILE:ace-understand> --models /nonexistent --src-audio /nonexistent --vae-chunk 0)
 # neural-codec's latent files, bounded as ace-server's payloads are: a header
 # claiming 1.2M frames, a file of no frame (Q4 and f32), a part frame. The
