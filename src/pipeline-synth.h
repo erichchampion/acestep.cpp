@@ -112,6 +112,12 @@ enum class AceSynthFailure {
     other,              // any other failure: the engine's diagnostic is on stderr
 };
 
+// The engine's words for a VAE failure, shared by its failures and the tools
+// that say them, so each is worded once (cadenza-audio #1286).
+inline constexpr const char * kAceVaeEncoderUnavailable = "the VAE encoder could not be loaded";
+inline constexpr const char * kAceVaeDecoderUnavailable = "the VAE decoder could not be loaded";
+inline constexpr const char * kAceVaeDecodeFailed       = "the VAE decode failed";
+
 struct AceSynthBatchRefusal {
     int             request = -1;
     const char *    reason  = nullptr;
@@ -202,7 +208,8 @@ const float * ace_synth_job_get_latent(const AceSynthJob * job, int track_idx, i
 // (cadenza-audio #1286): its failure and failed -- the VAE decoder the store
 // could not give (model_unavailable), a cancel, a bad argument (other) --
 // and never its reason, as a decode refuses no request. Unset by a decode
-// that ran.
+// that ran. A take of the batch whose own decode failed is left empty, the
+// batch decoding the rest; ace_synth_job_run_vae_take fails for it.
 int ace_synth_job_run_vae(AceSynth *             ctx,
                           AceSynthJob *          job,
                           AceAudio *             out,
@@ -214,7 +221,8 @@ int ace_synth_job_run_vae(AceSynth *             ctx,
 // wait on the VAE decoding takes 1..n; call again for the other takes, in
 // any order. The job stays valid and the remaining takes stay decodable
 // after a failed or cancelled call. Returns 0 on success, -1 on a bad take
-// index, error, or cancellation; `failed` as for ace_synth_job_run_vae.
+// index, error, a decode that made no audio (other, said why), or
+// cancellation; `failed` as for ace_synth_job_run_vae.
 int ace_synth_job_run_vae_take(AceSynth *             ctx,
                                AceSynthJob *          job,
                                int                    take,
@@ -382,6 +390,17 @@ int ace_test_batch_refusals();
 // model_unavailable for the FSQ tokenizer (cadenza-audio #1092), as it
 // tells the task table's refusal of a sourceless task by its reason.
 void ace_test_fail_next_fsq_require(bool armed);
+
+// Tests only: with `armed`, the next decode's VAE decoder is not had
+// (store_require_vae_dec returning NULL), once -- model_unavailable, said as
+// kAceVaeDecoderUnavailable; without, disarmed, fired or not (cadenza-audio
+// #1286).
+void ace_test_fail_next_vae_dec_require(bool armed);
+
+// Tests only: with `armed`, the next take's tiled decode fails as a graph it
+// could not run would, once -- a take of no audio, which a lone take's decode
+// says as kAceVaeDecodeFailed; without, disarmed (cadenza-audio #1286).
+void ace_test_fail_next_vae_decode(bool armed);
 
 // Tests only: how many runs the task table has warned of a source given to
 // a task that takes none, run without it (cadenza-audio #1095).

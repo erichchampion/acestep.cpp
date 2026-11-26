@@ -57,6 +57,7 @@
 #endif
 
 #include <atomic>
+#include <cerrno>
 #include <condition_variable>
 #include <csignal>
 #include <cstdio>
@@ -69,6 +70,7 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -196,6 +198,7 @@ static AceSynthParams      g_synth_params;
 static AceUnderstandParams g_und_params;
 
 // limits
+static constexpr int kMaxPort      = 65535;  // the largest TCP port
 static int  g_max_batch   = 1;
 static bool g_keep_loaded = false;
 
@@ -878,27 +881,26 @@ static void synth_worker(std::shared_ptr<Job>    job,
     const int rc = synth_batch_run(ctx, groups, src_interleaved, src_len, src_lat_ptr, src_T_latent, ref_interleaved,
                                    ref_len, ref_lat_ptr, ref_T_latent, audio.data(), &captured_latents,
                                    AceProgress{ server_progress, (void *) &job->cancel }, &refused);
-    if (rc != 0 && refused.reason) {
-        fprintf(stderr, "[Server] job %s: the engine refused the batch: %s\n", job->id.c_str(), refused.reason);
-        const bool one = refused.request >= 0 && refused.request < (int) take_request.size();
-        job->error = one ? "Request " + std::to_string(take_request[(size_t) refused.request]) + ": " + refused.reason :
-                           std::string(refused.reason);
-    } else if (rc != 0 && !job->cancel.load() && refused.failure != AceSynthFailure::cancelled) {
-        // A run that failed without a refusal says the engine's failure, the
-        // run's or its decode's -- a model the store could not give, an
-        // encode that made nothing (cadenza-audio #1092, #1194, #1286). A
-        // cancel is said by the job's status, not as an error.
-        job->error = std::string("the run failed") +
-                     (refused.failed ? std::string(": ") + refused.failed : std::string(kDiagnosticOnStderr));
-        fprintf(stderr, "[Server] job %s: %s\n", job->id.c_str(), job->error.c_str());
-    }
     ace_synth_free(ctx);
 
+    // A run that stopped short (job_stopped: a cancel is said by the status
+    // alone): an engine refusal, named by the request the client sent, or
+    // the engine's failure, the run's or its decode's -- a model the store
+    // could not give, an encode that made nothing (cadenza-audio #1092,
+    // #1193, #1194, #1286).
     if (rc != 0) {
         for (auto & a : audio) {
             ace_audio_free(&a);
         }
-        job->status.store(job->cancel.load() ? JobStatus::CANCELLED : JobStatus::FAILED);
+        if (refused.reason) {
+            const bool one = refused.request >= 0 && refused.request < (int) take_request.size();
+            job_stopped(*job, one ? "Request " + std::to_string(take_request[(size_t) refused.request]) + ": " +
+                                        refused.reason :
+                                    std::string(refused.reason));
+        } else {
+            job_stopped(*job, std::string("the run failed") + (refused.failed ? std::string(": ") + refused.failed :
+                                                                                std::string(kDiagnosticOnStderr)));
+        }
         return;
     }
 
@@ -1219,10 +1221,19 @@ static void understand_worker(std::shared_ptr<Job> job,
     const ModelEntry * lm_entry  = registry_find(g_registry.lm, lm_name.c_str());
     const ModelEntry * dit       = registry_find(g_registry.dit, dit_name.c_str());
     const ModelEntry * vae_entry = registry_find(g_registry.vae, vae_name.c_str());
-    if (!lm_entry || !dit || !vae_entry) {
-        job_fail(*job, !lm_entry ? "LM not found: " + lm_name :
-                       !dit      ? "DiT not found: " + dit_name :
-                                   "VAE not found: " + vae_name);
+    // Every model missing is named, not the first alone.
+    std::string        missing;
+    for (const auto & [entry, kind, name] : {
+             std::tuple{ lm_entry,  "LM",  &lm_name  },
+             std::tuple{ dit,       "DiT", &dit_name },
+             std::tuple{ vae_entry, "VAE", &vae_name }
+    }) {
+        if (!entry) {
+            missing += (missing.empty() ? "" : "; ") + std::string(kind) + " not found: " + *name;
+        }
+    }
+    if (!missing.empty()) {
+        job_fail(*job, missing);
         free(src_interleaved);
         return;
     }
@@ -1436,7 +1447,7 @@ static void decode_worker(std::shared_ptr<Job> job,
     Timer     t_dec;
     VAEGGML * vae = store_require_vae_dec(g_store, vae_key);
     if (!vae) {
-        job_fail(*job, "the VAE decoder could not be loaded (" + vae_name + ")" + kDiagnosticOnStderr);
+        job_fail(*job, std::string(kAceVaeDecoderUnavailable) + " (" + vae_name + ")" + kDiagnosticOnStderr);
         return;
     }
     ModelHandle vae_guard(g_store, vae);
@@ -1447,7 +1458,7 @@ static void decode_worker(std::shared_ptr<Job> job,
                                         g_synth_params.vae_chunk, g_synth_params.vae_overlap,
                                         AceProgress{ server_progress, (void *) &job->cancel });
     if (T_audio < 0) {
-        job_stopped(*job, std::string("the VAE decode failed") + kDiagnosticOnStderr);
+        job_stopped(*job, std::string(kAceVaeDecodeFailed) + kDiagnosticOnStderr);
         return;
     }
     fprintf(stderr, "[Server] decode: %d latent frames -> %d audio samples (%.2fs), %.0fms\n", src_T_latent, T_audio,
@@ -1510,7 +1521,7 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
     Timer        t_enc;
     VAEEncoder * vae = store_require_vae_enc(g_store, vae_key);
     if (!vae) {
-        job_fail(*job, "the VAE encoder could not be loaded (" + vae_name + ")" + kDiagnosticOnStderr);
+        job_fail(*job, std::string(kAceVaeEncoderUnavailable) + " (" + vae_name + ")" + kDiagnosticOnStderr);
         return;
     }
     ModelHandle vae_guard(g_store, vae);
@@ -1818,7 +1829,17 @@ static int server_main(int argc, char ** argv) {
         } else if (!strcmp(argv[i], "--host") && i + 1 < argc) {
             host = argv[++i];
         } else if (!strcmp(argv[i], "--port") && i + 1 < argc) {
-            port = atoi(argv[++i]);
+            // The whole argument a port, or refused: atoi took "80x" as 80
+            // and "x" as 0, a free port (cadenza-audio #1194).
+            const char * arg = argv[++i];
+            char *       end = nullptr;
+            errno            = 0;
+            const long v     = strtol(arg, &end, 10);
+            if (end == arg || *end || errno || v < 0 || v > kMaxPort) {
+                fprintf(stderr, "[Server] ERROR: --port takes 0 to %d (0: a free one), not '%s'\n", kMaxPort, arg);
+                return 1;
+            }
+            port = (int) v;
         } else if (!strcmp(argv[i], "--max-batch") && i + 1 < argc) {
             g_max_batch = atoi(argv[++i]);
 
@@ -2035,16 +2056,23 @@ static int server_main(int argc, char ** argv) {
     // Bound before it says where it listens: --port 0 takes a free port, the
     // one said, so a test starts a server without racing another for one
     // (cadenza-audio #1194).
-    const int bound = port == 0 ? svr.bind_to_any_port(host) : (svr.bind_to_port(host, port) ? port : -1);
+    // A bind or a listen that fails is the server's failure, its exit 1, once
+    // the worker is stopped.
+    int       exit_code = 0;
+    const int bound     = port == 0 ? svr.bind_to_any_port(host) : (svr.bind_to_port(host, port) ? port : -1);
     if (bound < 0) {
         fprintf(stderr, "[Server] FATAL: cannot bind %s:%d\n", host, port);
+        exit_code = 1;
     } else {
         fprintf(stderr, "[Server] Listening on %s:%d\n", host, bound);
         fprintf(stderr, "[Server] Pipelines:%s%s%s\n", have_lm ? " /lm" : "", have_synth ? " /synth" : "",
                 have_understand ? " /understand" : "");
         fprintf(stderr, "[Server] Models: %zu LM, %zu Text-Enc, %zu DiT, %zu VAE, %zu Adapter\n", g_registry.lm.size(),
                 g_registry.text_enc.size(), g_registry.dit.size(), g_registry.vae.size(), g_registry.adapters.size());
-        svr.listen_after_bind();
+        if (!svr.listen_after_bind()) {
+            fprintf(stderr, "[Server] FATAL: cannot listen on %s:%d\n", host, bound);
+            exit_code = 1;
+        }
     }
 
     // stop worker thread (finishes current job, discards pending)
@@ -2060,7 +2088,7 @@ static int server_main(int argc, char ** argv) {
     store_free(g_store);
     fprintf(stderr, "[Server] Done\n");
 
-    return 0;
+    return exit_code;
 }
 
 int main(int argc, char ** argv) {

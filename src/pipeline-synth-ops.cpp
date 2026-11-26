@@ -156,7 +156,7 @@ int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s,
         VAEEncoder * vae_enc = store_require_vae_enc(ctx->store, ctx->vae_enc_key);
         if (!vae_enc) {
             fprintf(stderr, "[Encode-Src] FATAL: store_require_vae_enc failed\n");
-            return synth_failed(s, AceSynthFailure::model_unavailable, "the VAE encoder could not be loaded");
+            return synth_failed(s, AceSynthFailure::model_unavailable, kAceVaeEncoderUnavailable);
         }
         ModelHandle vae_enc_guard(ctx->store, vae_enc);
 
@@ -196,17 +196,32 @@ int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s,
     return 0;
 }
 
-// ace_test_fail_next_fsq_require's: the next roundtrip's require fails.
+// The tests' fail-next hooks: the FSQ roundtrip's require, the VAE
+// decoder's require, a take's tiled decode (ace_test_fail_next_*).
 static std::atomic<bool> g_test_fail_fsq_require{ false };
+static std::atomic<bool> g_test_fail_vae_dec_require{ false };
+static std::atomic<bool> g_test_fail_vae_decode{ false };
 
 void ace_test_fail_next_fsq_require(bool armed) {
     g_test_fail_fsq_require.store(armed);
 }
 
-// Whether this require is the one the hook fails: a relaxed load first, so a
-// shipping run pays no read-modify-write (as ace_gpu_injected).
+void ace_test_fail_next_vae_dec_require(bool armed) {
+    g_test_fail_vae_dec_require.store(armed);
+}
+
+void ace_test_fail_next_vae_decode(bool armed) {
+    g_test_fail_vae_decode.store(armed);
+}
+
+// Whether this call is the one `hook` fails, disarming it: a relaxed load
+// first, so a shipping run pays no read-modify-write (as ace_gpu_injected).
+static bool failed_by_test(std::atomic<bool> & hook) {
+    return hook.load(std::memory_order_relaxed) && hook.exchange(false);
+}
+
 static bool fsq_require_failed_by_test() {
-    return g_test_fail_fsq_require.load(std::memory_order_relaxed) && g_test_fail_fsq_require.exchange(false);
+    return failed_by_test(g_test_fail_fsq_require);
 }
 
 int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
@@ -1145,19 +1160,37 @@ static int ops_latent_edges(VAEGGML * vae, const AceSynth * ctx, SynthState & s,
     return 0;
 }
 
-// Why a decode failed, as synth_failed says it (cadenza-audio #1286): the
-// decoder the store could not give, or a cancel. A take's own decode that
-// fails is soft -- its slot left empty -- and says none.
-static constexpr const char * kDecoderUnavailable = "the VAE decoder could not be loaded";
-static constexpr const char * kDecodeCancelled    = "the decode was cancelled";
+// Why a decode failed, as synth_failed says it (cadenza-audio #1286): a
+// cancel, or (kAceVae*) the decoder the store could not give. A take's own
+// decode that made nothing says why through ops_vae_decode_track's `empty`:
+// a batch leaves its slot empty and decodes the rest; a lone take fails.
+static constexpr const char * kDecodeCancelled = "the decode was cancelled";
+static constexpr const char * kDecodeNoBuffer  = "the VAE decode's output could not be allocated (memory)";
+
+// The VAE decoder from the store, or NULL said as model_unavailable.
+static VAEGGML * require_vae_dec(const AceSynth * ctx, SynthState & s) {
+    VAEGGML * vae =
+        failed_by_test(g_test_fail_vae_dec_require) ? nullptr : store_require_vae_dec(ctx->store, ctx->vae_dec_key);
+    if (!vae) {
+        fprintf(stderr, "[VAE-Decode] FATAL: store_require_vae_dec failed\n");
+        synth_failed(s, AceSynthFailure::model_unavailable, kAceVaeDecoderUnavailable);
+    }
+    return vae;
+}
 
 // Decode ONE track: run the tiled VAE decoder over track b's latent and fill
-// *out. A decode failure nulls *out and returns 0 (soft fail -- the batch
-// loop continues to other tracks, exactly as it always has); a cancellation
-// returns -1 (the caller aborts). out may point at one element of a batch
-// array or at a standalone AceAudio -- the element is all this function sees.
-static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceAudio * out, SynthState & s,
-                                AceProgress progress) {
+// *out. A decode failure nulls *out, says why in *empty, and returns 0 (soft
+// fail -- the batch loop continues to other tracks, exactly as it always
+// has); a cancellation returns -1 (the caller aborts). out may point at one
+// element of a batch array or at a standalone AceAudio -- the element is all
+// this function sees.
+static int ops_vae_decode_track(VAEGGML *        vae,
+                                const AceSynth * ctx,
+                                int              b,
+                                AceAudio *       out,
+                                SynthState &     s,
+                                AceProgress      progress,
+                                const char **    empty) {
     int T_latent    = s.T;
     int T_audio_max = T_latent * ACE_LATENT_HOP;
 
@@ -1173,12 +1206,15 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
     float * audio    = (float *) malloc((size_t) 2 * T_audio_max * sizeof(float));
     if (!audio) {
         fprintf(stderr, "[VAE-Decode Batch%d] ERROR: OOM allocating output (%d samples)\n", b, 2 * T_audio_max);
+        *empty = kDecodeNoBuffer;
         return 0;
     }
 
     s.timer.reset();
-    int T_audio = vae_ggml_decode_tiled(vae, dit_out, T_latent, audio, T_audio_max, ctx->params.vae_chunk,
-                                        ctx->params.vae_overlap, progress);
+    int T_audio = failed_by_test(g_test_fail_vae_decode) ?
+                      -1 :
+                      vae_ggml_decode_tiled(vae, dit_out, T_latent, audio, T_audio_max, ctx->params.vae_chunk,
+                                            ctx->params.vae_overlap, progress);
     if (T_audio < 0) {
         free(audio);
         if (ace_cancelled(progress, ACE_STAGE_VAE_DECODE)) {
@@ -1186,6 +1222,7 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
             return synth_failed(s, AceSynthFailure::cancelled, kDecodeCancelled);
         }
         fprintf(stderr, "[VAE-Decode Batch%d] ERROR: decode failed\n", b);
+        *empty = kAceVaeDecodeFailed;
         return 0;
     }
     fprintf(stderr, "[VAE-Decode Batch%d] Decode: %.1f ms\n", b, s.timer.ms());
@@ -1282,10 +1319,9 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
 }
 
 int ops_vae_decode(const AceSynth * ctx, int batch_n, AceAudio * out, SynthState & s, AceProgress progress) {
-    VAEGGML * vae = store_require_vae_dec(ctx->store, ctx->vae_dec_key);
+    VAEGGML * vae = require_vae_dec(ctx, s);
     if (!vae) {
-        fprintf(stderr, "[VAE-Decode] FATAL: store_require_vae_dec failed\n");
-        return synth_failed(s, AceSynthFailure::model_unavailable, kDecoderUnavailable);
+        return -1;
     }
     ModelHandle vae_guard(ctx->store, vae);
 
@@ -1298,8 +1334,11 @@ int ops_vae_decode(const AceSynth * ctx, int batch_n, AceAudio * out, SynthState
                 s.repaint_t1, s.T);
     }
 
+    // A take that made nothing is left empty: the batch's others decode, as
+    // its callers skip an empty slot.
     for (int b = 0; b < batch_n; b++) {
-        if (ops_vae_decode_track(vae, ctx, b, &out[b], s, progress) != 0) {
+        const char * empty = nullptr;
+        if (ops_vae_decode_track(vae, ctx, b, &out[b], s, progress, &empty) != 0) {
             return -1;
         }
     }
@@ -1311,10 +1350,9 @@ int ops_vae_decode(const AceSynth * ctx, int batch_n, AceAudio * out, SynthState
 // up): first audio for take 0 must not wait on the VAE decoding takes 1..n.
 // The other tracks' latents stay parked in the job, decodable afterwards.
 int ops_vae_decode_one(const AceSynth * ctx, int track, AceAudio * out, SynthState & s, AceProgress progress) {
-    VAEGGML * vae = store_require_vae_dec(ctx->store, ctx->vae_dec_key);
+    VAEGGML * vae = require_vae_dec(ctx, s);
     if (!vae) {
-        fprintf(stderr, "[VAE-Decode] FATAL: store_require_vae_dec failed\n");
-        return synth_failed(s, AceSynthFailure::model_unavailable, kDecoderUnavailable);
+        return -1;
     }
     ModelHandle vae_guard(ctx->store, vae);
 
@@ -1324,5 +1362,12 @@ int ops_vae_decode_one(const AceSynth * ctx, int track, AceAudio * out, SynthSta
                 s.repaint_t1, s.T);
     }
 
-    return ops_vae_decode_track(vae, ctx, track, out, s, progress);
+    // A lone take that made nothing fails, said why: never a success with
+    // no audio (cadenza-audio #1286).
+    const char * empty = nullptr;
+    const int    rc    = ops_vae_decode_track(vae, ctx, track, out, s, progress, &empty);
+    if (rc == 0 && !out->samples) {
+        return synth_failed(s, AceSynthFailure::other, empty ? empty : kAceVaeDecodeFailed);
+    }
+    return rc;
 }

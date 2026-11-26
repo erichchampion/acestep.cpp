@@ -1952,8 +1952,11 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         }
     }
     // A decode that fails says why, as a run does (cadenza-audio #1286): a
-    // cancel as cancelled, a take that is not the job's as other, and never
+    // cancel as cancelled, a take that is not the job's as other, a decoder
+    // the store could not give as model_unavailable, a lone take's decode
+    // that made no audio as other -- never a success with none -- and never
     // as a refusal; a decode that runs after them leaves its failure unset.
+    // A batch's take that made none is left empty, the batch run.
     {
         AceRequest r;
         request_init(&r);
@@ -1986,6 +1989,32 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             ace_audio_free(&out);
             said("a decode of a take not the job's", ace_synth_job_run_vae_take(synth, job, 1, &out, {}, &failed), -1,
                  AceSynthFailure::other, failed);
+            ace_test_fail_next_vae_dec_require(true);
+            said("a decode with no decoder", ace_synth_job_run_vae_take(synth, job, 0, &out, {}, &failed), -1,
+                 AceSynthFailure::model_unavailable, failed);
+            ace_test_fail_next_vae_dec_require(false);
+            if (failed.failed && strcmp(failed.failed, kAceVaeDecoderUnavailable)) {
+                fprintf(stderr, "[Test] FAIL: a decode with no decoder said '%s'\n", failed.failed);
+                rc = 1;
+            }
+            ace_test_fail_next_vae_decode(true);
+            said("a lone take's decode that made nothing", ace_synth_job_run_vae_take(synth, job, 0, &out, {}, &failed),
+                 -1, AceSynthFailure::other, failed);
+            if (out.samples || (failed.failed && strcmp(failed.failed, kAceVaeDecodeFailed))) {
+                fprintf(stderr, "[Test] FAIL: a lone take's failed decode gave audio, or said '%s'\n",
+                        failed.failed ? failed.failed : "nothing");
+                rc = 1;
+            }
+            ace_audio_free(&out);
+            ace_test_fail_next_vae_decode(true);
+            said("a batch whose take made nothing", ace_synth_job_run_vae(synth, job, &out, {}, &failed), 0,
+                 AceSynthFailure::none, failed);
+            ace_test_fail_next_vae_decode(false);
+            if (out.samples) {
+                fprintf(stderr, "[Test] FAIL: a batch's failed take was not left empty\n");
+                rc = 1;
+            }
+            ace_audio_free(&out);
             said("a decode after them", ace_synth_job_run_vae_take(synth, job, 0, &out, {}, &failed), 0,
                  AceSynthFailure::none, failed);
             ace_audio_free(&out);

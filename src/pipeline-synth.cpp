@@ -552,7 +552,7 @@ static bool pinned_encode_src_and_timbre(AceSynth *         ctx,
     ModelHandle vae_pin(ctx->store, need_vae_pin ? store_require_vae_enc(ctx->store, ctx->vae_enc_key) : NULL);
     if (need_vae_pin && !vae_pin.ptr) {
         fprintf(stderr, "[Pipeline-Synth] FATAL: store_require_vae_enc (pin) failed\n");
-        synth_failed(s, AceSynthFailure::model_unavailable, "the VAE encoder could not be loaded");
+        synth_failed(s, AceSynthFailure::model_unavailable, kAceVaeEncoderUnavailable);
         return false;
     }
     if (have_src) {
@@ -1360,7 +1360,7 @@ template <class Decode> static int run_decode(SynthState & s, AceSynthBatchRefus
     }
     const int rc = decode();
     if (rc != 0) {
-        synth_failed(s, AceSynthFailure::other, "the VAE decode failed");
+        synth_failed(s, AceSynthFailure::other, kAceVaeDecodeFailed);
         if (failed) {
             failed->failure = s.failure;
             failed->failed  = s.failed;
@@ -1368,6 +1368,9 @@ template <class Decode> static int run_decode(SynthState & s, AceSynthBatchRefus
     }
     return rc;
 }
+
+// Why a decode is refused its arguments.
+static constexpr const char * kDecodeArguments = "a decode takes a synth, a job and its output";
 
 // A decode refused its arguments, said as `other` through `failed`.
 static int decode_refused(AceSynthBatchRefusal * failed, const char * why) {
@@ -1386,7 +1389,7 @@ int ace_synth_job_run_vae(AceSynth *             ctx,
                           AceProgress            progress,
                           AceSynthBatchRefusal * failed) {
     if (!ctx || !job || !out) {
-        return decode_refused(failed, "a decode takes a synth, a job and its output");
+        return decode_refused(failed, kDecodeArguments);
     }
     return run_decode(job->state, failed, [&] { return ops_vae_decode(ctx, job->batch_n, out, job->state, progress); });
 }
@@ -1398,7 +1401,7 @@ int ace_synth_job_run_vae_take(AceSynth *             ctx,
                                AceProgress            progress,
                                AceSynthBatchRefusal * failed) {
     if (!ctx || !job || !out) {
-        return decode_refused(failed, "a decode takes a synth, a job and its output");
+        return decode_refused(failed, kDecodeArguments);
     }
     if (take < 0 || take >= job->batch_n) {
         return decode_refused(failed, "the take is not one of the job's");

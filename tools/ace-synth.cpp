@@ -254,6 +254,13 @@ static int synth_main(int argc, char ** argv) {
 
         src_interleaved = audio_planar_to_interleaved(planar, T_audio);
         free(planar);
+        // A conversion that could not allocate is said as that, not as the
+        // input rule's "none was given" (cadenza-audio #1194). A read of no
+        // sample, which malloc(0) may answer NULL, is the rule's to refuse.
+        if (!src_interleaved && T_audio > 0) {
+            fprintf(stderr, "[Ace-Synth] FATAL: out of memory converting --src-audio %s\n", src_audio_path);
+            return 1;
+        }
         src_len = T_audio;
         if (inputs_refused(src_interleaved, src_len)) {
             free(src_interleaved);

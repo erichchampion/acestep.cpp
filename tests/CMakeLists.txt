@@ -188,6 +188,12 @@ add_tool_refusal(test-codec-overlap-past-half "VAE overlap must be 0 to under ha
 add_tool_refusal(test-synth-chunk-zero "VAE chunk must be 1 to 15000 latent frames \\(--vae-chunk"
                  $<TARGET_FILE:ace-synth> --request ${CMAKE_CURRENT_SOURCE_DIR}/request-text2music.json
                  --models /nonexistent --vae-chunk 0)
+# ace-server's --port, the whole argument a port of 0 to 65535 (cadenza-audio
+# #1194): refused as it is parsed, before any model is scanned.
+add_tool_refusal(test-server-port-trailing "--port takes 0 to 65535"
+                 $<TARGET_FILE:ace-server> --models /nonexistent --port 80x)
+add_tool_refusal(test-server-port-past-most "--port takes 0 to 65535"
+                 $<TARGET_FILE:ace-server> --models /nonexistent --port 65536)
 add_tool_refusal(test-understand-chunk-zero "VAE chunk must be 1 to 15000 latent frames \\(--vae-chunk"
                  $<TARGET_FILE:ace-understand> --models /nonexistent --src-audio /nonexistent --vae-chunk 0)
 # neural-codec's latent files, bounded as ace-server's payloads are: a header
@@ -256,4 +262,8 @@ if(ACESTEP_TEST_MODELS)
              COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test-server-synth.sh $<TARGET_FILE:ace-server>
                      ${ACESTEP_TEST_MODELS} ${ACESTEP_TOOL_INPUTS}/one-second.wav)
     set_tests_properties(test-server-synth PROPERTIES FIXTURES_REQUIRED tool_inputs TIMEOUT 180)
+    # A bind that fails is the server's failure, exit 1 (cadenza-audio #1194):
+    # an address no host has.
+    add_tool_refusal(test-server-bind-fails "cannot bind"
+                     $<TARGET_FILE:ace-server> --models ${ACESTEP_TEST_MODELS} --host 256.0.0.1 --port 0)
 endif()
