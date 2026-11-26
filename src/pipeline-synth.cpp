@@ -839,6 +839,10 @@ static const SynthTask kSynthTasks[] = {
     { TASK_COMPLETE,    run_complete,    true,  false, false, false, true,  SynthSplice::never        },
 };
 
+// Why a task the table does not hold is refused: by the batch rule, and by
+// run_task should a call reach it past the rule.
+static constexpr const char * kRefusalUnknownTask = "unknown task_type";
+
 // The table's row for a task, by name; NULL for one it does not hold.
 static const SynthTask * find_synth_task(std::string_view task) {
     for (const SynthTask & t : kSynthTasks) {
@@ -878,15 +882,27 @@ bool ace_synth_task_ignores_source(const char * task) {
     return ace_synth_task_info(task, &info) && !info.needs_source;
 }
 
-bool ace_synth_inputs_refused(const char * task, bool has_source, AceSynthBatchRefusal * why) {
-    const SynthTask * entry = task ? find_synth_task(task) : nullptr;
-    if (!entry || !entry->needs_source || has_source) {
+// The input rule for a task's row, the source read as the run reads it
+// (SynthInput::given): run_task and ace_synth_inputs_refused alike, so a
+// tool and the run say one rule of one reading (cadenza-audio #1194).
+static bool inputs_refused(const SynthTask & entry, const SynthInput & src, AceSynthBatchRefusal * why) {
+    if (!entry.needs_source || src.given()) {
         return false;
     }
     if (why) {
         *why = { -1, "the task requires source audio or latents, and none was given" };
     }
     return true;
+}
+
+bool ace_synth_inputs_refused(const char *           task,
+                              const float *          src_audio,
+                              int                    src_len,
+                              const float *          src_latents,
+                              int                    src_T_latent,
+                              AceSynthBatchRefusal * why) {
+    const SynthTask * entry = task ? find_synth_task(task) : nullptr;
+    return entry && inputs_refused(*entry, { src_audio, src_len, src_latents, src_T_latent }, why);
 }
 
 bool ace_synth_request_splices_source(const AceRequest * req) {
@@ -1016,7 +1032,7 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
     // as that, not as a mix or the caption an unknown task is short of.
     for (int i = 0; i < batch_n; i++) {
         if (!find_synth_task(reqs[i].task_type)) {
-            return refuse(i, "unknown task_type");
+            return refuse(i, kRefusalUnknownTask);
         }
     }
     for (int i = 0; i < batch_n; i++) {
@@ -1172,9 +1188,16 @@ static AceSynthJob * run_task(AceSynth *             ctx,
         refused = refusal;
         return NULL;
     }
+    // The task's row, looked up once: the rule above refused a task it does
+    // not hold, and this holds the run to that by itself (cadenza-audio
+    // #1194), so no row below is read through NULL.
     const std::string & task  = reqs[0].task_type;
     const SynthTask *   entry = find_synth_task(task);
-    if (ace_synth_inputs_refused(task.c_str(), in.src.given(), &refused)) {
+    if (!entry) {
+        refused = { 0, kRefusalUnknownTask };
+        return NULL;
+    }
+    if (inputs_refused(*entry, in.src, &refused)) {
         fprintf(stderr, "[Synth-Run] ERROR: task '%s' requires source audio or latents\n", task.c_str());
         return NULL;
     }

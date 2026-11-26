@@ -1250,25 +1250,49 @@ static int scenario_task_table() {
         }
         // Nor is it refused for its inputs: the batch rule refuses it by name.
         AceSynthBatchRefusal why{ -7, "untouched" };
-        if (ace_synth_inputs_refused(task, false, &why) || why.request != -7) {
+        if (ace_synth_inputs_refused(task, nullptr, 0, nullptr, 0, &why) || why.request != -7) {
             fprintf(stderr, "[Test] FAIL: an unknown task '%s' was refused for its inputs\n", task ? task : "(null)");
             rc = 1;
         }
     }
     // The input rule a tool asks before it loads a model, as run_task holds
-    // a run to it (#1193): a task that needs a source is refused given none,
-    // said as that, and runs given one; a task that needs none runs either way.
-    for (const char * task : { "text2music", "cover", "cover-nofsq", "repaint", "lego", "extract", "complete" }) {
+    // a run to it (#1193), of every task the table holds (#1194): a task that
+    // needs a source is refused given none, said as that, and runs given one;
+    // a task that needs none runs either way. The source is read as the run
+    // reads it: a buffer of no sample or no frame is none (#1194).
+    const float sample[2] = {};
+    const float frame[ACE_LATENT_CHANNELS] = {};
+    struct Source {
+        const char *  what;
+        const float * audio;
+        int           len;
+        const float * latents;
+        int           T_latent;
+        bool          given;
+    };
+    const Source sources[] = {
+        { "no source", nullptr, 0, nullptr, 0, false },
+        { "audio of no sample", sample, 0, nullptr, 0, false },
+        { "latents of no frame", nullptr, 0, frame, 0, false },
+        { "a sample's audio", sample, 1, nullptr, 0, true },
+        { "a frame's latents", nullptr, 0, frame, 1, true },
+    };
+    for (int t = 0; t < ace_synth_task_count(); t++) {
+        const char *     task = ace_synth_task_name(t);
         AceSynthTaskInfo info;
-        ace_synth_task_info(task, &info);
-        for (const bool has_source : { false, true }) {
+        if (!ace_synth_task_info(task, &info)) {
+            fprintf(stderr, "[Test] FAIL: the table's task %d (%s) has no info\n", t, task ? task : "(null)");
+            rc = 1;
+            continue;
+        }
+        for (const Source & src : sources) {
             AceSynthBatchRefusal why;
-            const bool           refused = ace_synth_inputs_refused(task, has_source, &why);
-            const bool           want    = info.needs_source && !has_source;
+            const bool refused = ace_synth_inputs_refused(task, src.audio, src.len, src.latents, src.T_latent, &why);
+            const bool want    = info.needs_source && !src.given;
             if (refused != want ||
                 (want && (why.request != -1 || !why.reason || !strstr(why.reason, "requires source")))) {
-                fprintf(stderr, "[Test] FAIL: a %s %s a source refused %d (%s), want %d\n", task,
-                        has_source ? "given" : "without", refused, why.reason ? why.reason : "no reason", want);
+                fprintf(stderr, "[Test] FAIL: a %s given %s refused %d (%s), want %d\n", task, src.what, refused,
+                        why.reason ? why.reason : "no reason", want);
                 rc = 1;
             }
         }

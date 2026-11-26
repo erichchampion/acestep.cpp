@@ -936,6 +936,33 @@ static void synth_worker(std::shared_ptr<Job>    job,
     fprintf(stderr, "[Server] Job %s done (%d tracks)\n", job->id.c_str(), total_tracks);
 }
 
+// How a /synth request could have sent the source its task works from, said
+// after the engine's reason: a multipart's parts, or, for a plain JSON body,
+// which carries none, a multipart (cadenza-audio #1193, #1194).
+static constexpr const char * kSourceHintMultipart = "part \"audio\" or \"src_latents\"";
+static constexpr const char * kSourceHintJson =
+    "send it as a multipart request, with an \"audio\" or \"src_latents\" part";
+
+// A 400 with the engine's reason for a task that works from a source given
+// none (ace_synth_inputs_refused, #1193) -- the source as the run would get
+// it, read by the engine's one rule (#1194): true when it answered one.
+// `hint` says how this request could have sent one.
+static bool refuse_sourceless(httplib::Response &       res,
+                              const std::string &       task,
+                              const float *             src_audio,
+                              int                       src_len,
+                              const std::vector<float> & src_latents,
+                              int                       src_T_latent,
+                              const char *              hint) {
+    AceSynthBatchRefusal why;
+    if (!ace_synth_inputs_refused(task.c_str(), src_audio, src_len, src_latents.empty() ? nullptr : src_latents.data(),
+                                  src_T_latent, &why)) {
+        return false;
+    }
+    json_error(res, 400, (std::string(why.reason) + " (" + hint + ")").c_str());
+    return true;
+}
+
 // POST /synth
 // returns JSON {"id":"N"} immediately.
 // input:
@@ -953,18 +980,6 @@ static void synth_worker(std::shared_ptr<Job>    job,
 //   fed back to /vae decode.
 // Batch size = number of JSON objects (after synth_batch_size expansion, clamped to kAceSynthMaxTakes).
 // Metadata (seed, duration, etc) is already in the request JSON from /lm.
-// A 400 with the engine's reason for a task that works from a source sent
-// none (ace_synth_inputs_refused, #1193): true when it answered one.
-// `hint` says how this request could have sent one.
-static bool refuse_sourceless(httplib::Response & res, const std::string & task, bool has_source, const char * hint) {
-    AceSynthBatchRefusal why;
-    if (!ace_synth_inputs_refused(task.c_str(), has_source, &why)) {
-        return false;
-    }
-    json_error(res, 400, (std::string(why.reason) + " (" + hint + ")").c_str());
-    return true;
-}
-
 static void handle_synth(const httplib::Request & req, httplib::Response & res) {
     if (g_registry.dit.empty() || g_registry.text_enc.empty() || g_registry.vae.empty()) {
         json_error(res, 501, "No synth models in registry (need dit + text-encoder + vae)");
@@ -1026,8 +1041,10 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         const bool src_ignored = ace_synth_task_ignores_source(ace_req.task_type.c_str());
         src_dropped            = src_ignored && src_sent;
         // A task that works from a source, sent neither part: refused before
-        // any part -- a reference too -- is read or decoded (#1157, #1193).
-        if (refuse_sourceless(res, ace_req.task_type, src_sent, "part \"audio\" or \"src_latents\"")) {
+        // any part -- a reference too -- is read or decoded (#1157, #1193),
+        // by the rule asked again below of what the parts read to.
+        if (!src_sent && refuse_sourceless(res, ace_req.task_type, src_interleaved, src_len, src_latents,
+                                           src_T_latent, kSourceHintMultipart)) {
             return;
         }
 
@@ -1119,12 +1136,14 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             return;
         }
     }
-    // A task that works from a source, sent none -- a plain JSON body: a 400
-    // with the run's own reason now, not a job that fails saying nothing
-    // (cadenza-audio #1160, #1193). A multipart sent neither part was
+    // A task that works from a source, given none: a 400 with the run's own
+    // reason now, not a job that fails saying nothing (cadenza-audio #1160,
+    // #1193) -- of the source the parts read to, as the run would get it
+    // (#1194), and with the hint for how this request sends one: a plain JSON
+    // body none, a multipart its parts. A multipart sent neither part was
     // refused before any part was read. The buffers are malloc_guard's.
-    if (refuse_sourceless(res, ace_reqs[0].task_type, src_interleaved || !src_latents.empty(),
-                          "send it as a multipart request, with an \"audio\" or \"src_latents\" part")) {
+    if (refuse_sourceless(res, ace_reqs[0].task_type, src_interleaved, src_len, src_latents, src_T_latent,
+                          req.is_multipart_form_data() ? kSourceHintMultipart : kSourceHintJson)) {
         return;
     }
 

@@ -279,9 +279,18 @@ bool ace_synth_task_ignores_source(const char * task);
 // Whether a run of `task` is refused for its inputs: a task that works from a
 // source (the table's needs_source) given none -- the rule run_task holds a
 // run to, asked by a tool before it loads a model so it says the same
-// (cadenza-audio #1193). *why, when non-NULL, gets {-1, the reason}. False
-// for a task the engine does not know: the batch rule refuses that by name.
-bool ace_synth_inputs_refused(const char * task, bool has_source, AceSynthBatchRefusal * why);
+// (cadenza-audio #1193). The source is the run's own arguments, read as the
+// run reads them: given when its audio holds a sample (src_len > 0) or its
+// latents a frame (src_T_latent > 0), so a file that decoded to nothing is
+// none here as in the run (cadenza-audio #1194). *why, when non-NULL, gets
+// {-1, the reason}. False for a task the engine does not know: the batch
+// rule refuses that by name.
+bool ace_synth_inputs_refused(const char *           task,
+                              const float *          src_audio,
+                              int                    src_len,
+                              const float *          src_latents,
+                              int                    src_T_latent,
+                              AceSynthBatchRefusal * why);
 
 // Whether a run of the request (its task_type and region bounds) splices its
 // source back over the decode after it ends -- a repaint, or a lego whose

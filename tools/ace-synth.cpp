@@ -163,15 +163,21 @@ static int synth_main(int argc, char ** argv) {
                 reqs[0].task_type.c_str());
         src_audio_path = NULL;
     }
-    // A task that works from a source, given none: refused now, before any
-    // model loads, by the run's own rule and reason (cadenza-audio #1160,
-    // #1193).
-    {
+    // A task that works from a source, given none: refused before any model
+    // loads, by the run's own rule and reason (cadenza-audio #1160, #1193),
+    // of the source as the run would get it (cadenza-audio #1194): with no
+    // --src-audio, now; with one, once it is read, so a file that decodes to
+    // nothing is refused as the run would refuse it, not after the load.
+    auto inputs_refused = [&](const float * src, int len) {
         AceSynthBatchRefusal why;
-        if (ace_synth_inputs_refused(reqs[0].task_type.c_str(), src_audio_path != NULL, &why)) {
-            fprintf(stderr, "[Ace-Synth] FATAL: task '%s': %s (--src-audio)\n", reqs[0].task_type.c_str(), why.reason);
-            return 1;
+        if (!ace_synth_inputs_refused(reqs[0].task_type.c_str(), src, len, NULL, 0, &why)) {
+            return false;
         }
+        fprintf(stderr, "[Ace-Synth] FATAL: task '%s': %s (--src-audio)\n", reqs[0].task_type.c_str(), why.reason);
+        return true;
+    };
+    if (!src_audio_path && inputs_refused(NULL, 0)) {
+        return 1;
     }
 
     // Scan the registry and resolve model paths from the first request.
@@ -249,6 +255,10 @@ static int synth_main(int argc, char ** argv) {
         src_interleaved = audio_planar_to_interleaved(planar, T_audio);
         free(planar);
         src_len = T_audio;
+        if (inputs_refused(src_interleaved, src_len)) {
+            free(src_interleaved);
+            return 1;
+        }
     }
 
     float * ref_interleaved = NULL;
