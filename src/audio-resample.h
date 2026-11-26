@@ -21,7 +21,7 @@
 // we build a polyphase table once: table[phase][tap] = sinc(d) * kaiser(d).
 // The hot loop is then just a table lookup + dot product -- no transcendentals.
 //
-// Table size: 256 phases * 64 taps * 4 bytes = 64 KB (fits L1 cache).
+// Table size: (256 + 1) phases * 64 taps * 4 bytes = 65,792 bytes (fits L1 cache).
 
 #define RESAMPLE_N_TAPS   64
 #define RESAMPLE_N_PHASES 256
@@ -41,7 +41,7 @@ inline long long audio_resampled_samples(long long n_in, int sr_in, int sr_out) 
 }
 
 // Bessel I0 via Taylor series. Only used during table construction
-// (called RESAMPLE_N_PHASES * RESAMPLE_N_TAPS = 16384 times total, not millions).
+// (called (RESAMPLE_N_PHASES + 1) * RESAMPLE_N_TAPS = 16448 times total, not millions).
 static double audio_resample_bessel_i0(double x) {
     double sum  = 1.0;
     double term = 1.0;
@@ -194,20 +194,23 @@ static float * audio_resample(const float * in, int n_in, int sr_in, int sr_out,
 
         const int base = center_i - RESAMPLE_HALF_LEN + 1;
 
-        // dot product with linear interpolation between adjacent phases
-        // (avoids quantization artifacts from 256 discrete phases)
+        // the taps, linearly interpolated between adjacent phases (avoids
+        // quantization artifacts from 256 discrete phases), and their sum:
+        // once per output sample, for every channel
         const float * h0 = table[phase];
         const float * h1 = table[phase + 1];
+        float         h[RESAMPLE_N_TAPS];
+        float         wgt = 0.0f;
+        for (int tap = 0; tap < RESAMPLE_N_TAPS; tap++) {
+            h[tap] = h0[tap] + phase_mix * (h1[tap] - h0[tap]);
+            wgt += h[tap];
+        }
 
         for (int ch = 0; ch < nch; ch++) {
             const float * src = in + (size_t) ch * n_in;
 
             float sum = 0.0f;
-            float wgt = 0.0f;
-
             for (int tap = 0; tap < RESAMPLE_N_TAPS; tap++) {
-                float h = h0[tap] + phase_mix * (h1[tap] - h0[tap]);
-
                 // clamp to input bounds (repeat edge samples)
                 int idx = base + tap;
                 if (idx < 0) {
@@ -217,8 +220,7 @@ static float * audio_resample(const float * in, int n_in, int sr_in, int sr_out,
                     idx = n_in - 1;
                 }
 
-                sum += src[idx] * h;
-                wgt += h;
+                sum += src[idx] * h[tap];
             }
 
             // normalize to compensate for edge effects
