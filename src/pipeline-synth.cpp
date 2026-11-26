@@ -73,9 +73,7 @@ AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params) {
     }
     // Tiles the VAE can run, refused at the load rather than by a run's
     // division by a stride of 0 (cadenza-audio #1311).
-    if (const char * why = vae_tiling_refused(params->vae_chunk, params->vae_overlap)) {
-        fprintf(stderr, "[Synth-Load] ERROR: %s (vae_chunk %d, vae_overlap %d)\n", why, params->vae_chunk,
-                params->vae_overlap);
+    if (vae_tiling_refused_said("Synth-Load", params->vae_chunk, params->vae_overlap)) {
         return NULL;
     }
 

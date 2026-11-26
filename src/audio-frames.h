@@ -4,7 +4,9 @@
 // frame, 25 of them a second. The conversions between samples, latent frames
 // and seconds are written here once, not at each log line and buffer size.
 
+#include <cstdio>
 #include <limits>
+#include <string>
 
 // Samples per second, per channel: what the VAE decodes to and encodes from.
 inline constexpr int ACE_SAMPLE_RATE = 48000;
@@ -302,6 +304,34 @@ inline constexpr const char * vae_tiling_refused(int chunk, int overlap) {
         return "the VAE overlap must be 0 to under half the chunk";
     }
     return nullptr;
+}
+
+// A refused tiling in words: the rule's reason and the pair, by the names its
+// caller knows them by -- a load's fields, a tool's flags, the shim's "tile"
+// and "overlap" (cadenza-audio #1311): "why (vae_chunk N, vae_overlap M)".
+inline std::string vae_tiling_refusal(const char * why,
+                                      int          chunk,
+                                      int          overlap,
+                                      const char * chunk_name   = "vae_chunk",
+                                      const char * overlap_name = "vae_overlap") {
+    return std::string(why) + " (" + chunk_name + " " + std::to_string(chunk) + ", " + overlap_name + " " +
+           std::to_string(overlap) + ")";
+}
+
+// Whether the engine refuses this tiling, said on stderr as "[tag] ERROR:
+// <vae_tiling_refusal>" when it does: the loads' check, and the tools' with
+// their flags' names (cadenza-audio #1311).
+inline bool vae_tiling_refused_said(const char * tag,
+                                    int          chunk,
+                                    int          overlap,
+                                    const char * chunk_name   = "vae_chunk",
+                                    const char * overlap_name = "vae_overlap") {
+    const char * why = vae_tiling_refused(chunk, overlap);
+    if (why) {
+        fprintf(stderr, "[%s] ERROR: %s\n", tag,
+                vae_tiling_refusal(why, chunk, overlap, chunk_name, overlap_name).c_str());
+    }
+    return why != nullptr;
 }
 
 static_assert((long long) ACE_VAE_TILE_MOST * ACE_LATENT_HOP <= std::numeric_limits<int>::max(),

@@ -72,9 +72,7 @@ AceUnderstand * ace_understand_load(ModelStore * store, const AceUnderstandParam
         return NULL;
     }
     // Tiles the VAE can run, refused at the load (cadenza-audio #1311).
-    if (const char * why = vae_tiling_refused(params->vae_chunk, params->vae_overlap)) {
-        fprintf(stderr, "[Understand-Load] ERROR: %s (vae_chunk %d, vae_overlap %d)\n", why, params->vae_chunk,
-                params->vae_overlap);
+    if (vae_tiling_refused_said("Understand-Load", params->vae_chunk, params->vae_overlap)) {
         return NULL;
     }
 

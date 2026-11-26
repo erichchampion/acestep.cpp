@@ -76,11 +76,7 @@ inline int ace_tool_main(int (*body)(int, char **), int argc, char ** argv) {
 // (vae_tiling_refused), said with the flags as given (cadenza-audio #1266,
 // #1311). Every tool asks it where it parses them, before anything loads.
 inline bool ace_tool_tiling_refused(const char * tag, int chunk, int overlap) {
-    const char * why = vae_tiling_refused(chunk, overlap);
-    if (why) {
-        fprintf(stderr, "[%s] ERROR: %s (--vae-chunk %d, --vae-overlap %d)\n", tag, why, chunk, overlap);
-    }
-    return why != nullptr;
+    return vae_tiling_refused_said(tag, chunk, overlap, "--vae-chunk", "--vae-overlap");
 }
 
 // Whether `job` ran to its end, rather than throwing a fatal: its words in
