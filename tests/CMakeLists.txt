@@ -165,8 +165,13 @@ add_tool_refusal(test-codec-chunk-negative "--vae-chunk must be 1 to 15000"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk -1)
 add_tool_refusal(test-codec-chunk-past-most "--vae-chunk must be 1 to 15000"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk 15001)
-add_tool_refusal(test-codec-overlap-negative "--vae-overlap must be 0 to 15000"
+add_tool_refusal(test-codec-overlap-negative "--vae-overlap must be 0 to under half --vae-chunk"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-overlap -1)
+# An overlap of half the chunk or more: the encoder's rounded trims cut an
+# interior tile's core away (4 and 3 dropped most frames).
+add_tool_refusal(test-codec-overlap-past-half "--vae-overlap must be 0 to under half --vae-chunk"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --encode -i /nonexistent --vae-chunk 4
+                 --vae-overlap 3)
 add_tool_refusal(test-synth-chunk-zero "--vae-chunk must be 1 to 15000"
                  $<TARGET_FILE:ace-synth> --request ${CMAKE_CURRENT_SOURCE_DIR}/request-text2music.json
                  --models /nonexistent --vae-chunk 0)
@@ -182,9 +187,15 @@ add_tool_refusal(test-codec-latent-empty-f32 "no latent frame"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i ${ACESTEP_TOOL_INPUTS}/empty.vae)
 add_tool_refusal(test-codec-latent-ragged "not a whole number of 64-channel f32 frames"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i ${ACESTEP_TOOL_INPUTS}/ragged.vae)
-# A header's rate outside a source's, refused before any resample: 1 Hz.
+# A header's rate outside a source's, refused before any resample: 1 Hz. A
+# low rate a recording has still resamples: 4 kHz, read and resampled before
+# the missing VAE stops the encode.
 add_tool_refusal(test-codec-rate-1hz "a sample rate of 1 Hz"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --encode -i ${ACESTEP_TOOL_INPUTS}/rate-1hz.wav)
+add_test(NAME test-codec-rate-4khz
+         COMMAND neural-codec --vae /nonexistent --encode -i ${ACESTEP_TOOL_INPUTS}/rate-4khz.wav)
+set_tests_properties(test-codec-rate-4khz PROPERTIES FIXTURES_REQUIRED tool_inputs
+                     PASS_REGULAR_EXPRESSION "Done: 400 -> 4800 samples" FAIL_REGULAR_EXPRESSION "Refused")
 set(ACESTEP_TEST_MODELS "" CACHE PATH "Directory of GGUFs for the tests that read them (empty: not run)")
 if(ACESTEP_TEST_MODELS)
     add_test(NAME test-audio-layout COMMAND test-audio-layout --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf)

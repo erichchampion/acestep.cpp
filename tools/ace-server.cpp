@@ -557,7 +557,7 @@ static void json_error(httplib::Response & res, int status, const char * msg) {
 // when it is refused -- a size that is no whole number of frames, none, or
 // more than a run holds, by the rule neural-codec's files share
 // (latent_payload_frames, cadenza-audio #1266) -- answered as a 400, or a 413
-// for too many.
+// for too many, in the words neural-codec says it in (latent_fault_words).
 static int read_latent_part(httplib::Response &  res,
                             const std::string &  content,
                             const char *         name,
@@ -565,9 +565,7 @@ static int read_latent_part(httplib::Response &  res,
     const AceLatentFrames frames = latent_payload_frames(content.size());
     if (frames.fault != AceLatentFault::none) {
         const bool too_long = frames.fault == AceLatentFault::past_run_most;
-        json_error(
-            res, too_long ? 413 : 400,
-            (std::string(name) + (too_long ? " exceeds max frames" : " size not a multiple of 64*4 bytes")).c_str());
+        json_error(res, too_long ? 413 : 400, (std::string(name) + ": " + latent_fault_words(frames.fault)).c_str());
         return -1;
     }
     const float * data = reinterpret_cast<const float *>(content.data());
@@ -576,24 +574,30 @@ static int read_latent_part(httplib::Response &  res,
 }
 
 // An audio part decoded to 48 kHz interleaved stereo, its samples in
-// *T_audio: NULL when it has no sample, its rate is refused, or memory ran
-// out, with nothing left to free -- the planar decode freed on every path
-// (cadenza-audio #1266). With `past_run_most`, a source of more whole frames
-// than a run holds is NULL too, said there, before its interleaved copy.
-static float * read_audio_part(const std::string & content, int * T_audio, bool * past_run_most = nullptr) {
+// *T_audio, or NULL with nothing left to free -- the planar decode freed on
+// every path (cadenza-audio #1266). Every part is bounded by the decode's
+// own rule (audio_io_to_48k: a sample at least, a plausible rate, at most
+// AUDIO_MAX_SAMPLES at 48 kHz, so the interleave's int indexing holds). With
+// `bound_to_run` -- a source a run encodes whole, which the engine refuses
+// past a run's most frames (cadenza-audio #1144) -- one of more whole frames
+// is refused too, before its interleaved copy. A reference (the engine crops
+// it, #1147) and an understand source (windowed, #1149) are not. When `res`
+// is given, a refusal is answered there: a 413 for a source too long, a 400
+// for one that would not decode.
+static float * read_audio_part(httplib::Response * res, const std::string & content, int * T_audio, bool bound_to_run) {
     float * planar = audio_read_48k_buf((const uint8_t *) content.data(), content.size(), T_audio);
-    if (!planar) {
+    if (planar && bound_to_run && frames_past_run_most(samples_frames_floor(*T_audio))) {
+        free(planar);
+        if (res) {
+            json_error(*res, 413, "audio exceeds max duration (10 min)");
+        }
         return NULL;
     }
-    if (past_run_most) {
-        *past_run_most = frames_past_run_most(samples_frames_floor(*T_audio));
-        if (*past_run_most) {
-            free(planar);
-            return NULL;
-        }
-    }
-    float * interleaved = audio_planar_to_interleaved(planar, *T_audio);
+    float * interleaved = planar ? audio_planar_to_interleaved(planar, *T_audio) : NULL;
     free(planar);
+    if (!interleaved && res) {
+        json_error(*res, 400, "Failed to decode audio");
+    }
     return interleaved;
 }
 
@@ -1031,9 +1035,8 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                 return;
             }
             int T_audio     = 0;
-            src_interleaved = read_audio_part(file.content, &T_audio);
+            src_interleaved = read_audio_part(&res, file.content, &T_audio, true);
             if (!src_interleaved) {
-                json_error(res, 400, "Failed to decode audio");
                 return;
             }
             fprintf(stderr, "[Server] Source audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
@@ -1054,7 +1057,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             auto file = req.form.get_file("ref_audio");
             if (!file.content.empty()) {
                 int T_audio     = 0;
-                ref_interleaved = read_audio_part(file.content, &T_audio);
+                ref_interleaved = read_audio_part(nullptr, file.content, &T_audio, false);
                 if (ref_interleaved) {
                     fprintf(stderr, "[Server] Reference audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
                     ref_len = T_audio;
@@ -1314,9 +1317,8 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
         // decode directly from multipart buffer (WAV/MP3 auto-detected), to
         // the interleaved [L0,R0,L1,R1,...] the pipeline takes
         int T_audio     = 0;
-        src_interleaved = read_audio_part(file.content, &T_audio);
+        src_interleaved = read_audio_part(&res, file.content, &T_audio, false);
         if (!src_interleaved) {
-            json_error(res, 400, "Failed to decode audio");
             return;
         }
         fprintf(stderr, "[Server] Understand source: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
@@ -1565,11 +1567,8 @@ static void handle_vae(const httplib::Request & req, httplib::Response & res) {
         }
         // The engine's bound: 600 s of whole frames runs (cadenza-audio #1144).
         int     T_audio         = 0;
-        bool    too_long        = false;
-        float * src_interleaved = read_audio_part(file.content, &T_audio, &too_long);
+        float * src_interleaved = read_audio_part(&res, file.content, &T_audio, true);
         if (!src_interleaved) {
-            json_error(res, too_long ? 413 : 400,
-                       too_long ? "audio exceeds max duration (10 min)" : "Failed to decode audio");
             return;
         }
         int src_len = T_audio;

@@ -7,6 +7,7 @@
 
 #include <cfloat>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <random>
@@ -559,12 +560,13 @@ bool request_write(const AceRequest * r, const char * path) {
     yyjson_mut_doc_free(doc);
 
     // Every byte and the close, or a failed write: a full disk is not a
-    // request written (cadenza-audio #1266).
+    // request written, and its part is removed (cadenza-audio #1266).
     const bool wrote  = json && fwrite(json, 1, len, f) == len;
     const bool closed = fclose(f) == 0;
     free(json);
     if (!wrote || !closed) {
         fprintf(stderr, "[Request] ERROR: failed writing %s\n", path);
+        remove(path);
         return false;
     }
 

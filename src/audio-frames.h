@@ -209,11 +209,14 @@ static_assert(latent_payload_frames(0).fault == AceLatentFault::empty &&
               "a latent of 1 to a run's most frames, whole, is read; none, a part frame or one past the most is not");
 
 // The VAE tiles a tool may be asked for (--vae-chunk, --vae-overlap), in
-// latent frames: a chunk of 1 to a run's most, an overlap of 0 to as many. A
-// chunk of 0 is a stride of 0 the tiled VAE divides by, a negative one a run
-// of no tile and no error, and one past ~1.1M frames overflows
-// chunk * ACE_LATENT_HOP; a run's most frames is already one tile. The tiled
-// VAE still shrinks an overlap its chunk can't hold (cadenza-audio #1266).
+// latent frames: a chunk of 1 to a run's most, an overlap of 0 to under half
+// the chunk. A chunk of 0 is a stride of 0 the tiled VAE divides by, a
+// negative one a run of no tile and no error, and one past ~1.1M frames
+// overflows chunk * ACE_LATENT_HOP; a run's most frames is already one tile.
+// An overlap of half the chunk or more leaves no core: the decoder halves it
+// to fit, but the encoder halves it in samples and its tiles' rounded trims
+// then cut an interior tile's core away -- --vae-chunk 4 --vae-overlap 3
+// dropped most frames (cadenza-audio #1266).
 inline constexpr int ACE_VAE_TILE_MOST = ACE_MAX_LATENT_FRAMES;
 
 // Why a tool refuses these tile settings: nullptr when it takes them.
@@ -222,8 +225,8 @@ inline constexpr const char * vae_tiling_refused(int chunk, int overlap) {
     if (chunk < 1 || chunk > ACE_VAE_TILE_MOST) {
         return "--vae-chunk must be 1 to 15000 latent frames";
     }
-    if (overlap < 0 || overlap > ACE_VAE_TILE_MOST) {
-        return "--vae-overlap must be 0 to 15000 latent frames";
+    if (overlap < 0 || 2LL * overlap >= chunk) {
+        return "--vae-overlap must be 0 to under half --vae-chunk";
     }
     return nullptr;
 }
@@ -231,7 +234,9 @@ inline constexpr const char * vae_tiling_refused(int chunk, int overlap) {
 static_assert((long long) ACE_VAE_TILE_MOST * ACE_LATENT_HOP <= std::numeric_limits<int>::max(),
               "the most tile, in samples, is an int");
 static_assert(vae_tiling_refused(0, 16) && vae_tiling_refused(-1, 16) && vae_tiling_refused(ACE_VAE_TILE_MOST + 1, 0) &&
-                  vae_tiling_refused(1024, -1) && vae_tiling_refused(1024, ACE_VAE_TILE_MOST + 1) &&
-                  !vae_tiling_refused(1, 64) && !vae_tiling_refused(ACE_VAE_TILE_MOST, ACE_VAE_TILE_MOST) &&
-                  !vae_tiling_refused(1024, 0),
-              "a chunk of 1 to the most, an overlap of 0 to the most");
+                  vae_tiling_refused(1024, -1) && vae_tiling_refused(4, 2) && vae_tiling_refused(4, 3) &&
+                  vae_tiling_refused(256, 128) && !vae_tiling_refused(1, 0) && !vae_tiling_refused(5, 2) &&
+                  !vae_tiling_refused(ACE_VAE_TILE_MOST, ACE_VAE_TILE_MOST / 2 - 1) && !vae_tiling_refused(1024, 0) &&
+                  !vae_tiling_refused(1024, 16) && !vae_tiling_refused(1024, 64) && !vae_tiling_refused(256, 64) &&
+                  !vae_tiling_refused(128, 16),
+              "a chunk of 1 to the most, an overlap of 0 to under half of it; the defaults and benches' tiles");

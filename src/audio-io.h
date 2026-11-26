@@ -102,7 +102,8 @@ static uint8_t * audio_io_load_file(const char * path, size_t * size_out) {
 
 // Write `size` bytes to a new file: whether every byte reached it, the close
 // included, so a full disk is a failed write, not a short file the tool calls
-// done (cadenza-audio #1266).
+// done -- and the part written removed, so no truncated file is left where
+// the output was asked for (cadenza-audio #1266).
 static bool audio_io_save_file(const char * path, const void * data, size_t size) {
     FILE * fp = fopen(path, "wb");
     if (!fp) {
@@ -113,6 +114,7 @@ static bool audio_io_save_file(const char * path, const void * data, size_t size
     const bool closed = fclose(fp) == 0;
     if (!wrote || !closed) {
         fprintf(stderr, "[Audio] Failed writing %s\n", path);
+        remove(path);
         return false;
     }
     return true;
@@ -226,26 +228,29 @@ static float * audio_read_buf(const uint8_t * data, size_t size, int * T_out, in
     return audio_io_read_mp3_buf(data, size, T_out, sr_out);
 }
 
-// The source sample rates a read takes: 8 kHz, the least an MP3 carries, to
-// 768 kHz, the fastest rate converters record a WAV at. A header outside them is refused
-// before any resample: a WAV that claims 1 Hz would ask audio_resample for
-// 48000 times its samples -- past an int, then a ~16 GB allocation -- before
-// ace-server's 600 s check ever ran (cadenza-audio #1266).
-inline constexpr int ACE_SOURCE_RATE_MIN = 8000;
+// The source sample rates a read takes: 1 kHz to 768 kHz, the fastest rate
+// converters record a WAV at. The floor only refuses a header no recording
+// has -- a WAV that claims 1 Hz -- as low rates that resample fine (4 kHz,
+// 5512 Hz) still do; what overflows is the resampled length, which
+// audio_io_to_48k bounds by AUDIO_MAX_SAMPLES before any resample
+// (cadenza-audio #1266).
+inline constexpr int ACE_SOURCE_RATE_MIN = 1000;
 inline constexpr int ACE_SOURCE_RATE_MAX = 768000;
 
 inline constexpr bool source_rate_plausible(int sr) {
     return sr >= ACE_SOURCE_RATE_MIN && sr <= ACE_SOURCE_RATE_MAX;
 }
 
-static_assert(source_rate_plausible(ACE_SAMPLE_RATE) && source_rate_plausible(44100) && !source_rate_plausible(1) &&
-                  !source_rate_plausible(0) && !source_rate_plausible(ACE_SOURCE_RATE_MAX + 1),
+static_assert(source_rate_plausible(ACE_SAMPLE_RATE) && source_rate_plausible(44100) && source_rate_plausible(4000) &&
+                  !source_rate_plausible(1) && !source_rate_plausible(0) &&
+                  !source_rate_plausible(ACE_SOURCE_RATE_MAX + 1),
               "the rates a source is read at");
 
 // A decoded source at 48000 Hz: `raw`, `T` samples at `sr`, taken and freed
-// or handed back. Neither a source of no sample nor one at an implausible
-// rate is: both are NULL, said why (cadenza-audio #1266) -- so no caller
-// holds a zero-length buffer it must remember to free.
+// or handed back. A source of no sample, one at an implausible rate, and one
+// whose samples at 48 kHz are past AUDIO_MAX_SAMPLES are each NULL, said why
+// (cadenza-audio #1266) -- so no caller holds a zero-length buffer it must
+// remember to free, nor one an int can't index.
 static float * audio_io_to_48k(float * raw, int T, int sr, int * T_out) {
     *T_out = 0;
     if (T <= 0) {
@@ -256,6 +261,12 @@ static float * audio_io_to_48k(float * raw, int T, int sr, int * T_out) {
     if (!source_rate_plausible(sr)) {
         fprintf(stderr, "[Audio] Refused: a sample rate of %d Hz (a source is read at %d to %d Hz)\n", sr,
                 ACE_SOURCE_RATE_MIN, ACE_SOURCE_RATE_MAX);
+        free(raw);
+        return NULL;
+    }
+    if (audio_resampled_samples(T, sr, ACE_SAMPLE_RATE) > AUDIO_MAX_SAMPLES) {
+        fprintf(stderr, "[Audio] Refused: %d samples at %d Hz is past %d samples at %d Hz\n", T, sr, AUDIO_MAX_SAMPLES,
+                ACE_SAMPLE_RATE);
         free(raw);
         return NULL;
     }

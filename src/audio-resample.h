@@ -25,6 +25,21 @@
 #define RESAMPLE_N_PHASES 256
 #define RESAMPLE_HALF_LEN (RESAMPLE_N_TAPS / 2)
 
+// The most samples per channel a planar buffer holds: half an int's range, so
+// a stereo buffer's int indexing -- interleaved [t * 2], planar [T + t] --
+// never overflows (cadenza-audio #1266). 6.2 hours at 48 kHz.
+inline constexpr int AUDIO_MAX_SAMPLES = INT_MAX / 2;
+
+// The samples per channel `n_in` at `sr_in` resamples to at `sr_out`, in 64
+// bits: what a reader bounds before it resamples, and the resampler again.
+inline constexpr long long audio_resampled_samples(long long n_in, int sr_in, int sr_out) {
+    return sr_in > 0 ? n_in * sr_out / sr_in : 0;
+}
+
+static_assert(audio_resampled_samples(44100, 44100, 48000) == 48000 &&
+                  audio_resampled_samples(AUDIO_MAX_SAMPLES, 1000, 48000) > AUDIO_MAX_SAMPLES,
+              "a resample's length, in 64 bits");
+
 // Bessel I0 via Taylor series. Only used during table construction
 // (called RESAMPLE_N_PHASES * RESAMPLE_N_TAPS = 16384 times total, not millions).
 static double audio_resample_bessel_i0(double x) {
@@ -114,18 +129,17 @@ static float * audio_resample(const float * in, int n_in, int sr_in, int sr_out,
         return out;
     }
 
-    double       ratio   = (double) sr_out / (double) sr_in;
-    // The output's length in double first: one past an int is refused, not
-    // cast (cadenza-audio #1266) -- the readers refuse an implausible rate
-    // before this, and a long enough source at a plausible one still gets here.
-    const double n_out_d = (double) n_in * ratio;
-    if (n_out_d >= (double) INT_MAX) {
-        fprintf(stderr, "[Audio-Resample] Refused: %d samples at %d Hz is past an int's samples at %d Hz\n", n_in,
-                sr_in, sr_out);
+    double ratio = (double) sr_out / (double) sr_in;
+    // The output's length bounded in 64 bits first: past AUDIO_MAX_SAMPLES is
+    // refused, not cast (cadenza-audio #1266) -- the readers bound it before
+    // this, and any other caller gets here.
+    if (audio_resampled_samples(n_in, sr_in, sr_out) > AUDIO_MAX_SAMPLES) {
+        fprintf(stderr, "[Audio-Resample] Refused: %d samples at %d Hz is past %d samples at %d Hz\n", n_in, sr_in,
+                AUDIO_MAX_SAMPLES, sr_out);
         *n_out = 0;
         return NULL;
     }
-    *n_out = (int) n_out_d;
+    *n_out = (int) ((double) n_in * ratio);
     if (*n_out <= 0) {
         *n_out = 0;
         return NULL;

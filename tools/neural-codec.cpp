@@ -179,6 +179,7 @@ static float * read_latent_quant(FILE * f, long fsize, const char * path, int qu
 
     uint32_t t;
     if (fread(&t, 4, 1, f) != 1) {
+        fprintf(stderr, "[Latent] %s: %s header cut short\n", path, kind);
         return NULL;
     }
     if (latent_refused(path, latent_frames_fault(t))) {
@@ -200,6 +201,7 @@ static float * read_latent_quant(FILE * f, long fsize, const char * path, int qu
     for (int i = 0; i < (int) t; i++) {
         ggml_fp16_t scale_f16;
         if (fread(&scale_f16, 2, 1, f) != 1 || fread(q, 1, (size_t) frame - 2, f) != (size_t) frame - 2) {
+            fprintf(stderr, "[Latent] %s: %s frame %d of %u cut short\n", path, kind, i, t);
             free(data);
             return NULL;
         }

@@ -10,6 +10,7 @@
 // ragged.vae      an f32 latent of a frame and a part frame
 // one-frame.vae   an f32 latent of one silent frame (25 ms of nothing)
 // rate-1hz.wav    a WAV whose header claims 1 Hz
+// rate-4khz.wav   a WAV of 400 samples at 4 kHz: a low rate that resamples
 // one-second.wav  a WAV of 1 s of a 440 Hz tone at 48 kHz
 
 #include "audio-frames.h"
@@ -80,7 +81,7 @@ int main(int argc, char ** argv) {
     const bool ok = save("past-most.nac8", past_most) && save("empty.nac4", empty_q4) && save("empty.vae", "") &&
                     save("ragged.vae", std::string((size_t) ACE_LATENT_FRAME_BYTES + 4, '\0')) &&
                     save("one-frame.vae", std::string((size_t) ACE_LATENT_FRAME_BYTES, '\0')) &&
-                    save("rate-1hz.wav", wav(1, 100, 0.0f)) &&
+                    save("rate-1hz.wav", wav(1, 100, 0.0f)) && save("rate-4khz.wav", wav(4000, 400, 440.0f)) &&
                     save("one-second.wav", wav(ACE_SAMPLE_RATE, ACE_SAMPLE_RATE, 440.0f));
     return ok ? 0 : 1;
 }
