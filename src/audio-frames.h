@@ -181,6 +181,15 @@ static_assert(ACE_MAX_DECODE_FRAMES == 559238 && ACE_MAX_DECODE_FRAMES > ACE_MAX
                       ACE_MAX_AUDIO_SAMPLES,
               "a decode's most frames, in samples with its slack, is a planar buffer's most");
 
+// The samples of a source whose whole frames a decode holds, counted as a
+// run counts a source's (ACE_MAX_RUN_SOURCE_SAMPLES): neural-codec's
+// --encode bound, so what it writes it decodes again (cadenza-audio #1266).
+inline constexpr long long ACE_MAX_DECODE_SOURCE_SAMPLES = (long long) (ACE_MAX_DECODE_FRAMES + 1) * ACE_LATENT_HOP - 1;
+
+static_assert(samples_frames_floor((int) ACE_MAX_DECODE_SOURCE_SAMPLES) == ACE_MAX_DECODE_FRAMES &&
+                  ACE_MAX_DECODE_SOURCE_SAMPLES <= ACE_MAX_AUDIO_SAMPLES,
+              "a decode's most frames of source, an int's to index");
+
 // A latent frame's channels, and its bytes as f32: the layout every latent
 // file and payload carries, [T, 64] time-major (cadenza-audio #1266).
 inline constexpr int ACE_LATENT_CHANNELS    = 64;

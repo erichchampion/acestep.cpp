@@ -217,6 +217,11 @@ if(ACESTEP_TEST_MODELS)
     add_tool_refusal(test-codec-encode-write-fails "failed to write"
                      $<TARGET_FILE:neural-codec> --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf --encode
                      -i ${ACESTEP_TOOL_INPUTS}/one-second.wav -o /nonexistent/one-second.vae)
+    # ace-synth reads its source to what a run takes whole, before any model
+    # loads, and before the resample: 601 s at 1 kHz is refused unresampled.
+    add_tool_refusal(test-synth-source-past-run "past the 28801919 this read takes"
+                     $<TARGET_FILE:ace-synth> --request ${CMAKE_CURRENT_SOURCE_DIR}/request-cover.json
+                     --src-audio ${ACESTEP_TOOL_INPUTS}/long-1khz.wav --models ${ACESTEP_TEST_MODELS})
     add_tool_refusal(test-quantize-write-fails "Failed to write metadata"
                      $<TARGET_FILE:quantize> ${ACESTEP_TEST_MODELS}/vae-BF16.gguf /nonexistent/vae-Q8_0.gguf Q8_0)
     add_tool_refusal(test-codec-decode-write-fails "failed to write"

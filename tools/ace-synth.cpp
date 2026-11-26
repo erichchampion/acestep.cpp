@@ -232,26 +232,17 @@ static int synth_main(int argc, char ** argv) {
     params.vae_overlap       = vae_overlap;
     params.dump_dir          = dump_dir;
 
-    // Local store with the default STRICT policy: at most one GPU module
-    // resident at a time for this one-shot CLI. No module sharing across runs,
-    // so EVICT_STRICT frees the DiT before the VAE loads, and so on.
-    ModelStore * store = store_create(EVICT_STRICT);
-    AceSynth *   ctx   = ace_synth_load(store, &params);
-    if (!ctx) {
-        store_free(store);
-        return 1;
-    }
-
-    // Read source audio (cover/lego mode).
+    // Read source audio (cover/lego mode) and reference audio (timbre
+    // conditioning) before any model loads, so a source that can't be read --
+    // or one past what a run takes whole, which the engine would refuse
+    // after its load -- costs no load (cadenza-audio #1266).
     float * src_interleaved = NULL;
     int     src_len         = 0;
     if (src_audio_path) {
         int     T_audio = 0;
-        float * planar  = audio_read_48k(src_audio_path, &T_audio);
+        float * planar  = audio_read_48k(src_audio_path, &T_audio, ACE_MAX_RUN_SOURCE_SAMPLES);
         if (!planar) {
             fprintf(stderr, "[Ace-Synth] FATAL: cannot read --src-audio %s\n", src_audio_path);
-            ace_synth_free(ctx);
-            store_free(store);
             return 1;
         }
         fprintf(stderr, "[Ace-Synth] Source audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
@@ -261,7 +252,6 @@ static int synth_main(int argc, char ** argv) {
         src_len = T_audio;
     }
 
-    // Read reference audio (timbre conditioning)
     float * ref_interleaved = NULL;
     int     ref_len         = 0;
     if (ref_audio_path) {
@@ -270,14 +260,24 @@ static int synth_main(int argc, char ** argv) {
         if (!planar) {
             fprintf(stderr, "[Ace-Synth] FATAL: cannot read --ref-audio %s\n", ref_audio_path);
             free(src_interleaved);
-            ace_synth_free(ctx);
-            store_free(store);
             return 1;
         }
         fprintf(stderr, "[Ace-Synth] Reference audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
         ref_interleaved = audio_planar_to_interleaved(planar, T_audio);
         free(planar);
         ref_len = T_audio;
+    }
+
+    // Local store with the default STRICT policy: at most one GPU module
+    // resident at a time for this one-shot CLI. No module sharing across runs,
+    // so EVICT_STRICT frees the DiT before the VAE loads, and so on.
+    ModelStore * store = store_create(EVICT_STRICT);
+    AceSynth *   ctx   = ace_synth_load(store, &params);
+    if (!ctx) {
+        free(src_interleaved);
+        free(ref_interleaved);
+        store_free(store);
+        return 1;
     }
 
     // Generate every request that runs in one DiT batch: each expanded to its

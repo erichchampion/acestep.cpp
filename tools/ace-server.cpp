@@ -581,30 +581,38 @@ static int read_latent_part(httplib::Response &  res,
 // most, the engine's own count), and a reference (the engine crops it,
 // #1147) or an understand source (windowed, #1149) only to what an int
 // indexes.
-enum class AudioPartBound { decode, run_source };
+enum class AudioPartBound { indexable, run_source };
 
 // An audio part decoded to 48 kHz interleaved stereo, its samples in
 // *T_audio, or NULL with nothing left to free -- the planar decode freed on
 // every path (cadenza-audio #1266). The decode bounds it, before any resample
 // (audio_io_to_48k), to `bound`'s samples. When `res` is given, a refusal is
 // answered there: a 413 for a source too long, a 400 for one that would not
-// decode.
+// decode. Why, when it is NULL, in `fault_out` when given (none for a failed
+// interleave, which is memory).
 static float * read_audio_part(httplib::Response * res,
                                const std::string & content,
                                int *               T_audio,
-                               AudioPartBound      bound) {
+                               AudioPartBound      bound,
+                               AceAudioFault *     fault_out = nullptr) {
+    static_assert(ACE_MAX_RUN_SOURCE_SAMPLES / ACE_SAMPLE_RATE / 60 == 10 &&
+                      (long long) ACE_MAX_AUDIO_SAMPLES * 10 / ACE_SAMPLE_RATE / 3600 == 62,
+                  "the 413s below say the most: 10 min, 6.2 h");
     const long long most =
         bound == AudioPartBound::run_source ? ACE_MAX_RUN_SOURCE_SAMPLES : (long long) ACE_MAX_AUDIO_SAMPLES;
     AceAudioFault fault  = AceAudioFault::none;
     float *       planar = audio_read_48k_buf((const uint8_t *) content.data(), content.size(), T_audio, most, &fault);
     float *       interleaved = planar ? audio_planar_to_interleaved(planar, *T_audio) : NULL;
     free(planar);
+    if (fault_out) {
+        *fault_out = fault;
+    }
     if (!interleaved && res) {
         const bool too_long = fault == AceAudioFault::too_long;
         json_error(*res, too_long ? 413 : 400,
-                   !too_long                       ? "Failed to decode audio" :
-                   bound == AudioPartBound::decode ? "audio exceeds max duration (6.2 h)" :
-                                                     "audio exceeds max duration (10 min)");
+                   !too_long                          ? "Failed to decode audio" :
+                   bound == AudioPartBound::indexable ? "audio exceeds max duration (6.2 h)" :
+                                                        "audio exceeds max duration (10 min)");
     }
     return interleaved;
 }
@@ -1064,14 +1072,19 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                     latent_frames_sec(T));
         }
 
-        if (req.form.has_file("ref_audio")) {
+        // ref_latents wins over ref_audio, as src_latents over audio: the
+        // audio is then unused, and not decoded (cadenza-audio #1266).
+        if (ref_T_latent == 0 && req.form.has_file("ref_audio")) {
             auto file = req.form.get_file("ref_audio");
             if (!file.content.empty()) {
-                int T_audio     = 0;
-                ref_interleaved = read_audio_part(nullptr, file.content, &T_audio, AudioPartBound::decode);
+                int           T_audio = 0;
+                AceAudioFault fault   = AceAudioFault::none;
+                ref_interleaved = read_audio_part(nullptr, file.content, &T_audio, AudioPartBound::indexable, &fault);
                 if (ref_interleaved) {
                     fprintf(stderr, "[Server] Reference audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
                     ref_len = T_audio;
+                } else if (fault == AceAudioFault::too_long) {
+                    fprintf(stderr, "[Server] WARNING: ref_audio is too long to read (6.2 h most), ignoring\n");
                 } else {
                     fprintf(stderr, "[Server] WARNING: failed to decode ref_audio, ignoring\n");
                 }
@@ -1319,7 +1332,9 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
 
     float * src_interleaved = nullptr;
     int     src_len         = 0;
-    if (req.form.has_file("audio")) {
+    // src_latents wins over audio, as for /synth: the audio is then unused,
+    // and not decoded (cadenza-audio #1266).
+    if (src_T_latent == 0 && req.form.has_file("audio")) {
         auto file = req.form.get_file("audio");
         if (file.content.empty()) {
             json_error(res, 400, "Multipart: empty 'audio' part");
@@ -1328,7 +1343,7 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
         // decode directly from multipart buffer (WAV/MP3 auto-detected), to
         // the interleaved [L0,R0,L1,R1,...] the pipeline takes
         int T_audio     = 0;
-        src_interleaved = read_audio_part(&res, file.content, &T_audio, AudioPartBound::decode);
+        src_interleaved = read_audio_part(&res, file.content, &T_audio, AudioPartBound::indexable);
         if (!src_interleaved) {
             return;
         }
@@ -1501,15 +1516,18 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
         job->status.store(JobStatus::FAILED);
         return;
     }
-    // The latent held to a run's most, so /synth takes what /vae made. The
-    // source is bounded by its whole frames, which the VAE was not seen to
-    // exceed -- 1 s and a sample, or a part frame, encoded to 25 frames,
-    // untiled and tiled, its tiles' rounded trims at times one fewer (#1309)
-    // -- so this binds only if that changes (cadenza-audio #1266).
+    // A latent past a run's most fails the job, so /vae never hands back one
+    // its own decode and /synth refuse. The source is bounded by its whole
+    // frames, which the VAE was not seen to exceed -- 1 s and a sample, or a
+    // part frame, encoded to 25 frames, untiled and tiled, its tiles' rounded
+    // trims at times one fewer (#1309) -- so this binds only if that changes
+    // (cadenza-audio #1266).
     if (frames_past_run_most(T_latent)) {
-        fprintf(stderr, "[Server] encode: %d latent frames held to a run's most, %d\n", T_latent,
-                ACE_MAX_LATENT_FRAMES);
-        T_latent = ACE_MAX_LATENT_FRAMES;
+        job->error = std::string("the encode made ") + std::to_string(T_latent) + " frames, " +
+                     latent_fault_words(AceLatentFault::past_run_most);
+        fprintf(stderr, "[Server] encode: %s\n", job->error.c_str());
+        job->status.store(JobStatus::FAILED);
+        return;
     }
     fprintf(stderr, "[Server] encode: %d audio samples (%.2fs) -> %d latent frames, %.0fms\n", src_len,
             samples_sec(src_len), T_latent, t_enc.ms());

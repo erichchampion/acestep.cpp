@@ -418,9 +418,9 @@ static int codec_main(int argc, char ** argv) {
     // ENCODE
     if (mode == 0) {
         int     T_audio = 0;
-        // Read to what decodes again: its whole frames a decode's most
-        // (cadenza-audio #1266).
-        float * planar  = audio_read_48k(input_path, &T_audio, (long long) ACE_MAX_DECODE_FRAMES * ACE_LATENT_HOP);
+        // Read to what decodes again: its whole frames a decode's most, by
+        // the run rule's count (cadenza-audio #1266).
+        float * planar  = audio_read_48k(input_path, &T_audio, ACE_MAX_DECODE_SOURCE_SAMPLES);
         if (!planar) {
             return 1;
         }

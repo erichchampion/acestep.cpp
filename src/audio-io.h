@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -503,13 +504,39 @@ static float wav_sanitize(float x) {
     return std::isfinite(x) ? x : 0.0f;
 }
 
+// The stereo channels every WAV writer here writes, and the bytes of its
+// classic RIFF header, of which the RIFF size counts all but the first 8.
+inline constexpr int    WAV_CHANNELS     = 2;
+inline constexpr size_t WAV_HEADER_BYTES = 44;
+
+// A stereo WAV's sample data in bytes, in size_t: an int's T * 2 * 4
+// overflows past ~268M samples, inside the 6.2 h a decode admits
+// (cadenza-audio #1266).
+inline constexpr size_t wav_data_bytes(int T_audio, int bits) {
+    return (size_t) (T_audio > 0 ? T_audio : 0) * WAV_CHANNELS * (size_t) (bits / 8);
+}
+
+// Whether a classic RIFF can say this many samples: its RIFF size, 36 bytes
+// and the data, a uint32. Past that the header would wrap, and the file would
+// claim a fraction of itself (cadenza-audio #1266).
+inline constexpr bool wav_fits(int T_audio, int bits) {
+    return WAV_HEADER_BYTES - 8 + wav_data_bytes(T_audio, bits) <= UINT32_MAX;
+}
+
+static_assert(wav_fits(ACE_MAX_LATENT_FRAMES * ACE_LATENT_HOP, 32) &&
+                  wav_fits(ACE_MAX_DECODE_FRAMES * ACE_LATENT_HOP, 16) &&
+                  !wav_fits(ACE_MAX_DECODE_FRAMES * ACE_LATENT_HOP, 24) &&
+                  !wav_fits(ACE_MAX_DECODE_FRAMES * ACE_LATENT_HOP, 32) &&
+                  wav_data_bytes(ACE_MAX_DECODE_FRAMES * ACE_LATENT_HOP, 16) > (size_t) INT32_MAX,
+              "a run's most writes as any WAV; a decode's most as 16-bit only, past an int's bytes even so");
+
 // Classic RIFF header: fmt_tag 1 (PCM int) or 3 (IEEE float), 16-byte fmt chunk
 static void wav_write_header_basic(char *& p, int T_audio, int sr, int n_channels, int bits, uint16_t fmt_tag) {
     uint32_t bytes_per_sample = (uint32_t) bits / 8;
     uint32_t byte_rate        = (uint32_t) sr * (uint32_t) n_channels * bytes_per_sample;
     uint16_t block_align      = (uint16_t) (n_channels * (int) bytes_per_sample);
-    uint32_t data_size        = (uint32_t) T_audio * (uint32_t) n_channels * bytes_per_sample;
-    uint32_t file_size        = 36 + data_size;
+    uint32_t data_size        = (uint32_t) wav_data_bytes(T_audio, bits);  // wav_fits: no wrap
+    uint32_t file_size        = (uint32_t) (WAV_HEADER_BYTES - 8) + data_size;
 
     memcpy(p, "RIFF", 4);
     p += 4;
@@ -536,11 +563,11 @@ static void wav_write_header_basic(char *& p, int T_audio, int sr, int n_channel
 // 44-byte classic RIFF header (fmt_tag=1) + interleaved int16 samples.
 // Clamps to [-1, +1], coerces NaN/Inf to zero.
 static std::string audio_encode_wav_s16(const float * audio, int T_audio, int sr) {
-    int n_channels = 2;
-    int data_size  = T_audio * n_channels * 2;
+    const int    n_channels = WAV_CHANNELS;
+    const size_t data_size  = wav_data_bytes(T_audio, 16);
 
     std::string out;
-    out.resize(44 + (size_t) data_size);
+    out.resize(WAV_HEADER_BYTES + data_size);
     char * p = &out[0];
 
     wav_write_header_basic(p, T_audio, sr, n_channels, 16, 1);
@@ -562,11 +589,11 @@ static std::string audio_encode_wav_s16(const float * audio, int T_audio, int sr
 // 44-byte classic RIFF header (fmt_tag=1) + interleaved int24 samples.
 // Clamps to [-1, +1], coerces NaN/Inf to zero.
 static std::string audio_encode_wav_s24(const float * audio, int T_audio, int sr) {
-    int n_channels = 2;
-    int data_size  = T_audio * n_channels * 3;
+    const int    n_channels = WAV_CHANNELS;
+    const size_t data_size  = wav_data_bytes(T_audio, 24);
 
     std::string out;
-    out.resize(44 + (size_t) data_size);
+    out.resize(WAV_HEADER_BYTES + data_size);
     char * p = &out[0];
 
     wav_write_header_basic(p, T_audio, sr, n_channels, 24, 1);
@@ -588,11 +615,11 @@ static std::string audio_encode_wav_s24(const float * audio, int T_audio, int sr
 // 44-byte classic RIFF header (fmt_tag=3) + interleaved float32 samples.
 // Coerces NaN/Inf to zero. No clamping: output may exceed [-1, +1].
 static std::string audio_encode_wav_f32(const float * audio, int T_audio, int sr) {
-    int n_channels = 2;
-    int data_size  = T_audio * n_channels * 4;
+    const int    n_channels = WAV_CHANNELS;
+    const size_t data_size  = wav_data_bytes(T_audio, 32);
 
     std::string out;
-    out.resize(44 + (size_t) data_size);
+    out.resize(WAV_HEADER_BYTES + data_size);
     char * p = &out[0];
 
     wav_write_header_basic(p, T_audio, sr, n_channels, 32, 3);
@@ -617,8 +644,15 @@ static std::string audio_encode_wav_f32(const float * audio, int T_audio, int sr
 // audio is planar [L0..LN, R0..RN], pre-normalized by caller.
 // Does NOT normalize: caller is responsible (audio_write does it).
 // NaN and Inf are coerced to zero. S16/S24 clamp to [-1, +1].
-// Returns empty string on failure.
+// Returns empty string on failure: audio a classic RIFF can't size -- past
+// 4 GB of data in any format -- is refused, said why (cadenza-audio #1266).
 static std::string audio_encode_wav(const float * audio, int T_audio, int sr, WavFormat fmt = WAV_S16) {
+    const int bits = fmt == WAV_S24 ? 24 : (fmt == WAV_F32 ? 32 : 16);
+    if (!wav_fits(T_audio, bits)) {
+        fprintf(stderr, "[WAV] Refused: %d samples of %d-bit stereo is past the 4 GB a RIFF header can say\n", T_audio,
+                bits);
+        return "";
+    }
     switch (fmt) {
         case WAV_S16:
             return audio_encode_wav_s16(audio, T_audio, sr);
