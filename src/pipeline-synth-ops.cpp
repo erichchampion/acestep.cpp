@@ -160,7 +160,7 @@ int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s,
         }
         ModelHandle vae_enc_guard(ctx->store, vae_enc);
 
-        int max_T_lat = (T_audio / ACE_LATENT_HOP) + 64;
+        int max_T_lat = (T_audio / ACE_LATENT_HOP) + ACE_VAE_ENC_SLACK_FRAMES;
         s.cover_latents.resize(max_T_lat * 64);
 
         s.T_cover = vae_enc_encode_tiled(vae_enc, src.audio, T_audio, s.cover_latents.data(), max_T_lat,
@@ -465,7 +465,7 @@ int ops_encode_timbre(const AceSynth * ctx, const SynthInput & ref, SynthState &
             fprintf(stderr, "[Encode-Timbre] ref_audio: %.1fs, %s to %.1fs\n", samples_sec(ref.len),
                     ref.len < len ? "repeated" : "cropped", samples_sec(len));
         }
-        int                max_T_ref = (len / ACE_LATENT_HOP) + 64;
+        int                max_T_ref = (len / ACE_LATENT_HOP) + ACE_VAE_ENC_SLACK_FRAMES;
         std::vector<float> ref_lat_buf(max_T_ref * 64);
         int T_ref = vae_enc_encode_tiled(ref_vae, audio, len, ref_lat_buf.data(), max_T_ref, ctx->params.vae_chunk,
                                          ctx->params.vae_overlap, progress);

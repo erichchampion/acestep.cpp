@@ -141,21 +141,16 @@ static std::string encode_latent_q4(const float * data, int T_latent) {
 // Write a latent of at least one frame as f32 (quant 0, no header), Q8 or
 // Q4: whether all of it reached the file (cadenza-audio #1266).
 static bool write_latent(const char * path, const float * data, int T_latent, int quant) {
-    std::string  bytes;
-    const char * kind = "f32";
-    if (quant == 8) {
-        bytes = encode_latent_q8(data, T_latent);
-        kind  = "Q8";
-    } else if (quant == 4) {
-        bytes = encode_latent_q4(data, T_latent);
-        kind  = "Q4";
-    } else {
-        append_bytes(bytes, data, (size_t) T_latent * ACE_LATENT_FRAME_BYTES);
-    }
-    if (!audio_io_save_file(path, bytes.data(), bytes.size())) {
+    // f32 is the latent's own bytes, written as they are; Q8 and Q4 build theirs.
+    const std::string quantized = quant == 8 ? encode_latent_q8(data, T_latent) :
+                                  quant == 4 ? encode_latent_q4(data, T_latent) :
+                                               std::string();
+    const void *      bytes     = quant ? (const void *) quantized.data() : (const void *) data;
+    const size_t      size      = quant ? quantized.size() : (size_t) T_latent * ACE_LATENT_FRAME_BYTES;
+    if (!audio_io_save_file(path, bytes, size)) {
         return false;
     }
-    latent_log("Wrote", path, kind, T_latent, bytes.size());
+    latent_log("Wrote", path, quant == 8 ? "Q8" : quant == 4 ? "Q4" : "f32", T_latent, size);
     return true;
 }
 
@@ -182,7 +177,7 @@ static float * read_latent_quant(FILE * f, long fsize, const char * path, int qu
         fprintf(stderr, "[Latent] %s: %s header cut short\n", path, kind);
         return NULL;
     }
-    if (latent_refused(path, latent_frames_fault(t))) {
+    if (latent_refused(path, latent_frames_fault(t, AceLatentBound::decode))) {
         return NULL;
     }
 
@@ -234,9 +229,11 @@ static float * read_latent_quant(FILE * f, long fsize, const char * path, int qu
 }
 
 // Read latent, auto-detect format (NAC8 -> Q8, NAC4 -> Q4, else f32).
-// Returns [T_latent, 64] f32 (dequantized if quantized), 1 to a run's most
-// frames -- the bound ace-server's latent payloads have (cadenza-audio
-// #1266) -- or NULL, said why. Caller frees.
+// Returns [T_latent, 64] f32 (dequantized if quantized), 1 to a decode's most
+// frames (ACE_MAX_DECODE_FRAMES: what T * ACE_LATENT_HOP and the audio
+// buffer's int indexing hold) by the rule ace-server's latent payloads share
+// -- not a run's most, as --encode writes longer latents than a run takes
+// (cadenza-audio #1266) -- or NULL, said why. Caller frees.
 static float * read_latent(const char * path, int * T_latent) {
     FILE * f = fopen(path, "rb");
     if (!f) {
@@ -270,7 +267,7 @@ static float * read_latent(const char * path, int * T_latent) {
 
     // f32 format (no header, rewind)
     fseek(f, 0, SEEK_SET);
-    const AceLatentFrames frames = latent_payload_frames((unsigned long long) fsize);
+    const AceLatentFrames frames = latent_payload_frames((unsigned long long) fsize, AceLatentBound::decode);
     if (latent_refused(path, frames.fault)) {
         fclose(f);
         return NULL;
@@ -421,7 +418,9 @@ static int codec_main(int argc, char ** argv) {
     // ENCODE
     if (mode == 0) {
         int     T_audio = 0;
-        float * planar  = audio_read_48k(input_path, &T_audio);
+        // Read to what decodes again: its whole frames a decode's most
+        // (cadenza-audio #1266).
+        float * planar  = audio_read_48k(input_path, &T_audio, (long long) ACE_MAX_DECODE_FRAMES * ACE_LATENT_HOP);
         if (!planar) {
             return 1;
         }
@@ -432,7 +431,7 @@ static int codec_main(int argc, char ** argv) {
         VAEEncoder enc = {};
         vae_enc_load(&enc, vae_path);
 
-        int                max_T = (T_audio / ACE_LATENT_HOP) + 64;
+        int                max_T = (T_audio / ACE_LATENT_HOP) + ACE_VAE_ENC_SLACK_FRAMES;
         std::vector<float> latent((size_t) max_T * ACE_LATENT_CHANNELS);
 
         fprintf(stderr, "\n[VAE] Encoding %d samples (%.2fs)...\n", T_audio, samples_sec(T_audio));
@@ -450,7 +449,7 @@ static int codec_main(int argc, char ** argv) {
             return 1;
         }
         if (frames_past_run_most(T_latent)) {
-            fprintf(stderr, "[VAE] WARNING: %s; --decode and ace-server refuse it\n",
+            fprintf(stderr, "[VAE] WARNING: %s; --decode takes it, ace-server's /synth refuses it as a source\n",
                     latent_fault_words(AceLatentFault::past_run_most));
         }
 
@@ -474,7 +473,7 @@ static int codec_main(int argc, char ** argv) {
         VAEGGML dec = {};
         vae_ggml_load(&dec, vae_path);
 
-        int                max_T = T_latent * ACE_LATENT_HOP + 4096;
+        int                max_T = T_latent * ACE_LATENT_HOP + ACE_VAE_DEC_SLACK_SAMPLES;
         std::vector<float> audio((size_t) 2 * max_T, 0.0f);
 
         fprintf(stderr, "\n[VAE] Decoding %d latent frames...\n", T_latent);

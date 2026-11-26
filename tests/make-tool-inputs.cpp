@@ -5,6 +5,8 @@
 //   ./make-tool-inputs <dir>
 //
 // past-most.nac8  a Q8 header claiming 1.2M frames, and no frame after it
+// past-run.nac8   a Q8 header claiming 20000 frames -- past a run's most, in
+//                 a decode's -- and no frame after it
 // empty.nac4      a Q4 header of no frame
 // empty.vae       an f32 latent of no byte
 // ragged.vae      an f32 latent of a frame and a part frame
@@ -75,10 +77,13 @@ int main(int argc, char ** argv) {
 
     std::string past_most = "NAC8";
     put_u32(past_most, 1200000);
+    std::string past_run = "NAC8";
+    put_u32(past_run, 20000);
     std::string empty_q4 = "NAC4";
     put_u32(empty_q4, 0);
 
-    const bool ok = save("past-most.nac8", past_most) && save("empty.nac4", empty_q4) && save("empty.vae", "") &&
+    const bool ok = save("past-most.nac8", past_most) && save("past-run.nac8", past_run) &&
+                    save("empty.nac4", empty_q4) && save("empty.vae", "") &&
                     save("ragged.vae", std::string((size_t) ACE_LATENT_FRAME_BYTES + 4, '\0')) &&
                     save("one-frame.vae", std::string((size_t) ACE_LATENT_FRAME_BYTES, '\0')) &&
                     save("rate-1hz.wav", wav(1, 100, 0.0f)) && save("rate-4khz.wav", wav(4000, 400, 440.0f)) &&

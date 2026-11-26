@@ -232,8 +232,7 @@ static float * audio_read_buf(const uint8_t * data, size_t size, int * T_out, in
 // converters record a WAV at. The floor only refuses a header no recording
 // has -- a WAV that claims 1 Hz -- as low rates that resample fine (4 kHz,
 // 5512 Hz) still do; what overflows is the resampled length, which
-// audio_io_to_48k bounds by AUDIO_MAX_SAMPLES before any resample
-// (cadenza-audio #1266).
+// audio_io_to_48k bounds before any resample (cadenza-audio #1266).
 inline constexpr int ACE_SOURCE_RATE_MIN = 1000;
 inline constexpr int ACE_SOURCE_RATE_MAX = 768000;
 
@@ -246,27 +245,44 @@ static_assert(source_rate_plausible(ACE_SAMPLE_RATE) && source_rate_plausible(44
                   !source_rate_plausible(ACE_SOURCE_RATE_MAX + 1),
               "the rates a source is read at");
 
+// Why a read to 48 kHz gave no audio: it would not decode (or its resample
+// failed), it held no sample, its rate is implausible, or it is longer at
+// 48 kHz than the read takes -- the last a 413 on the wire, the rest a 400
+// (cadenza-audio #1266).
+enum class AceAudioFault { none, undecodable, empty, rate, too_long };
+
 // A decoded source at 48000 Hz: `raw`, `T` samples at `sr`, taken and freed
 // or handed back. A source of no sample, one at an implausible rate, and one
-// whose samples at 48 kHz are past AUDIO_MAX_SAMPLES are each NULL, said why
-// (cadenza-audio #1266) -- so no caller holds a zero-length buffer it must
-// remember to free, nor one an int can't index.
-static float * audio_io_to_48k(float * raw, int T, int sr, int * T_out) {
-    *T_out = 0;
+// whose samples at 48 kHz are past `most` -- by default ACE_MAX_AUDIO_SAMPLES,
+// which an int indexes; a run's bound for a source it takes whole -- are each
+// NULL, said why in the log and in `fault` (cadenza-audio #1266), before any
+// resample. So no caller holds a zero-length buffer it must remember to free,
+// one an int can't index, or a resample it then refuses.
+static float * audio_io_to_48k(float *         raw,
+                               int             T,
+                               int             sr,
+                               int *           T_out,
+                               long long       most  = ACE_MAX_AUDIO_SAMPLES,
+                               AceAudioFault * fault = nullptr) {
+    *T_out              = 0;
+    AceAudioFault   why = AceAudioFault::none;
+    const long long T48 = audio_resampled_samples(T, sr, ACE_SAMPLE_RATE);  // 0 for no sample or rate
     if (T <= 0) {
+        why = AceAudioFault::empty;
         fprintf(stderr, "[Audio] No audio: the source holds no sample\n");
-        free(raw);
-        return NULL;
-    }
-    if (!source_rate_plausible(sr)) {
+    } else if (!source_rate_plausible(sr)) {
+        why = AceAudioFault::rate;
         fprintf(stderr, "[Audio] Refused: a sample rate of %d Hz (a source is read at %d to %d Hz)\n", sr,
                 ACE_SOURCE_RATE_MIN, ACE_SOURCE_RATE_MAX);
-        free(raw);
-        return NULL;
+    } else if (T48 > most) {
+        why = AceAudioFault::too_long;
+        fprintf(stderr, "[Audio] Refused: %d samples at %d Hz is %lld at %d Hz, past the %lld this read takes\n", T, sr,
+                T48, ACE_SAMPLE_RATE, most);
     }
-    if (audio_resampled_samples(T, sr, ACE_SAMPLE_RATE) > AUDIO_MAX_SAMPLES) {
-        fprintf(stderr, "[Audio] Refused: %d samples at %d Hz is past %d samples at %d Hz\n", T, sr, AUDIO_MAX_SAMPLES,
-                ACE_SAMPLE_RATE);
+    if (fault) {
+        *fault = why;
+    }
+    if (why != AceAudioFault::none) {
         free(raw);
         return NULL;
     }
@@ -283,6 +299,9 @@ static float * audio_io_to_48k(float * raw, int T, int sr, int * T_out) {
 
     if (!resampled) {
         fprintf(stderr, "[Audio-Resample] Resample failed\n");
+        if (fault) {
+            *fault = AceAudioFault::undecodable;
+        }
         return NULL;
     }
 
@@ -293,16 +312,23 @@ static float * audio_io_to_48k(float * raw, int T, int sr, int * T_out) {
 }
 
 // Decode WAV or MP3 from memory buffer and resample to 48000 Hz stereo.
-// Returns planar stereo float [L:T][R:T], at least one sample, or NULL
-// (audio_io_to_48k). Caller frees.
-static float * audio_read_48k_buf(const uint8_t * data, size_t size, int * T_out) {
+// Returns planar stereo float [L:T][R:T], at least one sample and at most
+// `most` (audio_io_to_48k), or NULL, why in `fault`. Caller frees.
+static float * audio_read_48k_buf(const uint8_t * data,
+                                  size_t          size,
+                                  int *           T_out,
+                                  long long       most  = ACE_MAX_AUDIO_SAMPLES,
+                                  AceAudioFault * fault = nullptr) {
     int     T = 0, sr = 0;
     float * raw = audio_read_buf(data, size, &T, &sr);
     if (!raw) {
         *T_out = 0;
+        if (fault) {
+            *fault = AceAudioFault::undecodable;
+        }
         return NULL;
     }
-    return audio_io_to_48k(raw, T, sr, T_out);
+    return audio_io_to_48k(raw, T, sr, T_out, most, fault);
 }
 
 // File-based wrappers: load file into memory, delegate to buffer functions.
@@ -340,16 +366,16 @@ static float * audio_read(const char * path, int * T_out, int * sr_out) {
 }
 
 // Read WAV or MP3 and resample to 48000 Hz stereo.
-// Returns planar stereo float [L: T][R: T], at least one sample, or NULL
-// (audio_io_to_48k). Caller frees.
-static float * audio_read_48k(const char * path, int * T_out) {
+// Returns planar stereo float [L: T][R: T], at least one sample and at most
+// `most` (audio_io_to_48k), or NULL. Caller frees.
+static float * audio_read_48k(const char * path, int * T_out, long long most = ACE_MAX_AUDIO_SAMPLES) {
     int     T = 0, sr = 0;
     float * raw = audio_read(path, &T, &sr);
     if (!raw) {
         *T_out = 0;
         return NULL;
     }
-    return audio_io_to_48k(raw, T, sr, T_out);
+    return audio_io_to_48k(raw, T, sr, T_out, most);
 }
 
 // maximize perceived loudness via percentile normalization.

@@ -178,9 +178,13 @@ add_tool_refusal(test-synth-chunk-zero "--vae-chunk must be 1 to 15000"
 add_tool_refusal(test-understand-chunk-zero "--vae-chunk must be 1 to 15000"
                  $<TARGET_FILE:ace-understand> --models /nonexistent --src-audio /nonexistent --vae-chunk 0)
 # neural-codec's latent files, bounded as ace-server's payloads are: a header
-# claiming 1.2M frames, a file of no frame (Q4 and f32), a part frame.
-add_tool_refusal(test-codec-latent-past-most "more latent frames than a run holds"
+# claiming 1.2M frames, a file of no frame (Q4 and f32), a part frame. The
+# bound is a decode's (what its int math holds), not a run's: a header of
+# 20000 frames passes it, and is refused only for the frames it lacks.
+add_tool_refusal(test-codec-latent-past-most "more latent frames than a decode holds"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i ${ACESTEP_TOOL_INPUTS}/past-most.nac8)
+add_tool_refusal(test-codec-latent-past-run "Q8 size mismatch: expected 1320008"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i ${ACESTEP_TOOL_INPUTS}/past-run.nac8)
 add_tool_refusal(test-codec-latent-empty-q4 "no latent frame"
                  $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i ${ACESTEP_TOOL_INPUTS}/empty.nac4)
 add_tool_refusal(test-codec-latent-empty-f32 "no latent frame"
@@ -205,14 +209,16 @@ if(ACESTEP_TEST_MODELS)
     # runs the synth (cadenza-audio #1056): each fails, and is timed, alone.
     add_test(NAME test-model-store COMMAND test-model-store --models ${ACESTEP_TEST_MODELS} --scenarios store)
     add_test(NAME test-failed-encodes COMMAND test-model-store --models ${ACESTEP_TEST_MODELS} --scenarios encodes)
-    # neural-codec with the VAE (cadenza-audio #1266): a write that fails --
-    # to a folder that is not there -- fails the tool, encode and decode
-    # alike, rather than exiting 0. (An encode of no frame is refused too,
+    # neural-codec and quantize with the VAE (cadenza-audio #1266): a write
+    # that fails -- to a folder that is not there -- fails the tool, encode,
+    # decode and quantize alike, rather than exiting 0. (An encode of no frame is refused too,
     # but no input reaches one: the VAE rounds a source up, 100 samples to a
     # frame.)
     add_tool_refusal(test-codec-encode-write-fails "failed to write"
                      $<TARGET_FILE:neural-codec> --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf --encode
                      -i ${ACESTEP_TOOL_INPUTS}/one-second.wav -o /nonexistent/one-second.vae)
+    add_tool_refusal(test-quantize-write-fails "Failed to write metadata"
+                     $<TARGET_FILE:quantize> ${ACESTEP_TEST_MODELS}/vae-BF16.gguf /nonexistent/vae-Q8_0.gguf Q8_0)
     add_tool_refusal(test-codec-decode-write-fails "failed to write"
                      $<TARGET_FILE:neural-codec> --vae ${ACESTEP_TEST_MODELS}/vae-BF16.gguf --decode
                      -i ${ACESTEP_TOOL_INPUTS}/one-frame.vae -o /nonexistent/one-frame.wav)

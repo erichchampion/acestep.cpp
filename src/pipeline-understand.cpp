@@ -258,7 +258,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
         // this step: acquire, encode, release so the store can free it before
         // the tokenizer comes in (STRICT) or keep it resident (NEVER).
         Timer t_vae;
-        int   max_T_lat = (src_len / ACE_LATENT_HOP) + 64;
+        int   max_T_lat = (src_len / ACE_LATENT_HOP) + ACE_VAE_ENC_SLACK_FRAMES;
         latents.assign((size_t) max_T_lat * 64, 0.0f);
 
         VAEEncoder * vae_enc = store_require_vae_enc(ctx->store, ctx->vae_enc_key);

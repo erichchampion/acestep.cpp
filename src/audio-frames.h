@@ -150,22 +150,68 @@ static_assert(frame_index(1e12) == 1000000000 && frame_index(-1e12) == -10000000
                   frame_index(std::numeric_limits<double>::quiet_NaN()) == 0,
               "a frame count held to an int");
 
+// The most samples per channel a planar buffer holds: half an int's range, so
+// a stereo buffer's int indexing -- interleaved [t * 2], planar [T + t] --
+// never overflows (cadenza-audio #1266). 6.2 hours at 48 kHz.
+inline constexpr int ACE_MAX_AUDIO_SAMPLES = std::numeric_limits<int>::max() / 2;
+
+// The samples of a source a run takes whole: its whole frames at most a run's
+// most, and a part frame -- the floor the engine counts a source's frames by
+// (SynthInput::frames, cadenza-audio #1144).
+inline constexpr long long ACE_MAX_RUN_SOURCE_SAMPLES = (long long) (ACE_MAX_LATENT_FRAMES + 1) * ACE_LATENT_HOP - 1;
+
+static_assert(samples_frames_floor((int) ACE_MAX_RUN_SOURCE_SAMPLES) == ACE_MAX_LATENT_FRAMES &&
+                  samples_frames_floor((int) ACE_MAX_RUN_SOURCE_SAMPLES + 1) == ACE_MAX_LATENT_FRAMES + 1,
+              "a run's source at its most, and one sample past it");
+
+// The slack a VAE output buffer is sized with past its exact length: an
+// encode's latent buffer 64 frames (its tiles' rounded trims), a decode's
+// audio buffer 4096 samples. Every tool sizes by these (cadenza-audio #1266).
+inline constexpr int ACE_VAE_ENC_SLACK_FRAMES  = 64;
+inline constexpr int ACE_VAE_DEC_SLACK_SAMPLES = 4096;
+
+// The most frames a latent decodes in one buffer: its samples and the
+// decoder's slack at most ACE_MAX_AUDIO_SAMPLES, so T * ACE_LATENT_HOP and
+// the buffer's int indexing hold -- neural-codec's and /vae's bound, which a
+// latent past a run's most still meets (cadenza-audio #1266).
+inline constexpr int ACE_MAX_DECODE_FRAMES = (ACE_MAX_AUDIO_SAMPLES - ACE_VAE_DEC_SLACK_SAMPLES) / ACE_LATENT_HOP;
+
+static_assert(ACE_MAX_DECODE_FRAMES == 559238 && ACE_MAX_DECODE_FRAMES > ACE_MAX_LATENT_FRAMES &&
+                  (long long) ACE_MAX_DECODE_FRAMES * ACE_LATENT_HOP + ACE_VAE_DEC_SLACK_SAMPLES <=
+                      ACE_MAX_AUDIO_SAMPLES,
+              "a decode's most frames, in samples with its slack, is a planar buffer's most");
+
 // A latent frame's channels, and its bytes as f32: the layout every latent
 // file and payload carries, [T, 64] time-major (cadenza-audio #1266).
 inline constexpr int ACE_LATENT_CHANNELS    = 64;
 inline constexpr int ACE_LATENT_FRAME_BYTES = ACE_LATENT_CHANNELS * (int) sizeof(float);
 
+// The bound a latent is read to: a run's most, where a run takes it whole (a
+// /synth source), or a decode's most, where it is only decoded (neural-codec,
+// /vae, a reference, an understand source).
+enum class AceLatentBound { run, decode };
+
 // What is wrong with a latent read from a file or the wire: nothing, no frame
 // at all -- a zero-length decode, and a rate of inf or nan kbit/s -- bytes
-// that are no whole number of frames, or more frames than a run holds. One
-// rule for ace-server's payloads and neural-codec's files (cadenza-audio
-// #1266): a file's header that claims 1.2M frames is refused here, not after
+// that are no whole number of frames, or more frames than its bound. One rule
+// for ace-server's payloads and neural-codec's files (cadenza-audio #1266): a
+// file's header that claims 1.2M frames is refused here, not after
 // T * ACE_LATENT_HOP has overflowed an int.
-enum class AceLatentFault { none, empty, ragged, past_run_most };
+enum class AceLatentFault { none, empty, ragged, past_run_most, past_decode_most };
 
-inline constexpr AceLatentFault latent_frames_fault(long long frames) {
-    return frames < 1 ? AceLatentFault::empty :
-                        (frames_past_run_most(frames) ? AceLatentFault::past_run_most : AceLatentFault::none);
+inline constexpr AceLatentFault latent_frames_fault(long long frames, AceLatentBound bound) {
+    if (frames < 1) {
+        return AceLatentFault::empty;
+    }
+    if (bound == AceLatentBound::run) {
+        return frames_past_run_most(frames) ? AceLatentFault::past_run_most : AceLatentFault::none;
+    }
+    return frames > ACE_MAX_DECODE_FRAMES ? AceLatentFault::past_decode_most : AceLatentFault::none;
+}
+
+// Whether a fault is one of too many frames: a 413 on the wire.
+inline constexpr bool latent_fault_too_long(AceLatentFault fault) {
+    return fault == AceLatentFault::past_run_most || fault == AceLatentFault::past_decode_most;
 }
 
 // A raw f32 latent of `bytes`, as its frames: the count, -1 with its fault.
@@ -174,17 +220,17 @@ struct AceLatentFrames {
     AceLatentFault fault;
 };
 
-inline constexpr AceLatentFrames latent_payload_frames(unsigned long long bytes) {
+inline constexpr AceLatentFrames latent_payload_frames(unsigned long long bytes, AceLatentBound bound) {
     if (bytes % ACE_LATENT_FRAME_BYTES != 0) {
         return { -1, AceLatentFault::ragged };
     }
-    const AceLatentFault fault = latent_frames_fault((long long) (bytes / ACE_LATENT_FRAME_BYTES));
+    const AceLatentFault fault = latent_frames_fault((long long) (bytes / ACE_LATENT_FRAME_BYTES), bound);
     return { fault == AceLatentFault::none ? (int) (bytes / ACE_LATENT_FRAME_BYTES) : -1, fault };
 }
 
 // A fault in words, for a tool's log: nullptr for none.
 inline constexpr const char * latent_fault_words(AceLatentFault fault) {
-    static_assert(ACE_MAX_LATENT_FRAMES == 15000, "the words below say the most");
+    static_assert(ACE_MAX_LATENT_FRAMES == 15000 && ACE_MAX_DECODE_FRAMES == 559238, "the words below say the most");
     switch (fault) {
         case AceLatentFault::empty:
             return "no latent frame";
@@ -192,21 +238,28 @@ inline constexpr const char * latent_fault_words(AceLatentFault fault) {
             return "not a whole number of 64-channel f32 frames";
         case AceLatentFault::past_run_most:
             return "more latent frames than a run holds (15000, 600 s)";
+        case AceLatentFault::past_decode_most:
+            return "more latent frames than a decode holds (559238, 6.2 h)";
         case AceLatentFault::none:
             break;
     }
     return nullptr;
 }
 
-static_assert(latent_payload_frames(0).fault == AceLatentFault::empty &&
-                  latent_payload_frames(ACE_LATENT_FRAME_BYTES).frames == 1 &&
-                  latent_payload_frames(ACE_LATENT_FRAME_BYTES + 4).fault == AceLatentFault::ragged &&
-                  latent_payload_frames((unsigned long long) ACE_MAX_LATENT_FRAMES * ACE_LATENT_FRAME_BYTES).frames ==
-                      ACE_MAX_LATENT_FRAMES &&
-                  latent_payload_frames((unsigned long long) (ACE_MAX_LATENT_FRAMES + 1) * ACE_LATENT_FRAME_BYTES)
+static_assert(latent_payload_frames(0, AceLatentBound::run).fault == AceLatentFault::empty &&
+                  latent_payload_frames(ACE_LATENT_FRAME_BYTES, AceLatentBound::run).frames == 1 &&
+                  latent_payload_frames(ACE_LATENT_FRAME_BYTES + 4, AceLatentBound::decode).fault ==
+                      AceLatentFault::ragged &&
+                  latent_payload_frames((unsigned long long) ACE_MAX_LATENT_FRAMES * ACE_LATENT_FRAME_BYTES,
+                                        AceLatentBound::run)
+                          .frames == ACE_MAX_LATENT_FRAMES &&
+                  latent_payload_frames((unsigned long long) (ACE_MAX_LATENT_FRAMES + 1) * ACE_LATENT_FRAME_BYTES,
+                                        AceLatentBound::run)
                           .fault == AceLatentFault::past_run_most &&
-                  latent_frames_fault(1200000) == AceLatentFault::past_run_most,
-              "a latent of 1 to a run's most frames, whole, is read; none, a part frame or one past the most is not");
+                  latent_frames_fault(ACE_MAX_LATENT_FRAMES + 1, AceLatentBound::decode) == AceLatentFault::none &&
+                  latent_frames_fault(ACE_MAX_DECODE_FRAMES, AceLatentBound::decode) == AceLatentFault::none &&
+                  latent_frames_fault(1200000, AceLatentBound::decode) == AceLatentFault::past_decode_most,
+              "a latent of 1 to its bound's most frames, whole, is read; none, a part frame or one past it is not");
 
 // The VAE tiles a tool may be asked for (--vae-chunk, --vae-overlap), in
 // latent frames: a chunk of 1 to a run's most, an overlap of 0 to under half

@@ -322,26 +322,53 @@ int main(int argc, char ** argv) {
         }
     }
 
-    // Write metadata only (header + tensor info, no data)
-    bool ok = gguf_write_to_file(out, out_path, true);
-    if (!ok) {
-        fprintf(stderr, "[Quantize] Failed to write metadata %s\n", out_path);
+    // Everything quantize holds, released once on every path from here.
+    auto release = [&]() {
+        gguf_free(out);
+        gguf_free(inp);
+        ggml_free(meta);
+#ifdef _WIN32
+        UnmapViewOfFile(mapping);
+        CloseHandle(mh);
+        CloseHandle(fh);
+#else
+        munmap(mapping, file_size);
+        close(fd);
+#endif
+    };
+    // A failed write fails the tool, its part removed, so no truncated GGUF
+    // is left where the output was asked for (cadenza-audio #1266).
+    auto fail_write = [&](const char * what) {
+        fprintf(stderr, "[Quantize] Failed to %s %s\n", what, out_path);
+        remove(out_path);
+        release();
         return 1;
+    };
+
+    // Write metadata only (header + tensor info, no data)
+    if (!gguf_write_to_file(out, out_path, true)) {
+        return fail_write("write metadata");
     }
 
     // Stream tensor data one at a time (low memory)
     FILE * fout = fopen(out_path, "ab");
     if (!fout) {
-        fprintf(stderr, "[Quantize] Failed to open %s for append\n", out_path);
-        return 1;
+        return fail_write("open for append");
     }
 
     const size_t alignment   = gguf_get_alignment(out);
     int          n_quantized = 0, n_promoted = 0;
     int64_t      bytes_in = 0, bytes_out = 0;
     size_t       data_pos = 0;
+    // Whether every byte so far reached the file: the loop stops at the first
+    // that didn't.
+    bool         wrote    = true;
+    auto         put      = [&](const void * p, size_t n) {
+        wrote = wrote && fwrite(p, 1, n, fout) == n;
+        data_pos += n;
+    };
 
-    for (int i = 0; i < n_tensors; i++) {
+    for (int i = 0; i < n_tensors && wrote; i++) {
         const char *         name     = gguf_get_tensor_name(inp, i);
         struct ggml_tensor * t        = ggml_get_tensor(meta, name);
         const int64_t        nel      = ggml_nelements(t);
@@ -351,12 +378,14 @@ int main(int argc, char ** argv) {
 
         bytes_in += (int64_t) src_size;
 
-        // Pad to alignment boundary
+        // Pad to alignment boundary, a zero block at a time: an alignment
+        // past the block is padded whole, not read past it.
         size_t pad = (alignment - (data_pos % alignment)) % alignment;
-        if (pad > 0) {
-            uint8_t zeros[64] = {};
-            fwrite(zeros, 1, pad, fout);
-            data_pos += pad;
+        while (pad > 0 && wrote) {
+            static const uint8_t zeros[64] = {};
+            const size_t         n         = pad < sizeof(zeros) ? pad : sizeof(zeros);
+            put(zeros, n);
+            pad -= n;
         }
 
         const TensorPlan & plan = plans[(size_t) i];
@@ -366,8 +395,7 @@ int main(int argc, char ** argv) {
             std::vector<float> f32((size_t) nel);
             to_f32(src, f32.data(), nel, t->type);
             size_t out_size = (size_t) nel * sizeof(float);
-            fwrite(f32.data(), 1, out_size, fout);
-            data_pos += out_size;
+            put(f32.data(), out_size);
             bytes_out += (int64_t) out_size;
             n_promoted++;
         } else if (plan.quantize) {
@@ -382,36 +410,26 @@ int main(int argc, char ** argv) {
             std::vector<uint8_t> qbuf(qsize);
             ggml_quantize_chunk(plan.target, f32.data(), qbuf.data(), 0, nrows, n_per_row, nullptr);
 
-            fwrite(qbuf.data(), 1, qsize, fout);
-            data_pos += qsize;
+            put(qbuf.data(), qsize);
             bytes_out += (int64_t) qsize;
             n_quantized++;
         } else {
             // Keep as-is
-            fwrite(src, 1, src_size, fout);
-            data_pos += src_size;
+            put(src, src_size);
             bytes_out += (int64_t) src_size;
         }
     }
 
-    fclose(fout);
+    const bool closed = fclose(fout) == 0;
+    if (!wrote || !closed) {
+        return fail_write("write");
+    }
 
     fprintf(stderr, "[Quantize] Quantized %d/%d tensors, promoted %d to F32\n", n_quantized, n_tensors, n_promoted);
     fprintf(stderr, "[Quantize] %.1f GB -> %.1f GB (%.1fx)\n", (double) bytes_in / 1e9, (double) bytes_out / 1e9,
             bytes_out > 0 ? (double) bytes_in / (double) bytes_out : 0.0);
     fprintf(stderr, "[Quantize] Wrote %s\n", out_path);
 
-    gguf_free(out);
-    gguf_free(inp);
-    ggml_free(meta);
-#ifdef _WIN32
-    UnmapViewOfFile(mapping);
-    CloseHandle(mh);
-    CloseHandle(fh);
-#else
-    munmap(mapping, file_size);
-    close(fd);
-#endif
-
+    release();
     return 0;
 }

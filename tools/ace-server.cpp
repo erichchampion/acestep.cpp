@@ -555,17 +555,21 @@ static void json_error(httplib::Response & res, int status, const char * msg) {
 
 // Read a latent part coming from the wire into `out`: its frame count, or -1
 // when it is refused -- a size that is no whole number of frames, none, or
-// more than a run holds, by the rule neural-codec's files share
+// more than `bound` holds, by the rule neural-codec's files share
 // (latent_payload_frames, cadenza-audio #1266) -- answered as a 400, or a 413
-// for too many, in the words neural-codec says it in (latent_fault_words).
+// for too many, in the words neural-codec says it in (latent_fault_words). A
+// /synth source is bound to a run's most frames, as the run takes it whole;
+// every other part only to what a decode holds -- a reference is cropped, an
+// understand source windowed, a /vae decode is a decode.
 static int read_latent_part(httplib::Response &  res,
                             const std::string &  content,
                             const char *         name,
-                            std::vector<float> & out) {
-    const AceLatentFrames frames = latent_payload_frames(content.size());
+                            std::vector<float> & out,
+                            AceLatentBound       bound) {
+    const AceLatentFrames frames = latent_payload_frames(content.size(), bound);
     if (frames.fault != AceLatentFault::none) {
-        const bool too_long = frames.fault == AceLatentFault::past_run_most;
-        json_error(res, too_long ? 413 : 400, (std::string(name) + ": " + latent_fault_words(frames.fault)).c_str());
+        json_error(res, latent_fault_too_long(frames.fault) ? 413 : 400,
+                   (std::string(name) + ": " + latent_fault_words(frames.fault)).c_str());
         return -1;
     }
     const float * data = reinterpret_cast<const float *>(content.data());
@@ -573,30 +577,35 @@ static int read_latent_part(httplib::Response &  res,
     return frames.frames;
 }
 
+// How far an audio part is read (cadenza-audio #1144, #1266): a /synth or
+// /vae encode source to what a run takes whole (its whole frames a run's
+// most, the engine's own count), and a reference (the engine crops it,
+// #1147) or an understand source (windowed, #1149) only to what an int
+// indexes.
+enum class AudioPartBound { decode, run_source };
+
 // An audio part decoded to 48 kHz interleaved stereo, its samples in
 // *T_audio, or NULL with nothing left to free -- the planar decode freed on
-// every path (cadenza-audio #1266). Every part is bounded by the decode's
-// own rule (audio_io_to_48k: a sample at least, a plausible rate, at most
-// AUDIO_MAX_SAMPLES at 48 kHz, so the interleave's int indexing holds). With
-// `bound_to_run` -- a source a run encodes whole, which the engine refuses
-// past a run's most frames (cadenza-audio #1144) -- one of more whole frames
-// is refused too, before its interleaved copy. A reference (the engine crops
-// it, #1147) and an understand source (windowed, #1149) are not. When `res`
-// is given, a refusal is answered there: a 413 for a source too long, a 400
-// for one that would not decode.
-static float * read_audio_part(httplib::Response * res, const std::string & content, int * T_audio, bool bound_to_run) {
-    float * planar = audio_read_48k_buf((const uint8_t *) content.data(), content.size(), T_audio);
-    if (planar && bound_to_run && frames_past_run_most(samples_frames_floor(*T_audio))) {
-        free(planar);
-        if (res) {
-            json_error(*res, 413, "audio exceeds max duration (10 min)");
-        }
-        return NULL;
-    }
-    float * interleaved = planar ? audio_planar_to_interleaved(planar, *T_audio) : NULL;
+// every path (cadenza-audio #1266). The decode bounds it, before any resample
+// (audio_io_to_48k), to `bound`'s samples. When `res` is given, a refusal is
+// answered there: a 413 for a source too long, a 400 for one that would not
+// decode.
+static float * read_audio_part(httplib::Response * res,
+                               const std::string & content,
+                               int *               T_audio,
+                               AudioPartBound      bound) {
+    const long long most =
+        bound == AudioPartBound::run_source ? ACE_MAX_RUN_SOURCE_SAMPLES : (long long) ACE_MAX_AUDIO_SAMPLES;
+    AceAudioFault fault  = AceAudioFault::none;
+    float *       planar = audio_read_48k_buf((const uint8_t *) content.data(), content.size(), T_audio, most, &fault);
+    float *       interleaved = planar ? audio_planar_to_interleaved(planar, *T_audio) : NULL;
     free(planar);
     if (!interleaved && res) {
-        json_error(*res, 400, "Failed to decode audio");
+        const bool too_long = fault == AceAudioFault::too_long;
+        json_error(*res, too_long ? 413 : 400,
+                   !too_long                       ? "Failed to decode audio" :
+                   bound == AudioPartBound::decode ? "audio exceeds max duration (6.2 h)" :
+                                                     "audio exceeds max duration (10 min)");
     }
     return interleaved;
 }
@@ -1017,9 +1026,13 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
 
         // src_latents wins over audio when both are sent: a client that
         // already cached the latent skips the VAE encode regardless of
-        // whether it also attached the original audio for fallback.
+        // whether it also attached the original audio for fallback -- and
+        // that audio is not decoded nor bounded, as it is unused: a crop's
+        // latents and the long song it came from are no 413 (cadenza-audio
+        // #1266).
         if (!src_ignored && req.form.has_file("src_latents")) {
-            const int T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents);
+            const int T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents,
+                                           AceLatentBound::run);
             if (T < 0) {
                 return;
             }
@@ -1028,14 +1041,14 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                     latent_frames_sec(T));
         }
 
-        if (!src_ignored && req.form.has_file("audio")) {
+        if (!src_ignored && src_T_latent == 0 && req.form.has_file("audio")) {
             auto file = req.form.get_file("audio");
             if (file.content.empty()) {
                 json_error(res, 400, "Multipart: empty 'audio' part");
                 return;
             }
             int T_audio     = 0;
-            src_interleaved = read_audio_part(&res, file.content, &T_audio, true);
+            src_interleaved = read_audio_part(&res, file.content, &T_audio, AudioPartBound::run_source);
             if (!src_interleaved) {
                 return;
             }
@@ -1044,7 +1057,8 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         }
 
         if (req.form.has_file("ref_latents")) {
-            const int T = read_latent_part(res, req.form.get_file("ref_latents").content, "ref_latents", ref_latents);
+            const int T = read_latent_part(res, req.form.get_file("ref_latents").content, "ref_latents", ref_latents,
+                                           AceLatentBound::decode);
             if (T < 0) {
                 return;
             }
@@ -1057,7 +1071,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             auto file = req.form.get_file("ref_audio");
             if (!file.content.empty()) {
                 int T_audio     = 0;
-                ref_interleaved = read_audio_part(nullptr, file.content, &T_audio, false);
+                ref_interleaved = read_audio_part(nullptr, file.content, &T_audio, AudioPartBound::decode);
                 if (ref_interleaved) {
                     fprintf(stderr, "[Server] Reference audio: %.2fs @ %d Hz\n", samples_sec(T_audio), ACE_SAMPLE_RATE);
                     ref_len = T_audio;
@@ -1298,7 +1312,8 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
     std::vector<float> src_latents;
     int                src_T_latent = 0;
     if (req.form.has_file("src_latents")) {
-        const int T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents);
+        const int T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents,
+                                       AceLatentBound::decode);
         if (T < 0) {
             return;
         }
@@ -1317,7 +1332,7 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
         // decode directly from multipart buffer (WAV/MP3 auto-detected), to
         // the interleaved [L0,R0,L1,R1,...] the pipeline takes
         int T_audio     = 0;
-        src_interleaved = read_audio_part(&res, file.content, &T_audio, false);
+        src_interleaved = read_audio_part(&res, file.content, &T_audio, AudioPartBound::decode);
         if (!src_interleaved) {
             return;
         }
@@ -1384,7 +1399,7 @@ static void decode_worker(std::shared_ptr<Job> job,
     }
     ModelHandle vae_guard(g_store, vae);
 
-    int                T_audio_max = (src_T_latent + 64) * ACE_LATENT_HOP;
+    int                T_audio_max = src_T_latent * ACE_LATENT_HOP + ACE_VAE_DEC_SLACK_SAMPLES;
     std::vector<float> audio_buf((size_t) T_audio_max * 2);
     int T_audio = vae_ggml_decode_tiled(vae, src_latents.data(), src_T_latent, audio_buf.data(), T_audio_max,
                                         g_synth_params.vae_chunk, g_synth_params.vae_overlap,
@@ -1467,9 +1482,9 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
     // -- the handler's pre-check refuses what is past the most, and a source
     // at it keeps its margin (cadenza-audio #1144)
     // audio never sneaks past the handler-side pre-check.
-    int T_latent_max = src_len / ACE_LATENT_HOP + 64;
-    if (T_latent_max > ACE_MAX_LATENT_FRAMES + 64) {
-        T_latent_max = ACE_MAX_LATENT_FRAMES + 64;
+    int T_latent_max = src_len / ACE_LATENT_HOP + ACE_VAE_ENC_SLACK_FRAMES;
+    if (T_latent_max > ACE_MAX_LATENT_FRAMES + ACE_VAE_ENC_SLACK_FRAMES) {
+        T_latent_max = ACE_MAX_LATENT_FRAMES + ACE_VAE_ENC_SLACK_FRAMES;
     }
     std::vector<float> latent((size_t) T_latent_max * ACE_LATENT_CHANNELS);
     int                T_latent =
@@ -1489,6 +1504,16 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
         fprintf(stderr, "[Server] encode: %s\n", job->error.c_str());
         job->status.store(JobStatus::FAILED);
         return;
+    }
+    // The latent held to a run's most, so /synth takes what /vae made. The
+    // source is bounded by its whole frames, which the VAE was not seen to
+    // exceed -- 1 s and a sample, or a part frame, encoded to 25 frames,
+    // untiled and tiled, its tiles' rounded trims at times one fewer (#1309)
+    // -- so this binds only if that changes (cadenza-audio #1266).
+    if (frames_past_run_most(T_latent)) {
+        fprintf(stderr, "[Server] encode: %d latent frames held to a run's most, %d\n", T_latent,
+                ACE_MAX_LATENT_FRAMES);
+        T_latent = ACE_MAX_LATENT_FRAMES;
     }
     fprintf(stderr, "[Server] encode: %d audio samples (%.2fs) -> %d latent frames, %.0fms\n", src_len,
             samples_sec(src_len), T_latent, t_enc.ms());
@@ -1565,9 +1590,10 @@ static void handle_vae(const httplib::Request & req, httplib::Response & res) {
             json_error(res, 400, "Multipart: empty 'audio' part");
             return;
         }
-        // The engine's bound: 600 s of whole frames runs (cadenza-audio #1144).
+        // The engine's bound: 600 s of whole frames runs (cadenza-audio #1144);
+        // the encode's latent is held to it too (encode_worker).
         int     T_audio         = 0;
-        float * src_interleaved = read_audio_part(&res, file.content, &T_audio, true);
+        float * src_interleaved = read_audio_part(&res, file.content, &T_audio, AudioPartBound::run_source);
         if (!src_interleaved) {
             return;
         }
@@ -1587,7 +1613,8 @@ static void handle_vae(const httplib::Request & req, httplib::Response & res) {
 
     // decode path: raw latents in -> audio out
     std::vector<float> src_latents;
-    const int          T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents);
+    const int          T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents,
+                                                AceLatentBound::decode);
     if (T < 0) {
         return;
     }
