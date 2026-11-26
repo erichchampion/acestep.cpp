@@ -503,8 +503,7 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
     fprintf(stderr, "[VAE] Tiled decode: %d tiles (chunk=%d, overlap=%d, stride=%d)\n", num_steps, chunk_size, overlap,
             stride);
 
-    float upsample_factor = 0.0f;
-    int   audio_write_pos = 0;
+    int audio_write_pos = 0;
 
     if (ace_cancelled(progress,
                       ACE_STAGE_VAE_DECODE)) {  // honour a cancel before the loop; the loop's step-0 poll sizes the bar
@@ -541,19 +540,15 @@ static int vae_ggml_decode_tiled(VAEGGML *     m,
             return -1;
         }
 
-        // Determine upsample factor from first tile
-        if (i == 0) {
-            upsample_factor = (float) tile_T / (float) win_len;
-            fprintf(stderr, "[VAE] Upsample factor: %.2f (expected ~%d)\n", upsample_factor, ACE_LATENT_HOP);
+        // Trim in audio samples by the exact hop, not a float measured from
+        // the first tile and rounded (cadenza-audio #1309): a tile's latent
+        // frame j is its samples [j, j + 1) * ACE_LATENT_HOP, so the core is
+        // the samples of frames core_start..core_end.
+        int trim_start = (core_start - win_start) * ACE_LATENT_HOP;
+        int end_idx    = (core_end - win_start) * ACE_LATENT_HOP;
+        if (end_idx > tile_T) {
+            end_idx = tile_T;
         }
-
-        // Compute trim in audio samples (matches Python int(round(...)))
-        int added_start = core_start - win_start;
-        int trim_start  = (int) roundf((float) added_start * upsample_factor);
-        int added_end   = win_end - core_end;
-        int trim_end    = (int) roundf((float) added_end * upsample_factor);
-
-        int end_idx  = (trim_end > 0) ? (tile_T - trim_end) : tile_T;
         int core_len = end_idx - trim_start;
         if (core_len <= 0) {
             continue;

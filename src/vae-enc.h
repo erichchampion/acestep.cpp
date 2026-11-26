@@ -301,14 +301,15 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
                                 int           chunk_size = 256,
                                 int           overlap    = 64,
                                 AceProgress   progress   = {}) {
-    // Work in audio-sample space. Each latent frame = 1920 audio samples.
+    // Shrink overlap until stride is positive -- in latent frames, as the
+    // decoder does, so every window starts on a frame (cadenza-audio #1309).
+    while (chunk_size - 2 * overlap <= 0 && overlap > 0) {
+        overlap /= 2;
+    }
+
+    // Work in audio-sample space. Each latent frame = ACE_LATENT_HOP samples.
     int audio_chunk   = chunk_size * ACE_LATENT_HOP;
     int audio_overlap = overlap * ACE_LATENT_HOP;
-
-    // Shrink overlap until stride is positive
-    while (audio_chunk - 2 * audio_overlap <= 0 && audio_overlap > 0) {
-        audio_overlap /= 2;
-    }
 
     // Short audio: encode directly, as one implicit tile. Still report it and
     // honour a cancel, so a short input is neither invisible to a progress bar
@@ -327,8 +328,10 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
     fprintf(stderr, "[VAE-Enc] Tiled encode: %d tiles (chunk=%d, overlap=%d, stride=%d audio samples)\n", num_steps,
             audio_chunk, audio_overlap, audio_stride);
 
-    float downsample_factor = 0.0f;
-    int   latent_write_pos  = 0;
+    // The source's whole frames: what an untiled encode of it gives, and the
+    // most the tiles together may write.
+    const int frames_total     = T_audio / ACE_LATENT_HOP;
+    int       latent_write_pos = 0;
 
     if (ace_cancelled(progress,
                       ACE_STAGE_VAE_ENCODE)) {  // honour a cancel before the loop; the loop's step-0 poll sizes the bar
@@ -365,19 +368,23 @@ static int vae_enc_encode_tiled(VAEEncoder *  m,
             return -1;
         }
 
-        // Determine downsample factor from first tile
-        if (i == 0) {
-            downsample_factor = (float) tile_T / (float) win_len;
-            fprintf(stderr, "[VAE-Enc] Downsample factor: %.6f (expected ~1/%d)\n", downsample_factor, ACE_LATENT_HOP);
+        // Trim in whole latent frames, by the exact hop (cadenza-audio #1309).
+        // Every window starts on a frame, so a tile's frame j is the
+        // source's frame win_start / ACE_LATENT_HOP + j: the core keeps the
+        // frames that start in [core_start, core_end), to the source's last
+        // whole frame. A trim measured as a float from the first tile and
+        // rounded dropped a frame at a seam whose window the source's end cut
+        // short (48960 samples encoded to 24 frames, not 25).
+        const int win_frame  = win_start / ACE_LATENT_HOP;
+        const int trim_start = (core_start - win_start) / ACE_LATENT_HOP;
+        int       end_frame  = core_end == T_audio ? frames_total : core_end / ACE_LATENT_HOP;
+        if (end_frame > frames_total) {
+            end_frame = frames_total;
         }
-
-        // Trim in latent frames (mirror of decoder trim logic)
-        int added_start = core_start - win_start;
-        int trim_start  = (int) roundf((float) added_start * downsample_factor);
-        int added_end   = win_end - core_end;
-        int trim_end    = (int) roundf((float) added_end * downsample_factor);
-
-        int end_idx  = (trim_end > 0) ? (tile_T - trim_end) : tile_T;
+        int end_idx = end_frame - win_frame;
+        if (end_idx > tile_T) {
+            end_idx = tile_T;
+        }
         int core_len = end_idx - trim_start;
         if (core_len <= 0) {
             continue;
