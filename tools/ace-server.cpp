@@ -216,10 +216,11 @@ struct Job {
     std::atomic<JobStatus> status{ JobStatus::RUNNING };
     std::string            result_body;
     std::string            result_mime;
-    // Why a failed job failed (cadenza-audio #1193, #1194): the engine's
-    // refusal of the run, its failure, a model missing from the registry, a
-    // fatal. Written before status, as the result is, and said in the status
-    // JSON as "error".
+    // Why a failed job failed (cadenza-audio #1193, #1194, #1286): the
+    // engine's refusal of the run, its failure, a model missing from the
+    // registry or one that would not load, a fatal -- for every worker
+    // (job_fail). Written before status, as the result is, and said in the
+    // status JSON as "error".
     std::string            error;
     std::atomic<bool>      cancel{ false };
 
@@ -228,6 +229,28 @@ struct Job {
     // and only reads result fields after seeing done/failed. this guarantees
     // visibility without an explicit mutex on the result fields.
 };
+
+// Said after a failure the engine explains only in its log.
+static constexpr const char * kDiagnosticOnStderr = ": the engine's diagnostic is on stderr";
+
+// Fail `job`, saying why: the reason logged, and said in the status JSON as
+// "error", so no failed job reads {"status":"failed"} alone -- every
+// worker's failure, not synth_worker's alone (cadenza-audio #1194, #1286).
+static void job_fail(Job & job, const std::string & why) {
+    fprintf(stderr, "[Server] job %s: %s\n", job.id.c_str(), why.c_str());
+    job.error = why;
+    job.status.store(JobStatus::FAILED);
+}
+
+// A job whose run stopped short: cancelled, when its client asked -- said by
+// its status, with no error -- else failed, saying why.
+static void job_stopped(Job & job, const std::string & why) {
+    if (job.cancel.load()) {
+        job.status.store(JobStatus::CANCELLED);
+        return;
+    }
+    job_fail(job, why);
+}
 
 // Queue `fn` for `job`: a fatal it throws fails that job, and the server goes
 // on (tool-main.h, cadenza-audio #1049); the backend a GPU fault broke is
@@ -238,9 +261,7 @@ template <class F> static void work_push_job(const std::shared_ptr<Job> & job, F
         // why, not a bare "failed" (cadenza-audio #1194).
         std::string what;
         if (!ace_tool_job(fn, &what)) {
-            job->error = what.empty() ? "a fatal error in the engine" : "a fatal error in the engine: " + what;
-            fprintf(stderr, "[Server] job %s failed: %s\n", job->id.c_str(), job->error.c_str());
-            job->status.store(JobStatus::FAILED);
+            job_fail(*job, what.empty() ? "a fatal error in the engine" : "a fatal error in the engine: " + what);
         }
     });
 }
@@ -647,8 +668,7 @@ static void lm_worker(std::shared_ptr<Job> job, AceRequest ace_req, int lm_batch
     std::string        lm_name = resolve_name(g_registry.lm, ace_req.lm_model, g_loaded_lm);
     const ModelEntry * entry   = registry_find(g_registry.lm, lm_name.c_str());
     if (!entry) {
-        fprintf(stderr, "[Server] LM not found: %s\n", lm_name.c_str());
-        job->status.store(JobStatus::FAILED);
+        job_fail(*job, "LM not found: " + lm_name);
         return;
     }
     AceLmParams p = g_lm_params;
@@ -659,8 +679,7 @@ static void lm_worker(std::shared_ptr<Job> job, AceRequest ace_req, int lm_batch
     // the store returns the cached instance.
     AceLm * ctx = ace_lm_load(g_store, &p);
     if (!ctx) {
-        fprintf(stderr, "[Server] FATAL: LM load failed\n");
-        job->status.store(JobStatus::FAILED);
+        job_fail(*job, "the LM could not be loaded (" + lm_name + ")" + kDiagnosticOnStderr);
         return;
     }
 
@@ -672,7 +691,7 @@ static void lm_worker(std::shared_ptr<Job> job, AceRequest ace_req, int lm_batch
     ace_lm_free(ctx);
 
     if (rc != 0) {
-        job->status.store(job->cancel.load() ? JobStatus::CANCELLED : JobStatus::FAILED);
+        job_stopped(*job, std::string("the LM run failed") + kDiagnosticOnStderr);
         return;
     }
 
@@ -790,30 +809,22 @@ static void synth_worker(std::shared_ptr<Job>    job,
         return;
     }
 
-    // A job failed before its run, said why: the reason logged, and said in
-    // the status JSON as "error" -- every synth_worker failure says one, not
-    // the engine's refusal alone (cadenza-audio #1194).
-    auto fail_before_run = [&](const std::string & why) {
-        fprintf(stderr, "[Server] job %s: %s\n", job->id.c_str(), why.c_str());
-        job->error = why;
-        job->status.store(JobStatus::FAILED);
-    };
 
     // Resolve DiT, adapter, VAE and the text-encoder singleton.
     std::string        dit_name = resolve_name(g_registry.dit, ace_reqs[0].synth_model, g_loaded_dit);
     const ModelEntry * dit      = registry_find(g_registry.dit, dit_name.c_str());
     if (!dit) {
-        fail_before_run("DiT not found: " + dit_name);
+        job_fail(*job, "DiT not found: " + dit_name);
         return;
     }
     if (g_registry.text_enc.empty() || g_registry.vae.empty()) {
-        fail_before_run(g_registry.text_enc.empty() ? "no text encoder in the registry" : "no VAE in the registry");
+        job_fail(*job, g_registry.text_enc.empty() ? "no text encoder in the registry" : "no VAE in the registry");
         return;
     }
     std::string        vae_name = resolve_name(g_registry.vae, ace_reqs[0].vae, g_loaded_vae);
     const ModelEntry * vae      = registry_find(g_registry.vae, vae_name.c_str());
     if (!vae) {
-        fail_before_run("VAE not found: " + vae_name);
+        job_fail(*job, "VAE not found: " + vae_name);
         return;
     }
 
@@ -826,7 +837,7 @@ static void synth_worker(std::shared_ptr<Job>    job,
     if (!ace_reqs[0].adapter.empty()) {
         const AdapterEntry * adapter = registry_find_adapter(g_registry, ace_reqs[0].adapter.c_str());
         if (!adapter) {
-            fail_before_run("adapter not found: " + ace_reqs[0].adapter);
+            job_fail(*job, "adapter not found: " + ace_reqs[0].adapter);
             return;
         }
         p.adapter_path  = adapter->path.c_str();
@@ -837,9 +848,9 @@ static void synth_worker(std::shared_ptr<Job>    job,
 
     AceSynth * ctx = ace_synth_load(g_store, &p);
     if (!ctx) {
-        fail_before_run("the synth could not be loaded (DiT " + dit_name + ", VAE " + vae_name +
-                        (ace_reqs[0].adapter.empty() ? std::string() : ", adapter " + ace_reqs[0].adapter) +
-                        "): the engine's diagnostic is on stderr");
+        job_fail(*job, "the synth could not be loaded (DiT " + dit_name + ", VAE " + vae_name +
+                           (ace_reqs[0].adapter.empty() ? std::string() : ", adapter " + ace_reqs[0].adapter) + ")" +
+                           kDiagnosticOnStderr);
         return;
     }
 
@@ -873,12 +884,12 @@ static void synth_worker(std::shared_ptr<Job>    job,
         job->error = one ? "Request " + std::to_string(take_request[(size_t) refused.request]) + ": " + refused.reason :
                            std::string(refused.reason);
     } else if (rc != 0 && !job->cancel.load() && refused.failure != AceSynthFailure::cancelled) {
-        // A run that failed without a refusal says the engine's failure --
-        // a model the store could not give, an encode that made nothing --
-        // or, for the decode, which says none, that (cadenza-audio #1092,
-        // #1194). A cancel is said by the job's status, not as an error.
-        job->error =
-            refused.failed ? std::string("the run failed: ") + refused.failed : std::string("the VAE decode failed");
+        // A run that failed without a refusal says the engine's failure, the
+        // run's or its decode's -- a model the store could not give, an
+        // encode that made nothing (cadenza-audio #1092, #1194, #1286). A
+        // cancel is said by the job's status, not as an error.
+        job->error = std::string("the run failed") +
+                     (refused.failed ? std::string(": ") + refused.failed : std::string(kDiagnosticOnStderr));
         fprintf(stderr, "[Server] job %s: %s\n", job->id.c_str(), job->error.c_str());
     }
     ace_synth_free(ctx);
@@ -950,13 +961,13 @@ static constexpr const char * kSourceHintJson =
 // none (ace_synth_inputs_refused, #1193) -- the source as the run would get
 // it, read by the engine's one rule (#1194): true when it answered one.
 // `hint` says how this request could have sent one.
-static bool refuse_sourceless(httplib::Response &       res,
-                              const std::string &       task,
-                              const float *             src_audio,
-                              int                       src_len,
+static bool refuse_sourceless(httplib::Response &        res,
+                              const std::string &        task,
+                              const float *              src_audio,
+                              int                        src_len,
                               const std::vector<float> & src_latents,
-                              int                       src_T_latent,
-                              const char *              hint) {
+                              int                        src_T_latent,
+                              const char *               hint) {
     AceSynthBatchRefusal why;
     if (!ace_synth_inputs_refused(task.c_str(), src_audio, src_len, src_latents.empty() ? nullptr : src_latents.data(),
                                   src_T_latent, &why)) {
@@ -1046,8 +1057,8 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         // A task that works from a source, sent neither part: refused before
         // any part -- a reference too -- is read or decoded (#1157, #1193),
         // by the rule asked again below of what the parts read to.
-        if (!src_sent && refuse_sourceless(res, ace_req.task_type, src_interleaved, src_len, src_latents,
-                                           src_T_latent, kSourceHintMultipart)) {
+        if (!src_sent && refuse_sourceless(res, ace_req.task_type, src_interleaved, src_len, src_latents, src_T_latent,
+                                           kSourceHintMultipart)) {
             return;
         }
 
@@ -1209,10 +1220,10 @@ static void understand_worker(std::shared_ptr<Job> job,
     const ModelEntry * dit       = registry_find(g_registry.dit, dit_name.c_str());
     const ModelEntry * vae_entry = registry_find(g_registry.vae, vae_name.c_str());
     if (!lm_entry || !dit || !vae_entry) {
-        fprintf(stderr, "[Server] LM, DiT or VAE not found: lm=%s dit=%s vae=%s\n", lm_name.c_str(), dit_name.c_str(),
-                vae_name.c_str());
+        job_fail(*job, !lm_entry ? "LM not found: " + lm_name :
+                       !dit      ? "DiT not found: " + dit_name :
+                                   "VAE not found: " + vae_name);
         free(src_interleaved);
-        job->status.store(JobStatus::FAILED);
         return;
     }
 
@@ -1223,9 +1234,9 @@ static void understand_worker(std::shared_ptr<Job> job,
 
     AceUnderstand * ctx = ace_understand_load(g_store, &p);
     if (!ctx) {
-        fprintf(stderr, "[Server] FATAL: understand load failed\n");
+        job_fail(*job, "the understand pipeline could not be loaded (LM " + lm_name + ", DiT " + dit_name + ", VAE " +
+                           vae_name + ")" + kDiagnosticOnStderr);
         free(src_interleaved);
-        job->status.store(JobStatus::FAILED);
         return;
     }
 
@@ -1243,7 +1254,7 @@ static void understand_worker(std::shared_ptr<Job> job,
     free(src_interleaved);
 
     if (rc != 0) {
-        job->status.store(job->cancel.load() ? JobStatus::CANCELLED : JobStatus::FAILED);
+        job_stopped(*job, std::string("the understand run failed") + kDiagnosticOnStderr);
         return;
     }
 
@@ -1413,8 +1424,7 @@ static void decode_worker(std::shared_ptr<Job> job,
     std::string        vae_name  = resolve_name(g_registry.vae, ace_req.vae, g_loaded_vae);
     const ModelEntry * vae_entry = registry_find(g_registry.vae, vae_name.c_str());
     if (!vae_entry) {
-        fprintf(stderr, "[Server] decode: VAE not found: %s\n", vae_name.c_str());
-        job->status.store(JobStatus::FAILED);
+        job_fail(*job, "VAE not found: " + vae_name);
         return;
     }
 
@@ -1426,8 +1436,7 @@ static void decode_worker(std::shared_ptr<Job> job,
     Timer     t_dec;
     VAEGGML * vae = store_require_vae_dec(g_store, vae_key);
     if (!vae) {
-        fprintf(stderr, "[Server] decode: store_require_vae_dec failed\n");
-        job->status.store(JobStatus::FAILED);
+        job_fail(*job, "the VAE decoder could not be loaded (" + vae_name + ")" + kDiagnosticOnStderr);
         return;
     }
     ModelHandle vae_guard(g_store, vae);
@@ -1438,9 +1447,7 @@ static void decode_worker(std::shared_ptr<Job> job,
                                         g_synth_params.vae_chunk, g_synth_params.vae_overlap,
                                         AceProgress{ server_progress, (void *) &job->cancel });
     if (T_audio < 0) {
-        bool cancelled = job->cancel.load();
-        fprintf(stderr, "[Server] decode: %s\n", cancelled ? "cancelled" : "vae_ggml_decode_tiled failed");
-        job->status.store(cancelled ? JobStatus::CANCELLED : JobStatus::FAILED);
+        job_stopped(*job, std::string("the VAE decode failed") + kDiagnosticOnStderr);
         return;
     }
     fprintf(stderr, "[Server] decode: %d latent frames -> %d audio samples (%.2fs), %.0fms\n", src_T_latent, T_audio,
@@ -1491,8 +1498,7 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
     std::string        vae_name  = resolve_name(g_registry.vae, ace_req.vae, g_loaded_vae);
     const ModelEntry * vae_entry = registry_find(g_registry.vae, vae_name.c_str());
     if (!vae_entry) {
-        fprintf(stderr, "[Server] encode: VAE not found: %s\n", vae_name.c_str());
-        job->status.store(JobStatus::FAILED);
+        job_fail(*job, "VAE not found: " + vae_name);
         return;
     }
 
@@ -1504,8 +1510,7 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
     Timer        t_enc;
     VAEEncoder * vae = store_require_vae_enc(g_store, vae_key);
     if (!vae) {
-        fprintf(stderr, "[Server] encode: store_require_vae_enc failed\n");
-        job->status.store(JobStatus::FAILED);
+        job_fail(*job, "the VAE encoder could not be loaded (" + vae_name + ")" + kDiagnosticOnStderr);
         return;
     }
     ModelHandle vae_guard(g_store, vae);
@@ -1524,18 +1529,14 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
         vae_enc_encode_tiled(vae, src_interleaved, src_len, latent.data(), T_latent_max, g_synth_params.vae_chunk,
                              g_synth_params.vae_overlap, AceProgress{ server_progress, (void *) &job->cancel });
     if (T_latent < 0) {
-        bool cancelled = job->cancel.load();
-        fprintf(stderr, "[Server] encode: %s\n", cancelled ? "cancelled" : "vae_enc_encode_tiled failed");
-        job->status.store(cancelled ? JobStatus::CANCELLED : JobStatus::FAILED);
+        job_stopped(*job, std::string("the VAE encode failed") + kDiagnosticOnStderr);
         return;
     }
     // An encode of no frame is a failed job, not an empty latent /vae could
     // not decode (cadenza-audio #1266) -- held, though the VAE rounds a
     // source of a sample up to a frame today.
     if (T_latent == 0) {
-        job->error = std::string("the encode made ") + latent_fault_words(AceLatentFault::empty);
-        fprintf(stderr, "[Server] encode: %s\n", job->error.c_str());
-        job->status.store(JobStatus::FAILED);
+        job_fail(*job, std::string("the encode made ") + latent_fault_words(AceLatentFault::empty));
         return;
     }
     // A latent past a run's most fails the job, so /vae never hands back one
@@ -1545,10 +1546,8 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
     // trims at times one fewer (#1309) -- so this binds only if that changes
     // (cadenza-audio #1266).
     if (frames_past_run_most(T_latent)) {
-        job->error = std::string("the encode made ") + std::to_string(T_latent) + " frames, " +
-                     latent_fault_words(AceLatentFault::past_run_most);
-        fprintf(stderr, "[Server] encode: %s\n", job->error.c_str());
-        job->status.store(JobStatus::FAILED);
+        job_fail(*job, std::string("the encode made ") + std::to_string(T_latent) + " frames, " +
+                           latent_fault_words(AceLatentFault::past_run_most));
         return;
     }
     fprintf(stderr, "[Server] encode: %d audio samples (%.2fs) -> %d latent frames, %.0fms\n", src_len,
@@ -2043,9 +2042,8 @@ static int server_main(int argc, char ** argv) {
         fprintf(stderr, "[Server] Listening on %s:%d\n", host, bound);
         fprintf(stderr, "[Server] Pipelines:%s%s%s\n", have_lm ? " /lm" : "", have_synth ? " /synth" : "",
                 have_understand ? " /understand" : "");
-        fprintf(stderr, "[Server] Models: %zu LM, %zu Text-Enc, %zu DiT, %zu VAE, %zu Adapter\n",
-                g_registry.lm.size(), g_registry.text_enc.size(), g_registry.dit.size(), g_registry.vae.size(),
-                g_registry.adapters.size());
+        fprintf(stderr, "[Server] Models: %zu LM, %zu Text-Enc, %zu DiT, %zu VAE, %zu Adapter\n", g_registry.lm.size(),
+                g_registry.text_enc.size(), g_registry.dit.size(), g_registry.vae.size(), g_registry.adapters.size());
         svr.listen_after_bind();
     }
 

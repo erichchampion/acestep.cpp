@@ -197,17 +197,30 @@ const float * ace_synth_job_get_latent(const AceSynthJob * job, int track_idx, i
 // transparently. The splice happens in latent space using s.cover_latents
 // captured during phase 1, no source audio is needed.
 // out[batch_n] allocated by caller, filled with audio buffers.
-// Returns 0 on success, -1 on error or cancellation.
-int ace_synth_job_run_vae(AceSynth * ctx, AceSynthJob * job, AceAudio * out, AceProgress progress = {});
+// Returns 0 on success, -1 on error or cancellation. `failed`, when given,
+// says why a decode that returned -1 failed, as a run's failure is said
+// (cadenza-audio #1286): its failure and failed -- the VAE decoder the store
+// could not give (model_unavailable), a cancel, a bad argument (other) --
+// and never its reason, as a decode refuses no request. Unset by a decode
+// that ran.
+int ace_synth_job_run_vae(AceSynth *             ctx,
+                          AceSynthJob *          job,
+                          AceAudio *             out,
+                          AceProgress            progress = {},
+                          AceSynthBatchRefusal * failed   = nullptr);
 
 // Phase 2 for ONE take: splice + VAE decode of just track `take`'s latent
 // into *out. Decode-on-demand for embedders: first audio for take 0 does not
 // wait on the VAE decoding takes 1..n; call again for the other takes, in
 // any order. The job stays valid and the remaining takes stay decodable
 // after a failed or cancelled call. Returns 0 on success, -1 on a bad take
-// index, error, or cancellation.
-int ace_synth_job_run_vae_take(AceSynth * ctx, AceSynthJob * job, int take, AceAudio * out,
-                               AceProgress progress = {});
+// index, error, or cancellation; `failed` as for ace_synth_job_run_vae.
+int ace_synth_job_run_vae_take(AceSynth *             ctx,
+                               AceSynthJob *          job,
+                               int                    take,
+                               AceAudio *             out,
+                               AceProgress            progress = {},
+                               AceSynthBatchRefusal * failed   = nullptr);
 
 void ace_synth_job_free(AceSynthJob * job);
 

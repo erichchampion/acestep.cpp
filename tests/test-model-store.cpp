@@ -768,6 +768,11 @@ static bool cancel_at_dit(void * data, AceStage stage, int, int) {
     return true;
 }
 
+// Cancels the VAE decode at its first poll, and nothing before it.
+static bool cancel_at_decode(void *, AceStage stage, int, int) {
+    return stage == ACE_STAGE_VAE_DECODE;
+}
+
 // Scenario 14: the part of a timbre reference the encode reads (cadenza-audio
 // #1147): upstream's three segments, one from each third, centred here, a
 // shorter reference repeated first as upstream repeats it (#1172), and one
@@ -1260,8 +1265,9 @@ static int scenario_task_table() {
     // needs a source is refused given none, said as that, and runs given one;
     // a task that needs none runs either way. The source is read as the run
     // reads it: a buffer of no sample or no frame is none (#1194).
-    const float sample[2] = {};
+    const float sample[2]                  = {};
     const float frame[ACE_LATENT_CHANNELS] = {};
+
     struct Source {
         const char *  what;
         const float * audio;
@@ -1270,12 +1276,13 @@ static int scenario_task_table() {
         int           T_latent;
         bool          given;
     };
+
     const Source sources[] = {
-        { "no source", nullptr, 0, nullptr, 0, false },
-        { "audio of no sample", sample, 0, nullptr, 0, false },
-        { "latents of no frame", nullptr, 0, frame, 0, false },
-        { "a sample's audio", sample, 1, nullptr, 0, true },
-        { "a frame's latents", nullptr, 0, frame, 1, true },
+        { "no source",           nullptr, 0, nullptr, 0, false },
+        { "audio of no sample",  sample,  0, nullptr, 0, false },
+        { "latents of no frame", nullptr, 0, frame,   0, false },
+        { "a sample's audio",    sample,  1, nullptr, 0, true  },
+        { "a frame's latents",   nullptr, 0, frame,   1, true  },
     };
     for (int t = 0; t < ace_synth_task_count(); t++) {
         const char *     task = ace_synth_task_name(t);
@@ -1942,6 +1949,47 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             fprintf(stderr, "[Test] FAIL: a run of 0 requests was not refused for its arguments (%s)\n",
                     why.reason ? why.reason : "no reason");
             rc = 1;
+        }
+    }
+    // A decode that fails says why, as a run does (cadenza-audio #1286): a
+    // cancel as cancelled, a take that is not the job's as other, and never
+    // as a refusal; a decode that runs after them leaves its failure unset.
+    {
+        AceRequest r;
+        request_init(&r);
+        r.caption         = "a short test";
+        r.duration        = (float) seconds;
+        r.seed            = 1;
+        r.inference_steps = 2;
+        r.task_type       = "text2music";
+        AceSynthJob * job = ace_synth_job_run_dit(synth, &r, NULL, 0, NULL, 0, NULL, 0, NULL, 0, 1);
+        if (!job) {
+            fprintf(stderr, "[Test] FAIL: the decode's text2music did not run\n");
+            rc = 1;
+        } else {
+            AceProgress at_decode;
+            at_decode.fn   = cancel_at_decode;
+            at_decode.data = nullptr;
+            auto said      = [&](const char * what, int got, int want_rc, AceSynthFailure want,
+                                 const AceSynthBatchRefusal & failed) {
+                if ((got == 0) != (want_rc == 0) || failed.failure != want || failed.reason ||
+                    (want != AceSynthFailure::none) != (failed.failed != nullptr)) {
+                    fprintf(stderr, "[Test] FAIL: %s returned %d, said %d (%s)\n", what, got, (int) failed.failure,
+                            failed.failed ? failed.failed : "nothing");
+                    rc = 1;
+                }
+            };
+            AceAudio             out{};
+            AceSynthBatchRefusal failed{ -7, "unset" };
+            said("a cancelled decode", ace_synth_job_run_vae_take(synth, job, 0, &out, at_decode, &failed), -1,
+                 AceSynthFailure::cancelled, failed);
+            ace_audio_free(&out);
+            said("a decode of a take not the job's", ace_synth_job_run_vae_take(synth, job, 1, &out, {}, &failed), -1,
+                 AceSynthFailure::other, failed);
+            said("a decode after them", ace_synth_job_run_vae_take(synth, job, 0, &out, {}, &failed), 0,
+                 AceSynthFailure::none, failed);
+            ace_audio_free(&out);
+            ace_synth_job_free(job);
         }
     }
     auto near = [&](const std::vector<float> & v) {

@@ -1347,19 +1347,63 @@ const float * ace_synth_job_get_latent(const AceSynthJob * job, int track_idx, i
     return s.output.data() + (size_t) track_idx * s.T * s.Oc;
 }
 
-// Phase 2: latent splice (for repaint/lego) + VAE decode for every batch item.
-int ace_synth_job_run_vae(AceSynth * ctx, AceSynthJob * job, AceAudio * out, AceProgress progress) {
-    if (!ctx || !job || !out) {
-        return -1;
+// A decode the ops ran (`decode`), its failure said through `failed` as a
+// run's is (cadenza-audio #1286): the job's failure reset first, so a take
+// decoded after one that failed says its own, then handed out as the op
+// said it -- or, should none, as `other`. `failed` unset by a decode that
+// ran; its reason never set.
+template <class Decode> static int run_decode(SynthState & s, AceSynthBatchRefusal * failed, Decode decode) {
+    s.failure = AceSynthFailure::none;
+    s.failed  = nullptr;
+    if (failed) {
+        *failed = {};
     }
-    return ops_vae_decode(ctx, job->batch_n, out, job->state, progress);
+    const int rc = decode();
+    if (rc != 0) {
+        synth_failed(s, AceSynthFailure::other, "the VAE decode failed");
+        if (failed) {
+            failed->failure = s.failure;
+            failed->failed  = s.failed;
+        }
+    }
+    return rc;
 }
 
-int ace_synth_job_run_vae_take(AceSynth * ctx, AceSynthJob * job, int take, AceAudio * out, AceProgress progress) {
-    if (!ctx || !job || !out || take < 0 || take >= job->batch_n) {
-        return -1;
+// A decode refused its arguments, said as `other` through `failed`.
+static int decode_refused(AceSynthBatchRefusal * failed, const char * why) {
+    if (failed) {
+        *failed         = {};
+        failed->failure = AceSynthFailure::other;
+        failed->failed  = why;
     }
-    return ops_vae_decode_one(ctx, take, out, job->state, progress);
+    return -1;
+}
+
+// Phase 2: latent splice (for repaint/lego) + VAE decode for every batch item.
+int ace_synth_job_run_vae(AceSynth *             ctx,
+                          AceSynthJob *          job,
+                          AceAudio *             out,
+                          AceProgress            progress,
+                          AceSynthBatchRefusal * failed) {
+    if (!ctx || !job || !out) {
+        return decode_refused(failed, "a decode takes a synth, a job and its output");
+    }
+    return run_decode(job->state, failed, [&] { return ops_vae_decode(ctx, job->batch_n, out, job->state, progress); });
+}
+
+int ace_synth_job_run_vae_take(AceSynth *             ctx,
+                               AceSynthJob *          job,
+                               int                    take,
+                               AceAudio *             out,
+                               AceProgress            progress,
+                               AceSynthBatchRefusal * failed) {
+    if (!ctx || !job || !out) {
+        return decode_refused(failed, "a decode takes a synth, a job and its output");
+    }
+    if (take < 0 || take >= job->batch_n) {
+        return decode_refused(failed, "the take is not one of the job's");
+    }
+    return run_decode(job->state, failed, [&] { return ops_vae_decode_one(ctx, take, out, job->state, progress); });
 }
 
 void ace_synth_job_free(AceSynthJob * job) {

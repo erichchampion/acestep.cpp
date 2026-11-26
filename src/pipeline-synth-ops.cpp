@@ -1145,6 +1145,12 @@ static int ops_latent_edges(VAEGGML * vae, const AceSynth * ctx, SynthState & s,
     return 0;
 }
 
+// Why a decode failed, as synth_failed says it (cadenza-audio #1286): the
+// decoder the store could not give, or a cancel. A take's own decode that
+// fails is soft -- its slot left empty -- and says none.
+static constexpr const char * kDecoderUnavailable = "the VAE decoder could not be loaded";
+static constexpr const char * kDecodeCancelled    = "the decode was cancelled";
+
 // Decode ONE track: run the tiled VAE decoder over track b's latent and fill
 // *out. A decode failure nulls *out and returns 0 (soft fail -- the batch
 // loop continues to other tracks, exactly as it always has); a cancellation
@@ -1177,7 +1183,7 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
         free(audio);
         if (ace_cancelled(progress, ACE_STAGE_VAE_DECODE)) {
             fprintf(stderr, "[VAE-Decode Batch%d] Cancelled\n", b);
-            return -1;
+            return synth_failed(s, AceSynthFailure::cancelled, kDecodeCancelled);
         }
         fprintf(stderr, "[VAE-Decode Batch%d] ERROR: decode failed\n", b);
         return 0;
@@ -1204,7 +1210,7 @@ static int ops_vae_decode_track(VAEGGML * vae, const AceSynth * ctx, int b, AceA
         out->samples   = NULL;
         out->n_samples = 0;
         fprintf(stderr, "[VAE-Decode Batch%d] Cancelled\n", b);
-        return -1;
+        return synth_failed(s, AceSynthFailure::cancelled, kDecodeCancelled);
     }
 
     // A take spliced from its source as audio is as long as its source with
@@ -1279,7 +1285,7 @@ int ops_vae_decode(const AceSynth * ctx, int batch_n, AceAudio * out, SynthState
     VAEGGML * vae = store_require_vae_dec(ctx->store, ctx->vae_dec_key);
     if (!vae) {
         fprintf(stderr, "[VAE-Decode] FATAL: store_require_vae_dec failed\n");
-        return -1;
+        return synth_failed(s, AceSynthFailure::model_unavailable, kDecoderUnavailable);
     }
     ModelHandle vae_guard(ctx->store, vae);
 
@@ -1308,7 +1314,7 @@ int ops_vae_decode_one(const AceSynth * ctx, int track, AceAudio * out, SynthSta
     VAEGGML * vae = store_require_vae_dec(ctx->store, ctx->vae_dec_key);
     if (!vae) {
         fprintf(stderr, "[VAE-Decode] FATAL: store_require_vae_dec failed\n");
-        return -1;
+        return synth_failed(s, AceSynthFailure::model_unavailable, kDecoderUnavailable);
     }
     ModelHandle vae_guard(ctx->store, vae);
 

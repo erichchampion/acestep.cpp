@@ -93,9 +93,8 @@ static std::vector<std::string> synth_batch_notes(const AceSynthBatchTakes & bat
 // refused: when non-NULL, why the engine refused a group's run -- before its
 //   job or partway, as ace_synth_job_run_dit says it (cadenza-audio #1160,
 //   #1193) -- its request counted across every group, as audio_out is; or
-//   why a group's run failed otherwise, its failure and failed
-//   (cadenza-audio #1092). Left unset by a failed VAE decode, which says
-//   none.
+//   why a group's run or its VAE decode failed otherwise, its failure and
+//   failed (cadenza-audio #1092, #1286), set with every failure.
 // Returns 0 on success, -1 on any error or cancellation.
 static int synth_batch_run(AceSynth *                             ctx,
                            std::vector<std::vector<AceRequest>> & groups,
@@ -157,7 +156,7 @@ static int synth_batch_run(AceSynth *                             ctx,
     // Phase 2: latent splice + VAE decode for each job. The decoder is
     // acquired and released by ops_vae_decode inside ace_synth_job_run_vae.
     for (int g = 0; g < n_groups; g++) {
-        const int rc = ace_synth_job_run_vae(ctx, jobs[g], audio_out + audio_off[g], progress);
+        const int rc = ace_synth_job_run_vae(ctx, jobs[g], audio_out + audio_off[g], progress, refused);
         ace_synth_job_free(jobs[g]);
         jobs[g] = nullptr;
         if (rc != 0) {

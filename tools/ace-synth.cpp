@@ -320,11 +320,11 @@ static int synth_main(int argc, char ** argv) {
                         all_basenames[(size_t) refused.request].c_str() :
                         "the batch",
                     refused.reason);
-        } else if (refused.failed) {
-            // The engine's failure, said as it named it (cadenza-audio #1092).
-            fprintf(stderr, "[Ace-Synth] ERROR: batch run failed: %s\n", refused.failed);
         } else {
-            fprintf(stderr, "[Ace-Synth] ERROR: batch run failed: the VAE decode failed\n");
+            // The engine's failure, the run's or its decode's, said as it
+            // named it (cadenza-audio #1092, #1286).
+            fprintf(stderr, "[Ace-Synth] ERROR: batch run failed: %s\n",
+                    refused.failed ? refused.failed : "the engine's diagnostic is above");
         }
         for (auto & a : all_audio) {
             ace_audio_free(&a);
