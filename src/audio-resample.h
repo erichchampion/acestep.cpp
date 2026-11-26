@@ -66,10 +66,13 @@ static double audio_resample_bessel_i0(double x) {
 //
 // d (distance from center to tap) = frac + HALF_LEN - 1 - tap
 // This depends only on phase and tap, so we can pre-compute everything.
+// N_PHASES + 1 rows: the last is phase 1.0, so a fraction past the last
+// phase interpolates toward it rather than being held at phase N - 1 -- a
+// clamp that put 22.05 kHz's 319/320 at 255/256 (cadenza-audio #1310).
 static void audio_resample_build_table(float table[][RESAMPLE_N_TAPS], double fc, double beta) {
     double inv_i0b = 1.0 / audio_resample_bessel_i0(beta);
 
-    for (int p = 0; p < RESAMPLE_N_PHASES; p++) {
+    for (int p = 0; p <= RESAMPLE_N_PHASES; p++) {
         double frac = (double) p / (double) RESAMPLE_N_PHASES;
 
         for (int tap = 0; tap < RESAMPLE_N_TAPS; tap++) {
@@ -158,9 +161,10 @@ static float * audio_resample(const float * in, int n_in, int sr_in, int sr_out,
     // cutoff: lowpass at the lower of the two rates to prevent aliasing
     double fc = 0.5 * ((ratio < 1.0) ? ratio : 1.0);
 
-    // build polyphase filter table (one-time cost: ~16K coeff, microseconds)
+    // build polyphase filter table (one-time cost: ~16K coeff, microseconds),
+    // N_PHASES + 1 rows (audio_resample_build_table)
     float (*table)[RESAMPLE_N_TAPS] =
-        (float (*)[RESAMPLE_N_TAPS]) malloc(RESAMPLE_N_PHASES * RESAMPLE_N_TAPS * sizeof(float));
+        (float (*)[RESAMPLE_N_TAPS]) malloc((RESAMPLE_N_PHASES + 1) * RESAMPLE_N_TAPS * sizeof(float));
     if (!table) {
         free(out);
         *n_out = 0;
@@ -168,36 +172,35 @@ static float * audio_resample(const float * in, int n_in, int sr_in, int sr_out,
     }
     audio_resample_build_table(table, fc, beta);
 
-    for (int ch = 0; ch < nch; ch++) {
-        const float * src = in + ch * n_in;
-        float *       dst = out + ch * (*n_out);
+    // Position in input sample space, i * sr_in / sr_out, as an exact
+    // rational: its whole part and its remainder, stepped by sr_in per output
+    // sample in integers, so the fraction is as fine at the end of a 600 s
+    // source as at its start. A float position lost its fraction from 2^23
+    // samples on (~190 s at 44.1 kHz), and the tail resampled nearest-sample
+    // (cadenza-audio #1310). Stepped once per sample, for every channel.
+    const int step_whole = sr_in / sr_out;
+    const int step_rem   = sr_in % sr_out;
+    int       center_i   = 0;
+    int       rem        = 0;
 
-        for (int i = 0; i < *n_out; i++) {
-            // Position in input sample space, i * sr_in / sr_out, as an exact
-            // rational: its whole part and its remainder in 64-bit integers,
-            // so the fraction is as fine at the end of a 600 s source as at
-            // its start. A float position lost its fraction from 2^23 samples
-            // on (~190 s at 44.1 kHz), and the tail resampled nearest-sample
-            // (cadenza-audio #1310).
-            const long long num      = (long long) i * sr_in;
-            const int       center_i = (int) (num / sr_out);
-            const double    frac     = (double) (num % sr_out) / (double) sr_out;
+    for (int i = 0; i < *n_out; i++) {
+        const double frac = (double) rem / (double) sr_out;
 
-            // phase index + interpolation fraction between adjacent phases
-            const double phase_d   = frac * (double) RESAMPLE_N_PHASES;
-            int          phase     = (int) phase_d;
-            float        phase_mix = (float) (phase_d - (double) phase);
-            if (phase >= RESAMPLE_N_PHASES - 1) {
-                phase     = RESAMPLE_N_PHASES - 2;
-                phase_mix = 1.0f;
-            }
+        // phase index + interpolation fraction between adjacent phases: the
+        // table's last row is phase 1.0, so phase + 1 is always a row
+        const double phase_d   = frac * (double) RESAMPLE_N_PHASES;
+        const int    phase     = (int) phase_d;
+        const float  phase_mix = (float) (phase_d - (double) phase);
 
-            int base = center_i - RESAMPLE_HALF_LEN + 1;
+        const int base = center_i - RESAMPLE_HALF_LEN + 1;
 
-            // dot product with linear interpolation between adjacent phases
-            // (avoids quantization artifacts from 256 discrete phases)
-            const float * h0 = table[phase];
-            const float * h1 = table[phase + 1];
+        // dot product with linear interpolation between adjacent phases
+        // (avoids quantization artifacts from 256 discrete phases)
+        const float * h0 = table[phase];
+        const float * h1 = table[phase + 1];
+
+        for (int ch = 0; ch < nch; ch++) {
+            const float * src = in + (size_t) ch * n_in;
 
             float sum = 0.0f;
             float wgt = 0.0f;
@@ -219,7 +222,14 @@ static float * audio_resample(const float * in, int n_in, int sr_in, int sr_out,
             }
 
             // normalize to compensate for edge effects
-            dst[i] = (wgt > 1e-12f) ? sum / wgt : 0.0f;
+            out[(size_t) ch * (*n_out) + i] = (wgt > 1e-12f) ? sum / wgt : 0.0f;
+        }
+
+        center_i += step_whole;
+        rem += step_rem;
+        if (rem >= sr_out) {
+            rem -= sr_out;
+            center_i++;
         }
     }
 
