@@ -51,6 +51,11 @@ add_executable(test-synth-batch test-synth-batch.cpp)
 target_link_libraries(test-synth-batch PRIVATE acestep-core)
 target_include_directories(test-synth-batch PRIVATE ${PROJECT_SOURCE_DIR}/tools)
 
+# test-resample: a long source's tail resampled as finely as its head, not
+# nearest-sample past 2^23 samples (cadenza-audio #1310). Header-only, no model.
+add_executable(test-resample test-resample.cpp)
+target_include_directories(test-resample PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 # test-philox: Philox RNG reference dumper.
 add_executable(test-philox test-philox.cpp)
 target_include_directories(test-philox PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -82,6 +87,7 @@ add_test(NAME test-understand-cot COMMAND test-understand-cot)
 add_test(NAME test-gpu-fail COMMAND test-gpu-fail)
 add_test(NAME test-page-release COMMAND test-page-release)
 add_test(NAME test-synth-batch COMMAND test-synth-batch)
+add_test(NAME test-resample COMMAND test-resample)
 # And the tools held to them: no expansion loop of their own (#1269).
 add_test(NAME lint-batch-expansion
          COMMAND ${CMAKE_COMMAND} -DTOOLS=${PROJECT_SOURCE_DIR}/tools -P ${CMAKE_CURRENT_SOURCE_DIR}/lint-batch-expansion.cmake)

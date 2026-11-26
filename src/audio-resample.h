@@ -168,23 +168,25 @@ static float * audio_resample(const float * in, int n_in, int sr_in, int sr_out,
     }
     audio_resample_build_table(table, fc, beta);
 
-    float ratio_f   = (float) ratio;
-    float inv_ratio = 1.0f / ratio_f;
-
     for (int ch = 0; ch < nch; ch++) {
         const float * src = in + ch * n_in;
         float *       dst = out + ch * (*n_out);
 
         for (int i = 0; i < *n_out; i++) {
-            // position in input sample space
-            float center   = (float) i * inv_ratio;
-            int   center_i = (int) floorf(center);
-            float frac     = center - (float) center_i;
+            // Position in input sample space, i * sr_in / sr_out, as an exact
+            // rational: its whole part and its remainder in 64-bit integers,
+            // so the fraction is as fine at the end of a 600 s source as at
+            // its start. A float position lost its fraction from 2^23 samples
+            // on (~190 s at 44.1 kHz), and the tail resampled nearest-sample
+            // (cadenza-audio #1310).
+            const long long num      = (long long) i * sr_in;
+            const int       center_i = (int) (num / sr_out);
+            const double    frac     = (double) (num % sr_out) / (double) sr_out;
 
             // phase index + interpolation fraction between adjacent phases
-            float phase_f   = frac * (float) RESAMPLE_N_PHASES;
-            int   phase     = (int) phase_f;
-            float phase_mix = phase_f - (float) phase;
+            const double phase_d   = frac * (double) RESAMPLE_N_PHASES;
+            int          phase     = (int) phase_d;
+            float        phase_mix = (float) (phase_d - (double) phase);
             if (phase >= RESAMPLE_N_PHASES - 1) {
                 phase     = RESAMPLE_N_PHASES - 2;
                 phase_mix = 1.0f;
