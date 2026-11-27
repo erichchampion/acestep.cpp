@@ -78,8 +78,9 @@
 		return taskType && !names.includes(taskType) ? [...names, taskType] : names;
 	});
 	let taskInfo = $derived(taskRow(knownTasks, taskType));
-	// once rows have loaded, a task with none reads no track
-	let needsTrack = $derived(taskInfo ? taskInfo.reads_track : knownTasks.length === 0);
+	// a task reads a track by its row: until rows have loaded the pills are
+	// off, and nothing is cleared, since no row says the task reads none
+	let needsTrack = $derived(taskInfo?.reads_track ?? false);
 	let singleTrack = $derived(SINGLE_TRACK_TASKS.includes(taskType));
 
 	// DiT input indicators
@@ -126,7 +127,7 @@
 
 	// clear tracks when task has no use for them, trim to 1 for radio modes
 	$effect(() => {
-		if (!needsTrack) {
+		if (taskInfo && !needsTrack) {
 			if (selectedTracks.size > 0) selectedTracks = new Set();
 		} else if (singleTrack && selectedTracks.size > 1) {
 			selectedTracks = new Set([...selectedTracks].slice(0, 1));
