@@ -196,19 +196,10 @@ int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s,
     return 0;
 }
 
-// The tests' fail-next hooks: the FSQ roundtrip's require, the VAE
-// decoder's require, a take's tiled decode (ace_test_fail_next_*).
-static std::atomic<bool> g_test_fail_fsq_require{ false };
-static std::atomic<bool> g_test_fail_vae_dec_require{ false };
+// The tests' fail-next hook for a take's tiled decode
+// (ace_test_fail_next_vae_decode). A require's is the store's
+// (store_test_fail_next_require, cadenza-audio #1089).
 static std::atomic<bool> g_test_fail_vae_decode{ false };
-
-void ace_test_fail_next_fsq_require(bool armed) {
-    g_test_fail_fsq_require.store(armed);
-}
-
-void ace_test_fail_next_vae_dec_require(bool armed) {
-    g_test_fail_vae_dec_require.store(armed);
-}
 
 void ace_test_fail_next_vae_decode(bool armed) {
     g_test_fail_vae_decode.store(armed);
@@ -218,10 +209,6 @@ void ace_test_fail_next_vae_decode(bool armed) {
 // first, so a shipping run pays no read-modify-write (as ace_gpu_injected).
 static bool failed_by_test(std::atomic<bool> & hook) {
     return hook.load(std::memory_order_relaxed) && hook.exchange(false);
-}
-
-static bool fsq_require_failed_by_test() {
-    return failed_by_test(g_test_fail_fsq_require);
 }
 
 int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
@@ -242,7 +229,7 @@ int ops_fsq_roundtrip(const AceSynth * ctx, SynthState & s) {
     // Tokenizer scope: acquire, encode 25Hz latents to 5Hz codes, release.
     int T_5Hz_actual;
     {
-        TokGGML * tok = fsq_require_failed_by_test() ? nullptr : store_require_fsq_tok(ctx->store, ctx->fsq_tok_key);
+        TokGGML * tok = store_require_fsq_tok(ctx->store, ctx->fsq_tok_key);
         if (!tok) {
             fprintf(stderr, "[FSQ-Roundtrip] FATAL: store_require_fsq_tok failed\n");
             return synth_failed(s, AceSynthFailure::model_unavailable, "the FSQ tokenizer could not be loaded");
@@ -1171,8 +1158,7 @@ static constexpr const char * kDecodeNoBuffer  = "the VAE decode's output could 
 
 // The VAE decoder from the store, or NULL said as model_unavailable.
 static VAEGGML * require_vae_dec(const AceSynth * ctx, SynthState & s) {
-    VAEGGML * vae =
-        failed_by_test(g_test_fail_vae_dec_require) ? nullptr : store_require_vae_dec(ctx->store, ctx->vae_dec_key);
+    VAEGGML * vae = store_require_vae_dec(ctx->store, ctx->vae_dec_key);
     if (!vae) {
         fprintf(stderr, "[VAE-Decode] FATAL: store_require_vae_dec failed\n");
         synth_failed(s, AceSynthFailure::model_unavailable, kAceVaeDecoderUnavailable);

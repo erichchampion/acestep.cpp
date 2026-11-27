@@ -1040,8 +1040,10 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     int                     ref_len         = 0;
     std::vector<float>      ref_latents;
     int                     ref_T_latent = 0;
-    // Source parts sent to a task that takes none: not read (#1157).
+    // Source parts sent to a task that takes none: not read (#1157), and
+    // said so by the engine's words once the job is made (#1170).
     bool                    src_dropped  = false;
+    std::string             src_ignored;
 
     // The decoded audio is this handler's until the worker is handed it: an
     // answer before then -- a refused batch, a bad output_format -- frees it,
@@ -1065,29 +1067,51 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             json_error(res, 400, "Multipart: invalid JSON in 'request' part");
             return;
         }
-        // The batch rule before any part is read: a request it refuses costs
-        // no decode (cadenza-audio #1157). The JSON path runs it below. A lone
-        // request always runs, its takes its own, so it is asked of the one.
-        {
-            AceSynthBatchRefusal why;
-            if (ace_synth_batch_refused(&ace_req, 1, &why)) {
-                const std::string which = why.request >= 0 ? "Request 0: " : "";
-                json_error(res, 400, (which + why.reason).c_str());
-                return;
-            }
+        ace_reqs.push_back(ace_req);
+    } else {
+        // plain JSON body: single object {} or array [{}, ...]
+        if (!request_parse_json_array(req.body.c_str(), &ace_reqs)) {
+            json_error(res, 400, "Invalid JSON");
+            return;
         }
+    }
+
+    if (ace_reqs.empty()) {
+        json_error(res, 400, "Empty request");
+        return;
+    }
+    // The engine's batch rule, for every request, not only the first: an
+    // unknown task (said as that), requests that mix tasks, a request short
+    // of its caption (#1123), a region bound or codes that are no such
+    // thing, a setting the batch shares asked differently (#1159).
+    // The batch's takes, by the engine's one rule for which requests run:
+    // computed once, asked of here and handed to the worker, which expands by
+    // it (cadenza-audio #1243, #1269).
+    AceSynthBatchTakes batch_takes = ace_synth_batch_takes(ace_reqs.data(), (int) ace_reqs.size());
+    {
+        AceSynthBatchRefusal why;
+        if (ace_synth_batch_refused(ace_reqs.data(), (int) batch_takes.takes.size(), &why)) {
+            const std::string which = why.request >= 0 ? "Request " + std::to_string(why.request) + ": " : "";
+            json_error(res, 400, (which + why.reason).c_str());
+            return;
+        }
+    }
+    // A multipart's parts, read once the batch rule lets its request run: a
+    // request it refuses costs no decode (cadenza-audio #1157), asked once,
+    // on the one path the JSON body takes too (#1170).
+    if (req.is_multipart_form_data()) {
         // A task that takes no source would drop one with a warning: its
         // parts are not read -- not checked, not decoded, a whole song's
         // worth of floats -- as the engine runs the task without them
         // (cadenza-audio #1157). The warning is said once the job is made.
-        const bool src_sent    = req.form.has_file("src_latents") || req.form.has_file("audio");
-        const bool src_ignored = ace_synth_task_ignores_source(ace_req.task_type.c_str());
-        src_dropped            = src_ignored && src_sent;
+        const bool src_sent = req.form.has_file("src_latents") || req.form.has_file("audio");
+        src_ignored         = ace_synth_source_ignored_warning(ace_reqs[0].task_type.c_str());
+        src_dropped         = !src_ignored.empty() && src_sent;
         // A task that works from a source, sent neither part: refused before
         // any part -- a reference too -- is read or decoded (#1157, #1193),
         // by the rule asked again below of what the parts read to.
-        if (!src_sent && refuse_sourceless(res, ace_req.task_type, src_interleaved, src_len, src_latents, src_T_latent,
-                                           kSourceHintMultipart)) {
+        if (!src_sent && refuse_sourceless(res, ace_reqs[0].task_type, src_interleaved, src_len, src_latents,
+                                           src_T_latent, kSourceHintMultipart)) {
             return;
         }
 
@@ -1097,7 +1121,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         // that audio is not decoded nor bounded, as it is unused: a crop's
         // latents and the long song it came from are no 413 (cadenza-audio
         // #1266).
-        if (!src_ignored && req.form.has_file("src_latents")) {
+        if (src_ignored.empty() && req.form.has_file("src_latents")) {
             const int T = read_latent_part(res, req.form.get_file("src_latents").content, "src_latents", src_latents);
             if (T < 0) {
                 return;
@@ -1107,7 +1131,7 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                     latent_frames_sec(T));
         }
 
-        if (!src_ignored && src_T_latent == 0 && req.form.has_file("audio")) {
+        if (src_ignored.empty() && src_T_latent == 0 && req.form.has_file("audio")) {
             auto file = req.form.get_file("audio");
             if (file.content.empty()) {
                 json_error(res, 400, "Multipart: empty 'audio' part");
@@ -1150,34 +1174,6 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
                 }
             }
         }
-        ace_reqs.push_back(ace_req);
-    } else {
-        // plain JSON body: single object {} or array [{}, ...]
-        if (!request_parse_json_array(req.body.c_str(), &ace_reqs)) {
-            json_error(res, 400, "Invalid JSON");
-            return;
-        }
-    }
-
-    if (ace_reqs.empty()) {
-        json_error(res, 400, "Empty request");
-        return;
-    }
-    // The engine's batch rule, for every request, not only the first: an
-    // unknown task (said as that), requests that mix tasks, a request short
-    // of its caption (#1123), a region bound or codes that are no such
-    // thing, a setting the batch shares asked differently (#1159).
-    // The batch's takes, by the engine's one rule for which requests run:
-    // computed once, asked of here and handed to the worker, which expands by
-    // it (cadenza-audio #1243, #1269).
-    AceSynthBatchTakes batch_takes = ace_synth_batch_takes(ace_reqs.data(), (int) ace_reqs.size());
-    {
-        AceSynthBatchRefusal why;
-        if (ace_synth_batch_refused(ace_reqs.data(), (int) batch_takes.takes.size(), &why)) {
-            const std::string which = why.request >= 0 ? "Request " + std::to_string(why.request) + ": " : "";
-            json_error(res, 400, (which + why.reason).c_str());
-            return;
-        }
     }
     // A task that works from a source, given none: a 400 with the run's own
     // reason now, not a job that fails saying nothing (cadenza-audio #1160,
@@ -1205,12 +1201,12 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     int peak_clip = ace_reqs[0].peak_clip;
 
     // create job, spawn worker, return ID
-    if (src_dropped) {
-        fprintf(stderr, "[Server] WARNING: task '%s' ignores the given source: not read\n",
-                ace_reqs[0].task_type.c_str());
-    }
     auto job = job_create();
     fprintf(stderr, "[Server] Job %s created (%d requests)\n", job->id.c_str(), (int) ace_reqs.size());
+    // Said with the job's id, so concurrent requests' warnings are told apart.
+    if (src_dropped) {
+        fprintf(stderr, "[Server] WARNING: job %s: %s: not read\n", job->id.c_str(), src_ignored.c_str());
+    }
 
     work_push_job(job, [job, reqs = std::move(ace_reqs), takes = std::move(batch_takes), src_interleaved, src_len,
                         src_lat = std::move(src_latents), src_T_latent, ref_interleaved, ref_len,

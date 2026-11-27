@@ -162,10 +162,11 @@ static int synth_main(int argc, char ** argv) {
     // A task that takes no source would drop one with a warning: say so now,
     // before any model loads, and leave --src-audio unread -- not checked,
     // not decoded, a whole song's worth of floats -- as the engine runs the
-    // task without it (cadenza-audio #1157). ace-server does the same.
-    if (src_audio_path && ace_synth_task_ignores_source(reqs[0].task_type.c_str())) {
-        fprintf(stderr, "[Ace-Synth] WARNING: task '%s' ignores the given source: --src-audio not read\n",
-                reqs[0].task_type.c_str());
+    // task without it (cadenza-audio #1157). ace-server does the same, by the
+    // engine's one rule and words (#1170).
+    const std::string src_ignored = ace_synth_source_ignored_warning(reqs[0].task_type.c_str());
+    if (src_audio_path && !src_ignored.empty()) {
+        fprintf(stderr, "[Ace-Synth] WARNING: %s: --src-audio not read\n", src_ignored.c_str());
         src_audio_path = NULL;
     }
     // A task that works from a source, given none: refused before any model

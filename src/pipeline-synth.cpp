@@ -882,6 +882,13 @@ bool ace_synth_task_ignores_source(const char * task) {
     return ace_synth_task_info(task, &info) && !info.needs_source;
 }
 
+std::string ace_synth_source_ignored_warning(const char * task) {
+    if (!ace_synth_task_ignores_source(task)) {
+        return "";
+    }
+    return std::string("task '") + task + "' ignores the given source";
+}
+
 // The input rule for a task's row, the source read as the run reads it
 // (SynthInput::given): run_task and ace_synth_inputs_refused alike, so a
 // tool and the run say one rule of one reading (cadenza-audio #1194).
@@ -1124,6 +1131,20 @@ AceTestCoverRecord ace_test_last_cover() {
     return g_test_last_cover;
 }
 
+// What the last run's task built (ace_test_last_task): reset and written as
+// the cover record is, under its lock.
+static AceTestTaskRecord g_test_last_task{ "", false };
+
+static void set_test_last_task(AceTestTaskRecord r) {
+    std::lock_guard<std::mutex> lock(g_test_cover_mutex);
+    g_test_last_task = std::move(r);
+}
+
+AceTestTaskRecord ace_test_last_task() {
+    std::lock_guard<std::mutex> lock(g_test_cover_mutex);
+    return g_test_last_task;
+}
+
 // The cover knobs run_task has clamped, or run at their default for a NaN
 // (ace_test_cover_knob_fixes).
 static std::atomic<int> g_test_cover_knob_fixes{ 0 };
@@ -1154,6 +1175,7 @@ static AceSynthJob * run_task(AceSynth *             ctx,
     // (the table's needs_source). A task that takes no source given one is
     // warned of.
     set_test_last_cover(kCoverRecordUnset);
+    set_test_last_task({ "", false });
     AceSynthBatchRefusal refusal;
     if (ace_synth_batch_refused(reqs, batch_n, &refusal)) {
         g_test_batch_refusals.fetch_add(1);
@@ -1180,7 +1202,7 @@ static AceSynthJob * run_task(AceSynth *             ctx,
     // its run -- but not silently, as a cover it may have meant (#1095).
     if (!entry->needs_source && in.src.given()) {
         g_test_source_ignores.fetch_add(1);
-        fprintf(stderr, "[Synth-Run] WARNING: task '%s' ignores the given source\n", task.c_str());
+        fprintf(stderr, "[Synth-Run] WARNING: %s\n", ace_synth_source_ignored_warning(task.c_str()).c_str());
     }
     // The one owner of the task's job (#1041): each task fills the job's
     // state and says whether it ran; the job is returned only if it did. A
@@ -1230,14 +1252,22 @@ static AceSynthJob * run_task(AceSynth *             ctx,
         in_range(s.rr.cover_noise_strength, def.cover_noise_strength, "cover_noise_strength");
     }
 
-    // What the run made of the request, written however it ends -- a throw
-    // included -- while the job's state still stands (destroyed before it).
-    struct CoverRecord {
+    // What the run made of the request, and what its task built (#1091),
+    // written however it ends -- a throw included -- while the job's state
+    // still stands (destroyed before it): the FSQ roundtrip's clean latents
+    // are still aside, not yet handed out.
+    struct RunRecord {
         const SynthState & s;
 
-        ~CoverRecord() {
+        ~RunRecord() {
             set_test_last_cover({ s.rr.audio_cover_strength, s.rr.cover_noise_strength, s.need_enc_switch,
                                   s.cover_steps, s.num_steps });
+            // The copy may not throw out of a destructor: a record it cannot
+            // make is left reset.
+            try {
+                set_test_last_task({ s.instruction_str, !s.fsq_clean_latents.empty() });
+            } catch (...) {
+            }
         }
     } record{ s };
 

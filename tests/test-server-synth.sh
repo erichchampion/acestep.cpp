@@ -7,6 +7,13 @@
 # requires a 400 that says why, and that the server still answers after
 # each. The server is stopped however the test ends.
 #
+# And (cadenza-audio #1170): a multipart of a task the engine does not know,
+# with an audio part that is no audio, is refused by the batch rule, by name
+# -- one check, before any part is read, not "Failed to decode audio"; and a
+# text2music sent such a part gets its job, the part unread, and the log's
+# warning names that job by its id, in the engine's words. That job is
+# cancelled at once.
+#
 # The first draft of #1193 refused that last cover after decoding its
 # reference, and freed the reference twice. The refusal now comes before any
 # part is read, so this holds that it does -- the reference never decoded --
@@ -102,4 +109,27 @@ refused "a multipart cover with only its request part" "$HINT_MULTIPART" \
     --form-string "request=$COVER"
 refused "a multipart cover with a ref_audio part and no source" "$HINT_MULTIPART" \
     --form-string "request=$COVER" -F "ref_audio=@$REF;type=audio/wav"
+
+# No audio at all: a part that would be refused were it decoded.
+printf 'not audio' >"$work/junk.wav"
+code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
+    --form-string 'request={"task_type":"covers","caption":"warm analog synth","duration":4}' \
+    -F "audio=@$work/junk.wav;type=audio/wav" "$URL/synth")" || fail "an unknown task: no answer"
+[ "$code" = 400 ] || fail "an unknown task: HTTP $code, want 400: $(cat "$work/body")"
+grep -qF 'unknown task_type' "$work/body" || fail "an unknown task: not the batch rule's reason: $(cat "$work/body")"
+answers "after an unknown task"
+echo "ok: a multipart of an unknown task with a junk audio part -- $(cat "$work/body")"
+
+code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
+    --form-string 'request={"task_type":"text2music","caption":"warm analog synth","duration":4}' \
+    -F "audio=@$work/junk.wav;type=audio/wav" "$URL/synth")" || fail "a text2music with a source: no answer"
+[ "$code" = 200 ] || fail "a text2music with a source: HTTP $code, want 200: $(cat "$work/body")"
+id="$(sed -n 's/^{"id":"\([^"]*\)"}$/\1/p' "$work/body")"
+[ -n "$id" ] || fail "a text2music with a source: no job id in $(cat "$work/body")"
+curl -sS --max-time "$REQUEST_TIMEOUT_S" -o /dev/null -X POST "$URL/job?id=$id&cancel=1" ||
+    fail "a text2music with a source: no answer to the cancel"
+grep -qF "[Server] WARNING: job $id: task 'text2music' ignores the given source: not read" "$work/server.log" ||
+    fail "a text2music with a source: no warning naming job $id"
+answers "after a text2music with a source"
+echo "ok: a text2music with a junk audio part -- job $id, its source unread and said so"
 echo "PASS"

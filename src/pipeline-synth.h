@@ -12,6 +12,7 @@
 #include "request.h"
 
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 struct AceSynth;
@@ -304,6 +305,13 @@ const char * ace_synth_task_name(int index);
 // False for a task the engine does not know, which its run refuses.
 bool ace_synth_task_ignores_source(const char * task);
 
+// The warning for a source sent to `task`, when the task takes none -- "task
+// 'text2music' ignores the given source" -- or "" when it works from one or
+// the engine does not know it: the one skip rule, in one set of words, that
+// the run and the tools say it by, each adding what it did with the source
+// (cadenza-audio #1170).
+std::string ace_synth_source_ignored_warning(const char * task);
+
 // Whether a run of `task` is refused for its inputs: a task that works from a
 // source (the table's needs_source) given none -- the rule run_task holds a
 // run to, asked by a tool before it loads a model so it says the same
@@ -389,21 +397,6 @@ int ace_synth_requests_run(const AceRequest * reqs, int batch_n);
 // Tests only: how many runs run_task has refused by ace_synth_batch_refused.
 int ace_test_batch_refusals();
 
-// Tests only: with `armed`, the next Cover's FSQ roundtrip fails as its
-// tokenizer could not be had (store_require_fsq_tok returning NULL), once --
-// a path no input reaches, which a test drives to see the Cover fail and
-// still hand out its clean encode (cadenza-audio #1056); without, the hook
-// is disarmed, fired or not. A test sees it fired by the run's failure,
-// model_unavailable for the FSQ tokenizer (cadenza-audio #1092), as it
-// tells the task table's refusal of a sourceless task by its reason.
-void ace_test_fail_next_fsq_require(bool armed);
-
-// Tests only: with `armed`, the next decode's VAE decoder is not had
-// (store_require_vae_dec returning NULL), once -- model_unavailable, said as
-// kAceVaeDecoderUnavailable; without, disarmed, fired or not (cadenza-audio
-// #1286).
-void ace_test_fail_next_vae_dec_require(bool armed);
-
 // Tests only: with `armed`, the next take's tiled decode fails as a graph it
 // could not run would, once -- a take of no audio, which the decode says as
 // kAceVaeDecodeFailed; without, disarmed (cadenza-audio #1286).
@@ -454,6 +447,19 @@ struct AceTestCoverRecord {
 };
 
 AceTestCoverRecord ace_test_last_cover();
+
+// Tests only: what tells which of the task table's functions the last run
+// called -- the DiT instruction its task built, and whether it ran the FSQ
+// roundtrip (a cover's, not a cover-nofsq's) -- which a test holds each row
+// to, as no hand-out of a task that does not splice tells them apart
+// (cadenza-audio #1091). Reset when a run starts (no instruction), written
+// however its task ends; a run refused before its task leaves it reset.
+struct AceTestTaskRecord {
+    std::string instruction;
+    bool        fsq_roundtrip;
+};
+
+AceTestTaskRecord ace_test_last_task();
 
 // Tests only: how many cover knobs run_task has clamped to [0, 1], or run at
 // their default for a NaN, each with a warning (cadenza-audio #1152).

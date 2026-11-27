@@ -21,6 +21,7 @@
 #include "pipeline-synth.h"
 #include "pipeline-understand.h"
 #include "prompt.h"
+#include "task-types.h"
 #include "version.h"
 
 #include <cmath>
@@ -30,6 +31,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <set>
 #include <tuple>
 
 static void dump(ModelStore * s, const char * tag) {
@@ -247,7 +249,26 @@ static int scenario_kind_split(const char * vae_path) {
     ModelKey k_enc = { MODEL_VAE_ENC, vae_path, 0, 0, "", 1.0f };
     ModelKey k_dec = { MODEL_VAE_DEC, vae_path, 0, 0, "", 1.0f };
 
+    // The tests' fail-next hook is the store's, by kind (cadenza-audio
+    // #1089): armed for the decoder, it fails the decoder's next require and
+    // not the encoder's, once, counted; a kind out of range is ignored.
+    const int dec_failed = store_test_requires_failed(MODEL_VAE_DEC);
+    const int enc_failed = store_test_requires_failed(MODEL_VAE_ENC);
+    store_test_fail_next_require(MODEL_KIND_COUNT, true);
+    store_test_fail_next_require((ModelKind) -1, true);
+    store_test_fail_next_require(MODEL_VAE_DEC, true);
     auto * enc = store_require_vae_enc(s, k_enc);
+    if (store_require_vae_dec(s, k_dec) || store_gpu_module_count(s) != 1 ||
+        store_test_requires_failed(MODEL_VAE_DEC) != dec_failed + 1 ||
+        store_test_requires_failed(MODEL_VAE_ENC) != enc_failed || store_test_requires_failed(MODEL_KIND_COUNT) ||
+        store_test_requires_failed((ModelKind) -1)) {
+        fprintf(stderr, "[Test] FAIL: the decoder's armed require was not the one failed, or not once\n");
+        if (enc) {
+            store_release(s, enc);
+        }
+        store_free(s);
+        return 1;
+    }
     auto * dec = store_require_vae_dec(s, k_dec);
     if (!enc || !dec) {
         fprintf(stderr, "[Test] FAIL: VAE enc or dec load\n");
@@ -758,6 +779,36 @@ static int scenario_loaded_threads(const char * vae_path) {
 // before its DiT and still keeps its clean encode. And (cadenza-audio #1057)
 // an extract and a complete keep their clean encode, as a cover does, and
 // every task that needs a source refuses a run given none.
+// What each task's own function builds, for a request of no track and no
+// audio codes -- the DiT instruction, and the cover's FSQ roundtrip -- by
+// the task's name, apart from the table: what scenario 11 holds every row's
+// run to, so a row pointed at another task's function fails (cadenza-audio
+// #1091). An instruction left empty: a task this does not know.
+static AceTestTaskRecord task_builds(const std::string & task) {
+    if (task == TASK_TEXT2MUSIC) {
+        return { DIT_INSTR_TEXT2MUSIC, false };
+    }
+    if (task == TASK_COVER) {
+        return { DIT_INSTR_COVER, true };
+    }
+    if (task == TASK_COVER_NOFSQ) {
+        return { DIT_INSTR_COVER, false };
+    }
+    if (task == TASK_REPAINT) {
+        return { DIT_INSTR_REPAINT, false };
+    }
+    if (task == TASK_LEGO) {
+        return { dit_instr_lego(""), false };
+    }
+    if (task == TASK_EXTRACT) {
+        return { dit_instr_extract(""), false };
+    }
+    if (task == TASK_COMPLETE) {
+        return { dit_instr_complete(""), false };
+    }
+    return { "", false };
+}
+
 // Cancels at the DiT's first poll, counting the polls it cancelled: a run
 // that failed before its DiT (an encode, a require) reached none.
 static bool cancel_at_dit(void * data, AceStage stage, int, int) {
@@ -1109,6 +1160,16 @@ static int scenario_task_table() {
                     ace_synth_task_ignores_source(w.task), !w.needs_source);
             rc = 1;
         }
+        // And the words it is said by, the run's and the tools' alike
+        // (cadenza-audio #1170): none for a task that works from a source.
+        const std::string warning = ace_synth_source_ignored_warning(w.task);
+        const std::string want_warning =
+            w.needs_source ? "" : std::string("task '") + w.task + "' ignores the given source";
+        if (warning != want_warning) {
+            fprintf(stderr, "[Test] FAIL: %s's ignored source is said '%s', want '%s'\n", w.task, warning.c_str(),
+                    want_warning.c_str());
+            rc = 1;
+        }
         // The batch rule by the column, both ways (#1150): a region bound
         // that is no number -- a NaN, an infinity, at either end and of
         // either sign -- is refused for a task that reads a region, and runs
@@ -1239,8 +1300,9 @@ static int scenario_task_table() {
         }
     }
     // A task it does not know -- misspelt, empty, none -- is said as that,
-    // the caller's info left as it was; nor does it ignore a source, so a
-    // tool decodes it and the run refuses the task by name.
+    // the caller's info left as it was; nor does it ignore a source, said
+    // in no words: the tools refuse it by the batch rule, by name, before
+    // any source is read (cadenza-audio #1170).
     for (const char * task : { "covers", "", (const char *) nullptr }) {
         AceSynthTaskInfo info{ true, false, true, true, true, true };
         if (ace_synth_task_info(task, &info) || !info.needs_source || info.needs_caption || !info.cover_knobs ||
@@ -1249,7 +1311,7 @@ static int scenario_task_table() {
                     task ? task : "(null)");
             rc = 1;
         }
-        if (ace_synth_task_ignores_source(task)) {
+        if (ace_synth_task_ignores_source(task) || !ace_synth_source_ignored_warning(task).empty()) {
             fprintf(stderr, "[Test] FAIL: an unknown task '%s' ignores a source\n", task ? task : "(null)");
             rc = 1;
         }
@@ -1864,7 +1926,11 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // poll (POLLS 1), or before its DiT (POLLS 0). REGION gives a repaint, or
     // a lego, a region; SOURCE LATENTS gives the source as latents. What the
     // call said of a refusal before its job is last_refusal (#1160).
-    AceSynthBatchRefusal last_refusal{ -7, "unset" };
+    AceSynthBatchRefusal  last_refusal{ -7, "unset" };
+    // The tasks whose runs reached their DiT, each held to what its own
+    // function builds, and whether one was not (#1091).
+    std::set<std::string> ran_tasks;
+    int                   rc_task = 0;
     auto run = [&](const char * task, const float * src, const float * ref, AceSynthEncodes & kept, bool region = false,
                    int want_polls = 1, const std::vector<float> * src_latents = nullptr, float region_start = 0.5f,
                    float region_end = 1.5f, int src_len = 0, float cover_strength = 1.0f, float cover_noise = 0.0f) {
@@ -1888,6 +1954,19 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
         if (job) {
             ace_synth_job_free(job);
             return false;
+        }
+        // A run that reached its DiT ran its task's own function: what it
+        // built is the task's, not another row's (#1091).
+        if (want_polls > 0 && dit_polls == polls + want_polls) {
+            const AceTestTaskRecord built = ace_test_last_task();
+            const AceTestTaskRecord want  = task_builds(task);
+            if (want.instruction.empty() || built.instruction != want.instruction ||
+                built.fsq_roundtrip != want.fsq_roundtrip) {
+                fprintf(stderr, "[Test] FAIL: a %s ran '%s' (FSQ roundtrip %d), want '%s' (%d)\n", task,
+                        built.instruction.c_str(), built.fsq_roundtrip, want.instruction.c_str(), want.fsq_roundtrip);
+                rc_task = 1;
+            }
+            ran_tasks.insert(task);
         }
         return dit_polls == polls + want_polls;
     };
@@ -1990,12 +2069,20 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             ace_audio_free(&out);
             said("a decode of a take not the job's", ace_synth_job_run_vae_take(synth, job, 1, &out, {}, &failed), -1,
                  AceSynthFailure::other, failed);
-            ace_test_fail_next_vae_dec_require(true);
+            // The store's hook fails the decoder's require, and only it: the
+            // count says it fired there (cadenza-audio #1089).
+            const int dec_failed = store_test_requires_failed(MODEL_VAE_DEC);
+            store_test_fail_next_require(MODEL_VAE_DEC, true);
             said("a decode with no decoder", ace_synth_job_run_vae_take(synth, job, 0, &out, {}, &failed), -1,
                  AceSynthFailure::model_unavailable, failed);
-            ace_test_fail_next_vae_dec_require(false);
+            store_test_fail_next_require(MODEL_VAE_DEC, false);
             if (failed.failed && strcmp(failed.failed, kAceVaeDecoderUnavailable)) {
                 fprintf(stderr, "[Test] FAIL: a decode with no decoder said '%s'\n", failed.failed);
+                rc = 1;
+            }
+            if (store_test_requires_failed(MODEL_VAE_DEC) != dec_failed + 1) {
+                fprintf(stderr, "[Test] FAIL: the decoder's require hook fired %d times, want once\n",
+                        store_test_requires_failed(MODEL_VAE_DEC) - dec_failed);
                 rc = 1;
             }
             ace_test_fail_next_vae_decode(true);
@@ -2667,9 +2754,16 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     // unavailable, not a refusal -- which is also how the test sees the
     // hook fired (#1092).
     AceSynthEncodes failed;
-    ace_test_fail_next_fsq_require(true);
+    const int       tok_failed = store_test_requires_failed(MODEL_FSQ_TOK);
+    store_test_fail_next_require(MODEL_FSQ_TOK, true);
     const bool failed_early = run("cover", source.data(), NULL, failed, false, 0);
-    ace_test_fail_next_fsq_require(false);
+    store_test_fail_next_require(MODEL_FSQ_TOK, false);
+    // The store's hook fired once, at the tokenizer's require (#1089).
+    if (store_test_requires_failed(MODEL_FSQ_TOK) != tok_failed + 1) {
+        fprintf(stderr, "[Test] FAIL: the FSQ tokenizer's require hook fired %d times, want once\n",
+                store_test_requires_failed(MODEL_FSQ_TOK) - tok_failed);
+        rc = 1;
+    }
     if (last_refusal.failure != AceSynthFailure::model_unavailable || !last_refusal.failed ||
         !strstr(last_refusal.failed, "FSQ tokenizer") || last_refusal.reason) {
         fprintf(stderr,
@@ -2730,13 +2824,22 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
             rc = 1;
         }
     }
+    // Every row of the table ran its task's own function (#1091).
+    rc |= rc_task;
+    for (int t = 0; t < ace_synth_task_count(); t++) {
+        if (!ran_tasks.count(ace_synth_task_name(t))) {
+            fprintf(stderr, "[Test] FAIL: no run of the table's %s reached its DiT\n", ace_synth_task_name(t));
+            rc = 1;
+        }
+    }
     ace_synth_free(synth);
     store_free(s);
     if (rc == 0) {
         fprintf(stderr,
                 "[Test] scenario 11 PASS: cover %zu frames, reference %zu, repaint and lego region none, a "
                 "whole-song lego, an extract, a complete and a failed FSQ roundtrip their clean encode, every "
-                "run given no source refused, and a text2music's ignored source warned of\n",
+                "run given no source refused, a text2music's ignored source warned of, and every row its own "
+                "task's run\n",
                 cover.src_latents.size() / 64, text.ref_latents.size() / 64);
     }
     return rc;

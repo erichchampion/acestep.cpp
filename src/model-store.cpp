@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -694,6 +695,39 @@ template <typename T> struct LoadGuard {
 // `load(m, k)` returns false for a load that failed; a fatal it raises is
 // the same failure (ace_fatal_error: nullptr, the reason on stderr), but a
 // GPU failure is not the file's and is rethrown for the caller (#403).
+// The tests' fail-next hook, a flag and a count per kind
+// (store_test_fail_next_require).
+static std::atomic<bool> g_test_fail_require[MODEL_KIND_COUNT];
+static std::atomic<int>  g_test_requires_failed[MODEL_KIND_COUNT];
+
+static bool kind_in_range(ModelKind kind) {
+    return kind >= 0 && kind < MODEL_KIND_COUNT;
+}
+
+void store_test_fail_next_require(ModelKind kind, bool armed) {
+    if (kind_in_range(kind)) {
+        g_test_fail_require[kind].store(armed);
+    }
+}
+
+int store_test_requires_failed(ModelKind kind) {
+    return kind_in_range(kind) ? g_test_requires_failed[kind].load() : 0;
+}
+
+// Whether this require is the one the hook fails, disarming it: a relaxed
+// load first, so a shipping require pays no read-modify-write.
+static bool require_failed_by_test(ModelKind kind) {
+    if (!kind_in_range(kind)) {
+        return false;
+    }
+    std::atomic<bool> & hook = g_test_fail_require[kind];
+    if (!hook.load(std::memory_order_relaxed) || !hook.exchange(false)) {
+        return false;
+    }
+    g_test_requires_failed[kind].fetch_add(1);
+    return true;
+}
+
 template <typename T, typename Load>
 static T * require_module(ModelStore *     s,
                           const ModelKey & key_in,
@@ -701,6 +735,10 @@ static T * require_module(ModelStore *     s,
                           void (*del)(void *),
                           size_t (*bytes_of)(const T *),
                           Load             load) {
+    if (require_failed_by_test(key_in.kind)) {
+        fprintf(stderr, "[Store] Require %s: failed by the test hook\n", label);
+        return nullptr;
+    }
     std::lock_guard<std::mutex> lock(s->mtx);
     const ModelKey              k = stamped(key_in);
     if (auto * hit = cache_hit<T>(s, k)) {
