@@ -109,6 +109,8 @@ enum class AceSynthFailure {
     encode_failed,      // an encode, a detokenize -- the FSQ roundtrip's or the
                         // audio codes' -- made nothing: one kind for one fault
     cancelled,          // the progress callback asked to cancel
+    out_of_memory,      // a buffer the engine allocates itself could not be
+                        // (a decode's output, cadenza-audio #1286)
     other,              // any other failure: the engine's diagnostic is on stderr
 };
 
@@ -117,6 +119,7 @@ enum class AceSynthFailure {
 inline constexpr const char * kAceVaeEncoderUnavailable = "the VAE encoder could not be loaded";
 inline constexpr const char * kAceVaeDecoderUnavailable = "the VAE decoder could not be loaded";
 inline constexpr const char * kAceVaeDecodeFailed       = "the VAE decode failed";
+inline constexpr const char * kAceVaeEncodeFailed       = "the VAE encode failed";
 
 struct AceSynthBatchRefusal {
     int             request = -1;
@@ -208,8 +211,10 @@ const float * ace_synth_job_get_latent(const AceSynthJob * job, int track_idx, i
 // (cadenza-audio #1286): its failure and failed -- the VAE decoder the store
 // could not give (model_unavailable), a cancel, a bad argument (other) --
 // and never its reason, as a decode refuses no request. Unset by a decode
-// that ran. A take of the batch whose own decode failed is left empty, the
-// batch decoding the rest; ace_synth_job_run_vae_take fails for it.
+// that ran. A take whose own decode made no audio fails the decode, said
+// why -- out_of_memory for its output, other for the decode -- the takes
+// before it keeping theirs: never a success with an empty take
+// (cadenza-audio #1286).
 int ace_synth_job_run_vae(AceSynth *             ctx,
                           AceSynthJob *          job,
                           AceAudio *             out,
@@ -221,8 +226,9 @@ int ace_synth_job_run_vae(AceSynth *             ctx,
 // wait on the VAE decoding takes 1..n; call again for the other takes, in
 // any order. The job stays valid and the remaining takes stay decodable
 // after a failed or cancelled call. Returns 0 on success, -1 on a bad take
-// index, error, a decode that made no audio (other, said why), or
-// cancellation; `failed` as for ace_synth_job_run_vae.
+// index, error, a decode that made no audio (said why, as for
+// ace_synth_job_run_vae), or cancellation; `failed` as for
+// ace_synth_job_run_vae.
 int ace_synth_job_run_vae_take(AceSynth *             ctx,
                                AceSynthJob *          job,
                                int                    take,
@@ -398,8 +404,8 @@ void ace_test_fail_next_fsq_require(bool armed);
 void ace_test_fail_next_vae_dec_require(bool armed);
 
 // Tests only: with `armed`, the next take's tiled decode fails as a graph it
-// could not run would, once -- a take of no audio, which a lone take's decode
-// says as kAceVaeDecodeFailed; without, disarmed (cadenza-audio #1286).
+// could not run would, once -- a take of no audio, which the decode says as
+// kAceVaeDecodeFailed; without, disarmed (cadenza-audio #1286).
 void ace_test_fail_next_vae_decode(bool armed);
 
 // Tests only: how many runs the task table has warned of a source given to

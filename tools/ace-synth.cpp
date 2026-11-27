@@ -348,7 +348,12 @@ static int synth_main(int argc, char ** argv) {
     // (cadenza-audio #1266).
     bool wrote_all = true;
     for (int b = 0; b < (int) all_audio.size(); b++) {
+        // A take with no audio fails the tool, named: the decode fails for
+        // one, so this is held, not reached (cadenza-audio #1286).
         if (!all_audio[b].samples) {
+            fprintf(stderr, "[Ace-Synth Batch%d] FATAL: %s%d decoded to no audio\n", b, all_basenames[b].c_str(),
+                    take_index[b]);
+            wrote_all = false;
             continue;
         }
         const char * ext = is_mp3 ? ".mp3" : ".wav";

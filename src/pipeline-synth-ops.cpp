@@ -176,7 +176,7 @@ int ops_encode_src(const AceSynth * ctx, const SynthInput & src, SynthState & s,
                 return -1;
             }
             fprintf(stderr, "[Encode-Src] FATAL: encode failed\n");
-            return synth_failed(s, AceSynthFailure::encode_failed, "the source's VAE encode failed");
+            return synth_failed(s, AceSynthFailure::encode_failed, kAceVaeEncodeFailed);
         }
         s.cover_latents.resize(s.T_cover * 64);
         fprintf(stderr, "[Encode-Src] Encoded: T_cover=%d (%.2fs), %.1f ms\n", s.T_cover, latent_frames_sec(s.T_cover),
@@ -1068,14 +1068,16 @@ static int ops_edge_source(VAEGGML * vae, const AceSynth * ctx, SynthState & s, 
         s.edge_src_at[k] = -2;
         return 1;
     }
-    CancelOnlyProgress quiet{ progress };
+    // A cancel is what the decode's own polls saw, not a poll after it.
+    CancelSeen         seen{ progress };
+    CancelOnlyProgress quiet{ seen.progress() };
     std::vector<float> win((size_t) 2 * (w1 - w0) * ACE_LATENT_HOP);
     // Planar at the decode's own length, as ops_vae_decode_track reads it.
     const int          got = vae_ggml_decode_tiled(vae, s.cover_latents.data() + (size_t) w0 * 64, w1 - w0, win.data(),
                                                    (w1 - w0) * ACE_LATENT_HOP, ctx->params.vae_chunk,
                                                    ctx->params.vae_overlap, quiet.progress());
     if (got <= 0) {
-        if (ace_cancelled(progress, ACE_STAGE_VAE_DECODE)) {
+        if (seen.cancelled) {
             return -1;
         }
         fprintf(stderr, "[Latent-Edge] WARNING: the source's decode about frame %d failed: the edge as generated\n",
@@ -1162,8 +1164,8 @@ static int ops_latent_edges(VAEGGML * vae, const AceSynth * ctx, SynthState & s,
 
 // Why a decode failed, as synth_failed says it (cadenza-audio #1286): a
 // cancel, or (kAceVae*) the decoder the store could not give. A take's own
-// decode that made nothing says why through ops_vae_decode_track's `empty`:
-// a batch leaves its slot empty and decodes the rest; a lone take fails.
+// decode that made nothing says why through ops_vae_decode_track's `empty`,
+// and fails the decode, the batch's or the lone take's.
 static constexpr const char * kDecodeCancelled = "the decode was cancelled";
 static constexpr const char * kDecodeNoBuffer  = "the VAE decode's output could not be allocated (memory)";
 
@@ -1178,19 +1180,24 @@ static VAEGGML * require_vae_dec(const AceSynth * ctx, SynthState & s) {
     return vae;
 }
 
+// Why a take's decode made no audio: its kind and words, for synth_failed.
+struct TakeEmpty {
+    AceSynthFailure kind = AceSynthFailure::none;
+    const char *    why  = nullptr;
+};
+
 // Decode ONE track: run the tiled VAE decoder over track b's latent and fill
-// *out. A decode failure nulls *out, says why in *empty, and returns 0 (soft
-// fail -- the batch loop continues to other tracks, exactly as it always
-// has); a cancellation returns -1 (the caller aborts). out may point at one
-// element of a batch array or at a standalone AceAudio -- the element is all
-// this function sees.
+// *out. A decode failure nulls *out, says why in *empty, and returns 0 -- its
+// caller fails the decode for it (decode_take); a cancellation returns -1.
+// out may point at one element of a batch array or at a standalone AceAudio
+// -- the element is all this function sees.
 static int ops_vae_decode_track(VAEGGML *        vae,
                                 const AceSynth * ctx,
                                 int              b,
                                 AceAudio *       out,
                                 SynthState &     s,
                                 AceProgress      progress,
-                                const char **    empty) {
+                                TakeEmpty &      empty) {
     int T_latent    = s.T;
     int T_audio_max = T_latent * ACE_LATENT_HOP;
 
@@ -1206,23 +1213,25 @@ static int ops_vae_decode_track(VAEGGML *        vae,
     float * audio    = (float *) malloc((size_t) 2 * T_audio_max * sizeof(float));
     if (!audio) {
         fprintf(stderr, "[VAE-Decode Batch%d] ERROR: OOM allocating output (%d samples)\n", b, 2 * T_audio_max);
-        *empty = kDecodeNoBuffer;
+        empty = { AceSynthFailure::out_of_memory, kDecodeNoBuffer };
         return 0;
     }
 
     s.timer.reset();
-    int T_audio = failed_by_test(g_test_fail_vae_decode) ?
-                      -1 :
-                      vae_ggml_decode_tiled(vae, dit_out, T_latent, audio, T_audio_max, ctx->params.vae_chunk,
-                                            ctx->params.vae_overlap, progress);
+    // A cancel is what the decode's own polls saw, not a poll after it.
+    CancelSeen seen{ progress };
+    int        T_audio = failed_by_test(g_test_fail_vae_decode) ?
+                             -1 :
+                             vae_ggml_decode_tiled(vae, dit_out, T_latent, audio, T_audio_max, ctx->params.vae_chunk,
+                                                   ctx->params.vae_overlap, seen.progress());
     if (T_audio < 0) {
         free(audio);
-        if (ace_cancelled(progress, ACE_STAGE_VAE_DECODE)) {
+        if (seen.cancelled) {
             fprintf(stderr, "[VAE-Decode Batch%d] Cancelled\n", b);
             return synth_failed(s, AceSynthFailure::cancelled, kDecodeCancelled);
         }
         fprintf(stderr, "[VAE-Decode Batch%d] ERROR: decode failed\n", b);
-        *empty = kAceVaeDecodeFailed;
+        empty = { AceSynthFailure::other, kAceVaeDecodeFailed };
         return 0;
     }
     fprintf(stderr, "[VAE-Decode Batch%d] Decode: %.1f ms\n", b, s.timer.ms());
@@ -1318,6 +1327,27 @@ static int ops_vae_decode_track(VAEGGML *        vae,
     return 0;
 }
 
+// One take decoded, a take that made no audio a failure said why -- never a
+// success with an empty take, the batch's or a lone one's (cadenza-audio
+// #1286): 0, or -1 with the decode's failure set.
+static int decode_take(VAEGGML *        vae,
+                       const AceSynth * ctx,
+                       int              b,
+                       AceAudio *       out,
+                       SynthState &     s,
+                       AceProgress      progress) {
+    TakeEmpty empty;
+    if (ops_vae_decode_track(vae, ctx, b, out, s, progress, empty) != 0) {
+        return -1;
+    }
+    if (!out->samples) {
+        fprintf(stderr, "[VAE-Decode Batch%d] ERROR: the take decoded to no audio\n", b);
+        return synth_failed(s, empty.why ? empty.kind : AceSynthFailure::other,
+                            empty.why ? empty.why : kAceVaeDecodeFailed);
+    }
+    return 0;
+}
+
 int ops_vae_decode(const AceSynth * ctx, int batch_n, AceAudio * out, SynthState & s, AceProgress progress) {
     VAEGGML * vae = require_vae_dec(ctx, s);
     if (!vae) {
@@ -1334,11 +1364,8 @@ int ops_vae_decode(const AceSynth * ctx, int batch_n, AceAudio * out, SynthState
                 s.repaint_t1, s.T);
     }
 
-    // A take that made nothing is left empty: the batch's others decode, as
-    // its callers skip an empty slot.
     for (int b = 0; b < batch_n; b++) {
-        const char * empty = nullptr;
-        if (ops_vae_decode_track(vae, ctx, b, &out[b], s, progress, &empty) != 0) {
+        if (decode_take(vae, ctx, b, &out[b], s, progress) != 0) {
             return -1;
         }
     }
@@ -1362,12 +1389,5 @@ int ops_vae_decode_one(const AceSynth * ctx, int track, AceAudio * out, SynthSta
                 s.repaint_t1, s.T);
     }
 
-    // A lone take that made nothing fails, said why: never a success with
-    // no audio (cadenza-audio #1286).
-    const char * empty = nullptr;
-    const int    rc    = ops_vae_decode_track(vae, ctx, track, out, s, progress, &empty);
-    if (rc == 0 && !out->samples) {
-        return synth_failed(s, AceSynthFailure::other, empty ? empty : kAceVaeDecodeFailed);
-    }
-    return rc;
+    return decode_take(vae, ctx, track, out, s, progress);
 }

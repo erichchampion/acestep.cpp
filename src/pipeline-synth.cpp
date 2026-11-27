@@ -1132,37 +1132,6 @@ int ace_test_cover_knob_fixes() {
     return g_test_cover_knob_fixes.load();
 }
 
-// The run's progress, passed through to the caller's, seeing whether the
-// callback ever asked to cancel: so run_task can say a run that stopped for
-// it was cancelled, with no poll of its own -- a poll a caller would see, and
-// one a callback that cancels once would answer otherwise (cadenza-audio
-// #1092). PCM passes through too, though phase 1 streams none.
-struct CancelSeen {
-    AceProgress inner;
-    bool        cancelled = false;
-
-    static bool poll(void * data, AceStage stage, int step, int total) {
-        CancelSeen * self = static_cast<CancelSeen *>(data);
-        const bool   stop = self->inner.fn(self->inner.data, stage, step, total);
-        self->cancelled   = self->cancelled || stop;
-        return stop;
-    }
-
-    static void pcm(void * data, const float * left, const float * right, int n_frames) {
-        const CancelSeen * self = static_cast<const CancelSeen *>(data);
-        self->inner.pcm(self->inner.data, left, right, n_frames);
-    }
-
-    // No callback stays none, as a caller's empty progress never cancels.
-    AceProgress progress() {
-        AceProgress p;
-        p.fn   = inner.fn ? &CancelSeen::poll : nullptr;
-        p.pcm  = inner.pcm ? &CancelSeen::pcm : nullptr;
-        p.data = this;
-        return p;
-    }
-};
-
 // Dispatches on reqs[0].task_type to the right task function. task_type is
 // always set: request_init defaults it to text2music, the JSON parser ignores
 // empty strings.

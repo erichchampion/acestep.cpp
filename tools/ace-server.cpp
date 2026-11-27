@@ -58,6 +58,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <climits>
 #include <condition_variable>
 #include <csignal>
 #include <cstdio>
@@ -923,11 +924,20 @@ static void synth_worker(std::shared_ptr<Job>    job,
     // encode each track (peak normalize + encode)
     const char * mime = output_wav ? "audio/wav" : "audio/mpeg";
 
-    std::vector<std::string> encoded(total_tracks);
+    // A take with no audio is no success: the decode fails for one, and a
+    // slot left empty all the same fails the job, naming it (cadenza-audio
+    // #1286), not a part of no audio.
     for (int b = 0; b < total_tracks; b++) {
         if (!audio[b].samples) {
-            continue;
+            for (auto & a : audio) {
+                ace_audio_free(&a);
+            }
+            job_fail(*job, "take " + std::to_string(b) + " decoded to no audio" + kDiagnosticOnStderr);
+            return;
         }
+    }
+    std::vector<std::string> encoded(total_tracks);
+    for (int b = 0; b < total_tracks; b++) {
         if (!output_wav || wav_fmt != WAV_F32) {
             audio_normalize(audio[b].samples, audio[b].n_samples * 2, peak_clip);
         }
@@ -1540,7 +1550,7 @@ static void encode_worker(std::shared_ptr<Job> job, AceRequest ace_req, float * 
         vae_enc_encode_tiled(vae, src_interleaved, src_len, latent.data(), T_latent_max, g_synth_params.vae_chunk,
                              g_synth_params.vae_overlap, AceProgress{ server_progress, (void *) &job->cancel });
     if (T_latent < 0) {
-        job_stopped(*job, std::string("the VAE encode failed") + kDiagnosticOnStderr);
+        job_stopped(*job, std::string(kAceVaeEncodeFailed) + kDiagnosticOnStderr);
         return;
     }
     // An encode of no frame is a failed job, not an empty latent /vae could
@@ -1760,6 +1770,21 @@ static void handle_props(const httplib::Request &, httplib::Response & res) {
     res.set_content(json_write_doc(doc, flags), "application/json");
 }
 
+// A numeric flag's argument, read whole (strtol, base 10) and held to
+// [lo, hi] into `out`; false, said, for anything else -- atoi read "80x" as
+// 80 and "x" as 0 (cadenza-audio #1194).
+static bool int_flag(const char * flag, const char * arg, long lo, long hi, int & out) {
+    char * end   = nullptr;
+    errno        = 0;
+    const long v = strtol(arg, &end, 10);
+    if (end == arg || *end || errno || v < lo || v > hi) {
+        fprintf(stderr, "[Server] ERROR: %s takes a whole number from %ld to %ld, not '%s'\n", flag, lo, hi, arg);
+        return false;
+    }
+    out = (int) v;
+    return true;
+}
+
 static void usage(const char * prog) {
     AceLmParams    lm_d;
     AceSynthParams synth_d;
@@ -1815,13 +1840,20 @@ static int server_main(int argc, char ** argv) {
         } else if (!strcmp(argv[i], "--adapters") && i + 1 < argc) {
             adapters_dir = argv[++i];
         } else if (!strcmp(argv[i], "--max-seq") && i + 1 < argc) {
-            g_lm_params.max_seq = atoi(argv[++i]);
+            if (!int_flag("--max-seq", argv[++i], 1, INT_MAX, g_lm_params.max_seq)) {
+                return 1;
+            }
 
             // vae tiling
         } else if (!strcmp(argv[i], "--vae-chunk") && i + 1 < argc) {
-            g_synth_params.vae_chunk = atoi(argv[++i]);
+            // Any int: the tiling rule below says what a tile may be.
+            if (!int_flag("--vae-chunk", argv[++i], INT_MIN, INT_MAX, g_synth_params.vae_chunk)) {
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--vae-overlap") && i + 1 < argc) {
-            g_synth_params.vae_overlap = atoi(argv[++i]);
+            if (!int_flag("--vae-overlap", argv[++i], INT_MIN, INT_MAX, g_synth_params.vae_overlap)) {
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--keep-loaded")) {
             g_keep_loaded = true;
 
@@ -1829,19 +1861,13 @@ static int server_main(int argc, char ** argv) {
         } else if (!strcmp(argv[i], "--host") && i + 1 < argc) {
             host = argv[++i];
         } else if (!strcmp(argv[i], "--port") && i + 1 < argc) {
-            // The whole argument a port, or refused: atoi took "80x" as 80
-            // and "x" as 0, a free port (cadenza-audio #1194).
-            const char * arg = argv[++i];
-            char *       end = nullptr;
-            errno            = 0;
-            const long v     = strtol(arg, &end, 10);
-            if (end == arg || *end || errno || v < 0 || v > kMaxPort) {
-                fprintf(stderr, "[Server] ERROR: --port takes 0 to %d (0: a free one), not '%s'\n", kMaxPort, arg);
+            if (!int_flag("--port", argv[++i], 0, kMaxPort, port)) {  // 0: a free one
                 return 1;
             }
-            port = (int) v;
         } else if (!strcmp(argv[i], "--max-batch") && i + 1 < argc) {
-            g_max_batch = atoi(argv[++i]);
+            if (!int_flag("--max-batch", argv[++i], INT_MIN, INT_MAX, g_max_batch)) {  // clamped to 1..9 below
+                return 1;
+            }
 
             // debug
         } else if (!strcmp(argv[i], "--no-fsm")) {

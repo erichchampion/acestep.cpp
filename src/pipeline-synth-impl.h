@@ -225,6 +225,37 @@ struct SynthState {
     Timer       timer;
 };
 
+// The run's progress, passed through to the caller's, seeing whether the
+// callback ever asked to cancel: so run_task, and a decode, can say a run that
+// stopped for it was cancelled, with no poll of its own -- a poll a caller would see, and
+// one a callback that cancels once would answer otherwise (cadenza-audio
+// #1092). PCM passes through too, though phase 1 streams none.
+struct CancelSeen {
+    AceProgress inner;
+    bool        cancelled = false;
+
+    static bool poll(void * data, AceStage stage, int step, int total) {
+        CancelSeen * self = static_cast<CancelSeen *>(data);
+        const bool   stop = self->inner.fn(self->inner.data, stage, step, total);
+        self->cancelled   = self->cancelled || stop;
+        return stop;
+    }
+
+    static void pcm(void * data, const float * left, const float * right, int n_frames) {
+        const CancelSeen * self = static_cast<const CancelSeen *>(data);
+        self->inner.pcm(self->inner.data, left, right, n_frames);
+    }
+
+    // No callback stays none, as a caller's empty progress never cancels.
+    AceProgress progress() {
+        AceProgress p;
+        p.fn   = inner.fn ? &CancelSeen::poll : nullptr;
+        p.pcm  = inner.pcm ? &CancelSeen::pcm : nullptr;
+        p.data = this;
+        return p;
+    }
+};
+
 // Say why the run failed, `why` a static string, and return -1 for the op to
 // return: the first failure said holds, so an op failing in turn for an
 // earlier one's cause does not overwrite it (cadenza-audio #1092).

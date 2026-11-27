@@ -3,10 +3,16 @@
 # (cadenza-audio #1194, #1286). Starts ace-server on a free port of 127.0.0.1
 # with the test models, POSTs each request /synth must refuse before any job
 # -- a plain-JSON cover with no source, a multipart cover with only its
-# request part, and a cover with a ref_audio part and no source (the first
-# draft of #1193 freed that reference twice) -- and requires a 400 that says
-# why, and that the server still answers after each. The server is stopped
-# however the test ends.
+# request part, and a cover with a ref_audio part and no source -- and
+# requires a 400 that says why, and that the server still answers after
+# each. The server is stopped however the test ends.
+#
+# The first draft of #1193 refused that last cover after decoding its
+# reference, and freed the reference twice. The refusal now comes before any
+# part is read, so this holds that it does -- the reference never decoded --
+# not the free itself: no request reaches the later refusal with a decoded
+# reference (a source part that decodes to nothing is a 400 of its own,
+# "Failed to decode audio"), which stays as a guard.
 #
 #   test-server-synth.sh <ace-server> <models-dir> <ref.wav>
 set -euo pipefail

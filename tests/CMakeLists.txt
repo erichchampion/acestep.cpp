@@ -188,12 +188,14 @@ add_tool_refusal(test-codec-overlap-past-half "VAE overlap must be 0 to under ha
 add_tool_refusal(test-synth-chunk-zero "VAE chunk must be 1 to 15000 latent frames \\(--vae-chunk"
                  $<TARGET_FILE:ace-synth> --request ${CMAKE_CURRENT_SOURCE_DIR}/request-text2music.json
                  --models /nonexistent --vae-chunk 0)
-# ace-server's --port, the whole argument a port of 0 to 65535 (cadenza-audio
-# #1194): refused as it is parsed, before any model is scanned.
-add_tool_refusal(test-server-port-trailing "--port takes 0 to 65535"
+# ace-server's numeric flags, each argument read whole and held to its range
+# (cadenza-audio #1194): refused as it is parsed, before any model is scanned.
+add_tool_refusal(test-server-port-trailing "--port takes a whole number from 0 to 65535"
                  $<TARGET_FILE:ace-server> --models /nonexistent --port 80x)
-add_tool_refusal(test-server-port-past-most "--port takes 0 to 65535"
+add_tool_refusal(test-server-port-past-most "--port takes a whole number from 0 to 65535"
                  $<TARGET_FILE:ace-server> --models /nonexistent --port 65536)
+add_tool_refusal(test-server-max-seq-none "--max-seq takes a whole number from 1"
+                 $<TARGET_FILE:ace-server> --models /nonexistent --max-seq 0)
 add_tool_refusal(test-understand-chunk-zero "VAE chunk must be 1 to 15000 latent frames \\(--vae-chunk"
                  $<TARGET_FILE:ace-understand> --models /nonexistent --src-audio /nonexistent --vae-chunk 0)
 # neural-codec's latent files, bounded as ace-server's payloads are: a header
@@ -255,15 +257,16 @@ if(ACESTEP_TEST_MODELS)
                      -i ${ACESTEP_TOOL_INPUTS}/one-frame.vae -o /nonexistent/one-frame.wav)
     # ace-server's /synth refusals against a running server on a free port
     # of 127.0.0.1 (cadenza-audio #1194): each a 400 saying why, the server
-    # answering after -- a cover's reference with no source among them, once
-    # freed twice. The script stops the server however it ends; the timeout
-    # bounds a server that never answers.
+    # answering after -- a cover sent a reference and no source among them,
+    # refused before the reference is read. The script stops the server
+    # however it ends; the timeout bounds a server that never answers.
     add_test(NAME test-server-synth
              COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test-server-synth.sh $<TARGET_FILE:ace-server>
                      ${ACESTEP_TEST_MODELS} ${ACESTEP_TOOL_INPUTS}/one-second.wav)
     set_tests_properties(test-server-synth PROPERTIES FIXTURES_REQUIRED tool_inputs TIMEOUT 180)
     # A bind that fails is the server's failure, exit 1 (cadenza-audio #1194):
-    # an address no host has.
+    # TEST-NET-1 (192.0.2.1, RFC 5737), no address of this host's, and no
+    # name to look up.
     add_tool_refusal(test-server-bind-fails "cannot bind"
-                     $<TARGET_FILE:ace-server> --models ${ACESTEP_TEST_MODELS} --host 256.0.0.1 --port 0)
+                     $<TARGET_FILE:ace-server> --models ${ACESTEP_TEST_MODELS} --host 192.0.2.1 --port 0)
 endif()
