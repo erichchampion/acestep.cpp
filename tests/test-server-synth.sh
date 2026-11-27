@@ -46,6 +46,8 @@ HINT_MULTIPART='(part \"audio\" or \"src_latents\")'
 COVER='{"task_type":"cover","caption":"warm analog synth","duration":4}'
 # A DiT no registry holds: a job asking it fails before any model loads.
 NO_DIT='no-such-dit'
+# An LM no registry holds: an understand job asking it fails before any load.
+NO_LM='no-such-lm'
 
 work="$(mktemp -d)"
 pid=""
@@ -169,4 +171,24 @@ grep -qF "window_only is asked twice, differently" "$work/body" ||
     fail "/understand asked twice: not its reason: $(cat "$work/body")"
 echo "ok: /understand with window_only asked twice, differently -- $(cat "$work/body")"
 answers "after /understand's refusals"
+# And it asks the window: alone, and with a field that agrees -- each a job,
+# its log line saying so. Each asks an LM the server lacks, so its worker
+# fails it before any model loads.
+for asked in json both; do
+    extra=()
+    [ "$asked" = both ] && extra=(--form-string 'window_only=yes')
+    code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
+        --form-string "request={\"window_only\":true,\"lm_model\":\"$NO_LM\"}" ${extra[@]+"${extra[@]}"} \
+        -F "audio=@$REF;type=audio/wav" "$URL/understand")" || fail "/understand asking the window ($asked): no answer"
+    [ "$code" = 200 ] || fail "/understand asking the window ($asked): HTTP $code, want 200: $(cat "$work/body")"
+    id="$(sed -n 's/^{"id":"\([^"]*\)"}$/\1/p' "$work/body")"
+    [ -n "$id" ] || fail "/understand asking the window ($asked): no job id in $(cat "$work/body")"
+    deadline=$((SECONDS + REQUEST_TIMEOUT_S))
+    until grep -qF "[Server] Job $id created (understand, window only)" "$work/server.log"; do
+        [ "$SECONDS" -lt "$deadline" ] || fail "/understand asking the window ($asked): job $id not said windowed"
+        sleep 0.1
+    done
+    echo "ok: /understand asking the window ($asked) -- job $id, window only"
+done
+answers "after /understand's windowed jobs"
 echo "PASS"

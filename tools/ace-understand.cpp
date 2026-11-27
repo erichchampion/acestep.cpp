@@ -37,12 +37,16 @@ static void usage(const char * prog) {
             "  --window-only           Encode only the window the LM reads: the\n"
             "                          middle of a track longer than its context\n"
             "                          holds; audio_codes then holds that window\n"
+            "                          (the --request's \"window_only\" asks it too)\n"
             "\n"
-            "When no --request is given, understand defaults apply\n"
-            "(temperature 0.3, top_p disabled).\n"
+            "Understand's defaults (temperature 0.3, top_p disabled) apply\n"
+            "to every sampling param the --request leaves out.\n"
             "\n"
             "Output:\n"
-            "  -o <json>               Output JSON (default: stdout summary)\n"
+            "  -o <json>               Output JSON (default: stdout summary); a\n"
+            "                          windowed run's says which window it holds,\n"
+            "                          understand_window {codes_start, codes_used,\n"
+            "                          codes_total}\n"
             "\n"
             "Memory control:\n"
             "  --vae-chunk <N>         Latent frames per tile (default: %d)\n"
@@ -55,6 +59,23 @@ static void usage(const char * prog) {
             "  --no-fa                 Disable flash attention\n"
             "  --dump <dir>            Dump tok_latents + tok_codes (skip LM)\n",
             prog, d.vae_chunk, d.vae_overlap, d.max_seq, d.max_batch);
+}
+
+// The whole of a text file, or false for one that cannot be read.
+static bool read_text_file(const char * path, std::string & out) {
+    FILE * f = fopen(path, "rb");
+    if (!f) {
+        return false;
+    }
+    char   buf[4096];
+    size_t n;
+    out.clear();
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        out.append(buf, n);
+    }
+    const bool ok = !ferror(f);
+    fclose(f);
+    return ok;
 }
 
 static int understand_main(int argc, char ** argv) {
@@ -133,16 +154,37 @@ static int understand_main(int argc, char ** argv) {
         return 1;
     }
 
-    // Parse request JSON (if provided). Sampling params come from JSON.
-    // When no JSON, understand defaults apply (temperature=0.3 for transcription).
+    // Parse request JSON (if provided). Sampling params come from JSON;
+    // understand's defaults (temperature 0.3 for transcription, no nucleus
+    // sampling) stay for any it leaves out, as ace-server's /understand
+    // keeps them (cadenza-audio #1179). Its "window_only" asks the window
+    // as --window-only does; both given, they must agree.
     AceRequest req;
-    request_init(&req);
-    req.lm_temperature = 0.3f;  // understand default: lower than generation
-    req.lm_top_p       = 1.0f;  // understand default: no nucleus sampling
+    ace_understand_request_init(&req);
     if (request_path) {
-        if (!request_parse(&req, request_path)) {
+        std::string json;
+        if (!read_text_file(request_path, json)) {
+            fprintf(stderr, "[Ace-Understand] FATAL: cannot read --request %s\n", request_path);
             return 1;
         }
+        if (!ace_understand_request_parse(&req, json.c_str())) {
+            fprintf(stderr, "[Ace-Understand] FATAL: --request %s is not a request JSON\n", request_path);
+            return 1;
+        }
+        const int asked = ace_understand_request_window(json.c_str());
+        if (asked == kWindowBad) {
+            fprintf(stderr,
+                    "[Ace-Understand] FATAL: --request's window_only takes true or false (or 1, 0, or "
+                    "a field's words)\n");
+            return 1;
+        }
+        if (window_only && asked == kWindowOff) {
+            fprintf(stderr,
+                    "[Ace-Understand] FATAL: window_only is asked twice, differently: by --window-only "
+                    "and by --request\n");
+            return 1;
+        }
+        window_only = window_only || asked == kWindowOn;
         request_dump(&req, stderr);
     }
 

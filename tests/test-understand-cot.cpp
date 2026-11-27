@@ -1,6 +1,7 @@
 // test-understand-cot: what an understand pass keeps of a metadata block its
 // decode stopped inside, and where it closes one that runs on (cadenza-audio
-// #648). Self-contained: no model is loaded.
+// #648), and how an understand request is read: its sampling defaults and
+// its window_only (#1179). Self-contained: no model is loaded.
 #include "pipeline-understand.h"
 #include "prompt.h"
 
@@ -103,6 +104,44 @@ int main() {
     CHECK(ace_understand_metadata_limit(4096, -1) == ACE_UNDERSTAND_METADATA_TOKENS);
     // Far above a block's 100-160 tokens: a whole one is never cut.
     CHECK(ACE_UNDERSTAND_METADATA_TOKENS >= 3 * 160);
+
+    // An understand request keeps understand's sampling defaults for the
+    // keys its JSON leaves out, and takes the ones it gives (#1179).
+    {
+        AceRequest r;
+        ace_understand_request_init(&r);
+        CHECK(r.lm_temperature == 0.3f && r.lm_top_p == 1.0f);
+        CHECK(ace_understand_request_parse(&r, "{\"window_only\":true}"));
+        CHECK(r.lm_temperature == 0.3f && r.lm_top_p == 1.0f);
+        CHECK(ace_understand_request_parse(&r, "{\"lm_temperature\":0.7}"));
+        CHECK(r.lm_temperature == 0.7f && r.lm_top_p == 1.0f);
+        CHECK(ace_understand_request_parse(&r, "{\"lm_top_p\":0.5,\"caption\":\"x\"}"));
+        CHECK(r.lm_temperature == 0.3f && r.lm_top_p == 0.5f && r.caption == "x");
+        CHECK(!ace_understand_request_parse(&r, "{not json"));
+    }
+    // The request JSON's window_only, and a field's word (#1179).
+    CHECK(ace_understand_request_window("{\"window_only\":true}") == kWindowOn);
+    CHECK(ace_understand_request_window("{\"window_only\":false}") == kWindowOff);
+    CHECK(ace_understand_request_window("{\"window_only\":1}") == kWindowOn);
+    CHECK(ace_understand_request_window("{\"window_only\":0}") == kWindowOff);
+    CHECK(ace_understand_request_window("{\"window_only\":1.0}") == kWindowOn);
+    CHECK(ace_understand_request_window("{\"window_only\":0.0}") == kWindowOff);
+    CHECK(ace_understand_request_window("{\"window_only\":\" Yes\\n\"}") == kWindowOn);
+    CHECK(ace_understand_request_window("{\"window_only\":\"\"}") == kWindowNone);
+    CHECK(ace_understand_request_window("{\"window_only\":null}") == kWindowNone);
+    CHECK(ace_understand_request_window("{\"caption\":\"x\"}") == kWindowNone);
+    CHECK(ace_understand_request_window("[true]") == kWindowNone);
+    CHECK(ace_understand_request_window("") == kWindowNone);
+    CHECK(ace_understand_request_window(nullptr) == kWindowNone);
+    CHECK(ace_understand_request_window("{\"window_only\":2}") == kWindowBad);
+    CHECK(ace_understand_request_window("{\"window_only\":0.5}") == kWindowBad);
+    CHECK(ace_understand_request_window("{\"window_only\":\"maybe\"}") == kWindowBad);
+    CHECK(ace_understand_request_window("{\"window_only\":[true]}") == kWindowBad);
+    CHECK(ace_understand_request_window("{\"window_only\":\"\\u0000yes\"}") == kWindowBad);
+    CHECK(ace_understand_window_word(" ON ") == kWindowOn);
+    CHECK(ace_understand_window_word("off\n") == kWindowOff);
+    CHECK(ace_understand_window_word("") == kWindowNone);
+    CHECK(ace_understand_window_word("2") == kWindowBad);
 
     return test_summary("test-understand-cot");
 }

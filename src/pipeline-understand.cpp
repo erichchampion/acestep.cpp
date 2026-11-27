@@ -171,6 +171,81 @@ std::vector<int> ace_test_last_understand_codes() {
     return g_test_last_codes;
 }
 
+int ace_understand_window_word(const std::string & word_in) {
+    std::string word = word_in;
+    while (!word.empty() && isspace((unsigned char) word.back())) {
+        word.pop_back();
+    }
+    while (!word.empty() && isspace((unsigned char) word.front())) {
+        word.erase(word.begin());
+    }
+    for (char & c : word) {
+        c = (char) tolower((unsigned char) c);
+    }
+    if (word.empty()) {
+        return kWindowNone;
+    }
+    if (word == "1" || word == "true" || word == "yes" || word == "on") {
+        return kWindowOn;
+    }
+    if (word == "0" || word == "false" || word == "no" || word == "off") {
+        return kWindowOff;
+    }
+    return kWindowBad;
+}
+
+// A request JSON's root object, read to its first NUL as request_parse_json
+// reads it; NULL for none. The caller frees `doc`.
+static yyjson_val * request_root(const char * json, yyjson_doc *& doc) {
+    doc               = json ? yyjson_read(json, strlen(json), 0) : nullptr;
+    yyjson_val * root = doc ? yyjson_doc_get_root(doc) : nullptr;
+    return yyjson_is_obj(root) ? root : nullptr;
+}
+
+int ace_understand_request_window(const char * json) {
+    yyjson_doc * doc  = nullptr;
+    yyjson_val * root = request_root(json, doc);
+    yyjson_val * v    = root ? yyjson_obj_get(root, "window_only") : nullptr;
+    int          said = kWindowBad;
+    if (!v || yyjson_is_null(v)) {
+        said = kWindowNone;
+    } else if (yyjson_is_bool(v)) {
+        said = yyjson_get_bool(v) ? kWindowOn : kWindowOff;
+    } else if (yyjson_is_num(v) && (yyjson_get_num(v) == 0.0 || yyjson_get_num(v) == 1.0)) {
+        said = yyjson_get_num(v) == 1.0 ? kWindowOn : kWindowOff;
+    } else if (yyjson_is_str(v) && strlen(yyjson_get_str(v)) == yyjson_get_len(v)) {
+        said = ace_understand_window_word(yyjson_get_str(v));
+    }
+    yyjson_doc_free(doc);
+    return said;
+}
+
+void ace_understand_request_init(AceRequest * r) {
+    request_init(r);
+    r->lm_temperature = 0.3f;  // understand default: lower than generation
+    r->lm_top_p       = 1.0f;  // understand default: no nucleus sampling
+}
+
+bool ace_understand_request_parse(AceRequest * r, const char * json) {
+    if (!request_parse_json(r, json)) {
+        return false;
+    }
+    // request_parse_json starts from request_init's defaults: understand's
+    // own come back for the keys the JSON leaves out.
+    AceRequest   understand;
+    yyjson_doc * doc  = nullptr;
+    yyjson_val * root = request_root(json, doc);
+    ace_understand_request_init(&understand);
+    if (!root || !yyjson_obj_get(root, "lm_temperature")) {
+        r->lm_temperature = understand.lm_temperature;
+    }
+    if (!root || !yyjson_obj_get(root, "lm_top_p")) {
+        r->lm_top_p = understand.lm_top_p;
+    }
+    yyjson_doc_free(doc);
+    return true;
+}
+
 RequestJsonExtra ace_understand_window_json(const AceUnderstandCall & call) {
     if (!call.window_only) {
         return {};
@@ -217,11 +292,12 @@ int ace_understand_generate(AceUnderstand *      ctx,
                             int *                T_latent_out,
                             AceProgress          progress,
                             AceUnderstandCall *  call) {
+    // A call that stops before its prompt -- refused here too -- records
+    // none, not a former call's.
+    set_test_last_codes(nullptr, 0);
     if (!ctx || !req || !out) {
         return -1;
     }
-    // A call that stops before its prompt records none, not a former call's.
-    set_test_last_codes(nullptr, 0);
     AceUnderstandCall defaults;
     ace_understand_default_call(&defaults);
     if (!call) {

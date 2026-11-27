@@ -1314,61 +1314,6 @@ static void understand_worker(std::shared_ptr<Job> job,
     fprintf(stderr, "[Server] Job %s done (understand)\n", job->id.c_str());
 }
 
-// The request JSON's "window_only", as a form field's words: a bool or a
-// number 0/1 as "1"/"0", a string as itself, "" for none or no JSON object,
-// and a value of another kind as "?" -- a word no field takes, refused as
-// one (cadenza-audio #1179).
-static std::string json_window_only(const std::string & json) {
-    // As request_parse_json reads it, to its first NUL, so the two read one
-    // text (and one that parsed there parses here).
-    yyjson_doc * doc = yyjson_read(json.c_str(), strlen(json.c_str()), 0);
-    if (!doc) {
-        return "";
-    }
-    std::string  said;
-    yyjson_val * root = yyjson_doc_get_root(doc);
-    yyjson_val * v    = yyjson_is_obj(root) ? yyjson_obj_get(root, "window_only") : nullptr;
-    if (!v || yyjson_is_null(v)) {
-        said = "";
-    } else if (yyjson_is_bool(v)) {
-        said = yyjson_get_bool(v) ? "1" : "0";
-    } else if (yyjson_is_int(v) && (yyjson_get_sint(v) == 0 || yyjson_get_sint(v) == 1)) {
-        said = yyjson_get_sint(v) ? "1" : "0";
-    } else if (yyjson_is_str(v)) {
-        said = yyjson_get_str(v);
-    } else {
-        said = "?";
-    }
-    yyjson_doc_free(doc);
-    return said;
-}
-
-// What a window_only word asks: on, off, none (empty) or a word no field
-// takes -- trimmed, as a file part ends with its newline, then any case.
-static constexpr int kWindowOff = 0, kWindowOn = 1, kWindowNone = -1, kWindowBad = -2;
-
-static int window_word(std::string word) {
-    while (!word.empty() && isspace((unsigned char) word.back())) {
-        word.pop_back();
-    }
-    while (!word.empty() && isspace((unsigned char) word.front())) {
-        word.erase(word.begin());
-    }
-    for (char & c : word) {
-        c = (char) tolower((unsigned char) c);
-    }
-    if (word.empty()) {
-        return kWindowNone;
-    }
-    if (word == "1" || word == "true" || word == "yes" || word == "on") {
-        return kWindowOn;
-    }
-    if (word == "0" || word == "false" || word == "no" || word == "off") {
-        return kWindowOff;
-    }
-    return kWindowBad;
-}
-
 // POST /understand
 // multipart/form-data: full pipeline (audio + optional JSON params)
 //   part "request":     JSON text (optional, for model selection and sampling params)
@@ -1397,16 +1342,17 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
 
     // parse multipart: required "audio" or "src_latents" part, optional "request" part for sampling params.
     // synth_model, lm_model, adapter, adapter_scale travel inside AceRequest.
+    // Understand's sampling defaults, kept for every key the request JSON
+    // leaves out (cadenza-audio #1179), as ace-understand's --request keeps
+    // them.
     AceRequest ace_req;
-    request_init(&ace_req);
-    ace_req.lm_temperature = 0.3f;  // understand default: lower than generation
-    ace_req.lm_top_p       = 1.0f;  // understand default: no nucleus sampling
+    ace_understand_request_init(&ace_req);
 
     const std::string request_json = req.form.has_file("request")  ? req.form.get_file("request").content :
                                      req.form.has_field("request") ? req.form.get_field("request") :
                                                                      "";
     const bool        request_sent = req.form.has_file("request") || req.form.has_field("request");
-    if (request_sent && !request_parse_json(&ace_req, request_json.c_str())) {
+    if (request_sent && !ace_understand_request_parse(&ace_req, request_json.c_str())) {
         json_error(res, 400, "Multipart: invalid JSON in 'request' part");
         return;
     }
@@ -1416,10 +1362,11 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
     // its own, or by the request JSON's "window_only", where the other
     // per-call options go (#1179). Both may say it; both said, they must
     // agree. An empty field is none.
-    const int field   = window_word(req.form.has_field("window_only") ? req.form.get_field("window_only") :
-                                    req.form.has_file("window_only")  ? req.form.get_file("window_only").content :
-                                                                        "");
-    const int in_json = request_sent ? window_word(json_window_only(request_json)) : kWindowNone;
+    const std::string field_word = req.form.has_field("window_only") ? req.form.get_field("window_only") :
+                                   req.form.has_file("window_only")  ? req.form.get_file("window_only").content :
+                                                                       "";
+    const int         field      = ace_understand_window_word(field_word);
+    const int         in_json    = request_sent ? ace_understand_request_window(request_json.c_str()) : kWindowNone;
     if (field == kWindowBad) {
         json_error(res, 400, "window_only takes 1, true, yes or on (or 0, false, no, off)");
         return;
@@ -1472,7 +1419,7 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
     }
 
     auto job = job_create();
-    fprintf(stderr, "[Server] Job %s created (understand)\n", job->id.c_str());
+    fprintf(stderr, "[Server] Job %s created (understand%s)\n", job->id.c_str(), window_on ? ", window only" : "");
 
     request_resolve_lm_seed(&ace_req);
 

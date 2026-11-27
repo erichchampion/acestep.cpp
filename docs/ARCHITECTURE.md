@@ -969,7 +969,13 @@ POST /understand                Submit understand, returns job ID
         optional field window_only=1: encode only the window the LM reads, the
         middle of an input longer than its context holds; the result's
         audio_codes and latent part then hold that window, and its JSON gives
-        understand_window {codes_start, codes_used, codes_total} -- cadenza-audio #1149)
+        understand_window {codes_start, codes_used, codes_total} -- cadenza-audio #1149.
+        The request JSON's "window_only" asks it too: a bool, 0 or 1, or the
+        field's words; a value it can't read, or a field and a request that ask
+        it differently, is a 400 (cadenza-audio #1179). Understand's sampling
+        defaults, lm_temperature 0.3 and lm_top_p 1.0, stay for any key the
+        request JSON leaves out. ace-understand's --request and -o read and say
+        the same.)
   response: {"id":"3"}
 
 POST /vae                       Submit VAE encode or decode, returns job ID

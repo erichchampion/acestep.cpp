@@ -9,6 +9,7 @@
 #include "request.h"
 
 #include <algorithm>
+#include <string>
 #include <vector>
 
 struct AceUnderstand;
@@ -132,6 +133,28 @@ int ace_understand_generate(AceUnderstand *      ctx,
                             int *                T_latent_out = nullptr,
                             AceProgress          progress     = {},
                             AceUnderstandCall *  call         = nullptr);
+
+// What a window_only word asks: on, off, none -- empty, or no key -- or a
+// word no field takes (kWindowBad), as a form field, the request JSON and
+// ace-understand read it (cadenza-audio #1179).
+inline constexpr int kWindowOff = 0, kWindowOn = 1, kWindowNone = -1, kWindowBad = -2;
+
+// A word -- "1"/"true"/"yes"/"on" or "0"/"false"/"no"/"off", trimmed, any
+// case; empty is none.
+int ace_understand_window_word(const std::string & word);
+
+// The request JSON's "window_only": a bool, 0 or 1 (whole or real), or a
+// string read as a word; none for no key, null or no JSON object; bad for
+// any other value, and for a string with a NUL in it. Read to the first NUL
+// of `json`, as request_parse_json reads it.
+int ace_understand_request_window(const char * json);
+
+// An understand call's request: request_init's, with understand's own
+// sampling defaults -- lm_temperature 0.3, lm_top_p 1.0 (no nucleus
+// sampling) -- which a request JSON keeps for every key it leaves out
+// (ace_understand_request_parse). The tools' one start (cadenza-audio #1179).
+void ace_understand_request_init(AceRequest * r);
+bool ace_understand_request_parse(AceRequest * r, const char * json);
 
 // The keys a windowed call's result JSON carries beside its request's
 // fields -- understand_window {codes_start, codes_used, codes_total}, which
