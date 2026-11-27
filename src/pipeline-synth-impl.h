@@ -260,8 +260,10 @@ inline bool splices_source_after_decode(const SynthState & s) {
 // step, and so encodes the text a second time for the steps after the switch:
 // a cover's, by the task table (s.task.cover_knobs, not use_source_context,
 // which other tasks set too, and every cover, #1187), with a strength below
-// 1. No task that reads the cover knobs splices its source back -- the table
-// test holds every row to that (#1187) -- so no splice term. The one rule
+// 1. No task that reads the cover knobs splices its source back, so no
+// splice term: ops_encode_text fails a run that would, before its text
+// encode -- the guard, since a run's splicing is its function's own flags,
+// which the table test cannot see (#1187). The one rule
 // for ops_encode_text's need_enc_switch and ops_build_context_silence
 // (cadenza-audio #1154).
 inline bool cover_switches_context(const SynthState & s) {

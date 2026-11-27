@@ -544,8 +544,8 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
     }
 
     // The switch rule leans on no run that reads the cover knobs splicing
-    // its source back (#1187): one that would is failed here, before any
-    // encode, saying so.
+    // its source back (#1187): one that would is failed here, before its
+    // text encode, saying so -- its source's encodes have run by now.
     if (s.task.cover_knobs && splices_source_after_decode(s)) {
         fprintf(stderr, "[Encode-Text] FATAL: a run that reads the cover knobs splices its source\n");
         return synth_failed(s, AceSynthFailure::other, "a cover's run splices its source back");
@@ -863,7 +863,7 @@ int ops_build_context_silence(const AceSynth * ctx, int batch_n, SynthState & s)
     // between the two should change. Checked here (#1187): broken, the steps
     // after a switch would run on the wrong encoding, unsaid, so the run
     // fails, saying so. The rule's lean on no cover-knob run splicing its
-    // source is checked before the encode (ops_encode_text).
+    // source is checked before the text encode (ops_encode_text).
     s.cover_steps          = -1;
     const bool by_the_rule = cover_switches_context(s);
     if (by_the_rule != s.need_enc_switch) {

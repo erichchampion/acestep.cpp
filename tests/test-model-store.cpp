@@ -1933,10 +1933,6 @@ static int scenario_task_table() {
                 rc = 1;
             }
 
-            struct {
-                const char * task;
-                bool         cover_knobs;
-            } w{ task, info.cover_knobs };
             SynthState st{};
             st.Oc                 = Oc;
             st.ctx_ch             = ctx_ch;
@@ -1946,7 +1942,7 @@ static int scenario_task_table() {
             st.have_cover         = true;
             st.task               = info;
             request_init(&st.rr);
-            st.rr.task_type            = w.task;
+            st.rr.task_type            = task;
             st.rr.audio_cover_strength = 0.5f;
             st.rr.cover_noise_strength = 0.5f;
             st.cover_latents.assign((size_t) T * Oc, 1.0f);
@@ -1961,18 +1957,18 @@ static int scenario_task_table() {
             // ops_encode_text itself to the rule.
             st.need_enc_switch = cover_switches_context(st);
             if (ops_build_context_silence(&fake, 1, st) != 0) {
-                fprintf(stderr, "[Test] FAIL: a %s's context switch failed\n", w.task);
+                fprintf(stderr, "[Test] FAIL: a %s's context switch failed\n", task);
                 rc = 1;
             }
             ops_init_noise(&fake, &req, 1, st);
             const bool switched = cover_switches_context(st) && st.cover_steps >= 0 && !st.context_silence.empty();
             const bool blended  = cover_blends_noise(st) && st.num_steps < steps;
-            if (switched != w.cover_knobs || blended != w.cover_knobs ||
-                (!w.cover_knobs && (st.cover_steps != -1 || st.num_steps != steps))) {
+            if (switched != info.cover_knobs || blended != info.cover_knobs ||
+                (!info.cover_knobs && (st.cover_steps != -1 || st.num_steps != steps))) {
                 fprintf(stderr,
                         "[Test] FAIL: a %s asked strength 0.5, noise 0.5 switches %d (step %d) and blends %d (%d of %d "
                         "steps), want %d\n",
-                        w.task, switched, st.cover_steps, blended, st.num_steps, steps, w.cover_knobs);
+                        task, switched, st.cover_steps, blended, st.num_steps, steps, info.cover_knobs);
                 rc = 1;
             }
         }
@@ -2969,7 +2965,11 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
     for (int row = 0; row < ace_synth_task_count(); row++) {
         const char *     task = ace_synth_task_name(row);
         AceSynthTaskInfo info;
-        ace_synth_task_info(task, &info);
+        if (!ace_synth_task_info(task, &info)) {
+            fprintf(stderr, "[Test] FAIL: the table's %s has no row\n", task);
+            rc = 1;
+            continue;
+        }
         SynthState st{};
         st.task               = info;
         st.use_source_context = true;

@@ -166,7 +166,9 @@ void         store_drop_key(ModelStore * s, const ModelKey & k);
 bool         store_consume_stale_refusal();
 
 // Typed GPU module accessors. Each returns a pointer owned by the store;
-// never free it yourself. Returns NULL on load failure.
+// never free it yourself. Returns NULL on load failure -- and for a key of
+// another kind than the accessor's, a caller's error, refused with a line on
+// stderr that names both kinds (cadenza-audio #1316).
 //
 // After require, the module stays resident with a refcount > 0 until the
 // matching release. In EVICT_STRICT, require evicts every other GPU module
