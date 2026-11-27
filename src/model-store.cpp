@@ -684,17 +684,6 @@ template <typename T> struct LoadGuard {
     LoadGuard & operator=(const LoadGuard &) = delete;
 };
 
-// The one load protocol every GPU module follows (cadenza-audio #131): under
-// the store lock, a cached module if there is one; else, the files still
-// what the key was stamped with, evict as the policy says, load into a
-// guarded module, keep it only if the files did not change while it was
-// read, and install it. Only the type, the load call, its free, its size
-// and its label differ between modules -- and a change to the protocol is
-// made here once, not in eight copies that could drift.
-//
-// `load(m, k)` returns false for a load that failed; a fatal it raises is
-// the same failure (ace_fatal_error: nullptr, the reason on stderr), but a
-// GPU failure is not the file's and is rethrown for the caller (#403).
 // The tests' fail-next hook, a flag and a count per kind
 // (store_test_fail_next_require).
 static std::atomic<bool> g_test_fail_require[MODEL_KIND_COUNT];
@@ -728,6 +717,17 @@ static bool require_failed_by_test(ModelKind kind) {
     return true;
 }
 
+// The one load protocol every GPU module follows (cadenza-audio #131): under
+// the store lock, a cached module if there is one; else, the files still
+// what the key was stamped with, evict as the policy says, load into a
+// guarded module, keep it only if the files did not change while it was
+// read, and install it. Only the type, the load call, its free, its size
+// and its label differ between modules -- and a change to the protocol is
+// made here once, not in eight copies that could drift.
+//
+// `load(m, k)` returns false for a load that failed; a fatal it raises is
+// the same failure (ace_fatal_error: nullptr, the reason on stderr), but a
+// GPU failure is not the file's and is rethrown for the caller (#403).
 template <typename T, typename Load>
 static T * require_module(ModelStore *     s,
                           const ModelKey & key_in,

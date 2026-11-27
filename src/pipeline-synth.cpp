@@ -1260,11 +1260,11 @@ static AceSynthJob * run_task(AceSynth *             ctx,
         const SynthState & s;
 
         ~RunRecord() {
-            set_test_last_cover({ s.rr.audio_cover_strength, s.rr.cover_noise_strength, s.need_enc_switch,
-                                  s.cover_steps, s.num_steps });
-            // The copy may not throw out of a destructor: a record it cannot
-            // make is left reset.
+            // Nothing may throw out of a destructor -- a lock, or the
+            // instruction's copy: a record it cannot write is left reset.
             try {
+                set_test_last_cover({ s.rr.audio_cover_strength, s.rr.cover_noise_strength, s.need_enc_switch,
+                                      s.cover_steps, s.num_steps });
                 set_test_last_task({ s.instruction_str, !s.fsq_clean_latents.empty() });
             } catch (...) {
             }
@@ -1324,6 +1324,7 @@ AceSynthJob * ace_synth_job_run_dit(AceSynth *             ctx,
     // Reset before any refusal, so a call refused here leaves no former
     // run's record (run_task resets it again for its own).
     set_test_last_cover(kCoverRecordUnset);
+    set_test_last_task({ "", false });
     static_assert(kAceSynthMaxTakes == 9, "the refusal below says the cap");
     if (!ctx || !reqs || batch_n < 1 || batch_n > kAceSynthMaxTakes) {
         why = { -1, "a run takes a synth and 1..9 requests" };

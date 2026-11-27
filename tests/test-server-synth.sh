@@ -7,12 +7,13 @@
 # requires a 400 that says why, and that the server still answers after
 # each. The server is stopped however the test ends.
 #
-# And (cadenza-audio #1170): a multipart of a task the engine does not know,
-# with an audio part that is no audio, is refused by the batch rule, by name
-# -- one check, before any part is read, not "Failed to decode audio"; and a
-# text2music sent such a part gets its job, the part unread, and the log's
-# warning names that job by its id, in the engine's words. That job is
-# cancelled at once.
+# And: a multipart of a task the engine does not know, with an audio part
+# that is no audio, is refused by the batch rule, by name, before any part is
+# read -- not "Failed to decode audio" (cadenza-audio #1157, its check now the
+# JSON body's one, #1170); and a text2music sent such a part gets its job,
+# the part unread, and the log's warning names that job by its id, in the
+# engine's words (#1170). That job asks a DiT the server does not have, so
+# its worker fails it before any model loads.
 #
 # The first draft of #1193 refused that last cover after decoding its
 # reference, and freed the reference twice. The refusal now comes before any
@@ -31,8 +32,8 @@ fi
 SERVER="$1"
 MODELS="$2"
 REF="$3"
-# How long the server may take to scan the models and bind, and a request to
-# be answered: none loads a model, so both are short.
+# How long the server may take to scan the models and bind, a request to be
+# answered, and the one job to fail: none loads a model, so all are short.
 START_TIMEOUT_S=60
 REQUEST_TIMEOUT_S=30
 # The engine's reason for a task that works from a source given none, and the
@@ -42,6 +43,8 @@ REASON='the task requires source audio or latents, and none was given'
 HINT_JSON='(send it as a multipart request, with an \"audio\" or \"src_latents\" part)'
 HINT_MULTIPART='(part \"audio\" or \"src_latents\")'
 COVER='{"task_type":"cover","caption":"warm analog synth","duration":4}'
+# A DiT no registry holds: a job asking it fails before any model loads.
+NO_DIT='no-such-dit'
 
 work="$(mktemp -d)"
 pid=""
@@ -121,13 +124,22 @@ answers "after an unknown task"
 echo "ok: a multipart of an unknown task with a junk audio part -- $(cat "$work/body")"
 
 code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
-    --form-string 'request={"task_type":"text2music","caption":"warm analog synth","duration":4}' \
+    --form-string "request={\"task_type\":\"text2music\",\"caption\":\"warm analog synth\",\"duration\":4,\"synth_model\":\"$NO_DIT\"}" \
     -F "audio=@$work/junk.wav;type=audio/wav" "$URL/synth")" || fail "a text2music with a source: no answer"
 [ "$code" = 200 ] || fail "a text2music with a source: HTTP $code, want 200: $(cat "$work/body")"
 id="$(sed -n 's/^{"id":"\([^"]*\)"}$/\1/p' "$work/body")"
 [ -n "$id" ] || fail "a text2music with a source: no job id in $(cat "$work/body")"
-curl -sS --max-time "$REQUEST_TIMEOUT_S" -o /dev/null -X POST "$URL/job?id=$id&cancel=1" ||
-    fail "a text2music with a source: no answer to the cancel"
+status=""
+for _ in $(seq 1 $((REQUEST_TIMEOUT_S * 10))); do
+    status="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" "$URL/job?id=$id")" ||
+        fail "a text2music with a source: no answer for job $id"
+    case "$status" in *'"status":"failed"'*) break ;; esac
+    sleep 0.1
+done
+case "$status" in
+    *'"status":"failed"'*"DiT not found: $NO_DIT"*) ;;
+    *) fail "a text2music with a source: job $id did not fail for its DiT, before any load: $status" ;;
+esac
 grep -qF "[Server] WARNING: job $id: task 'text2music' ignores the given source: not read" "$work/server.log" ||
     fail "a text2music with a source: no warning naming job $id"
 answers "after a text2music with a source"

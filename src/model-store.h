@@ -62,7 +62,8 @@
 
 struct ModelStore;
 
-enum ModelKind {
+// int, so a test's out-of-range kind is a value the store can refuse.
+enum ModelKind : int {
     MODEL_LM,          // Qwen3LM        from acestep-5Hz-lm-*.gguf
     MODEL_TEXT_ENC,    // Qwen3GGML      from Qwen3-Embedding-*.gguf
     MODEL_COND_ENC,    // CondGGML       from acestep-v15-*.gguf (cond_enc.*)
@@ -180,11 +181,14 @@ VAEGGML *    store_require_vae_dec(ModelStore * s, const ModelKey & k);
 TokGGML *    store_require_fsq_tok(ModelStore * s, const ModelKey & k);
 DetokGGML *  store_require_fsq_detok(ModelStore * s, const ModelKey & k);
 
-// Tests only: with `armed`, the next require of a module of `kind`, on any
-// thread, returns NULL as a load that failed would, once; without, it is
-// disarmed, fired or not. Every store_require_* goes through it, so one hook
-// reaches every "the store could not give it" path no input reaches
-// (cadenza-audio #1089). A kind out of range is ignored.
+// Tests only: with `armed`, the next require of a module of `kind` returns
+// NULL as a load that failed would, once; without, it is disarmed, fired or
+// not. Every store_require_* goes through it, so one hook reaches every "the
+// store could not give it" path no input reaches (cadenza-audio #1089). It is
+// the process's, not one store's or one pipeline's: the next require of that
+// kind on any thread, a cached module's included, takes it -- so a test arms
+// it with no other require of that kind in flight. A kind out of range is
+// ignored.
 void store_test_fail_next_require(ModelKind kind, bool armed);
 // Tests only: how many requires of `kind` the hook above has failed: a test
 // sees it fired at the require it meant, not only a run that failed.
