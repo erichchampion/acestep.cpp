@@ -65,8 +65,10 @@ inline constexpr const char * kAceRefusalCaptionRequired = "caption is required"
 inline constexpr const char * kAceRefusalRegionNonfinite = "a region bound is not a finite number";
 inline constexpr const char * kAceRefusalCodesEmpty      = "audio_codes holds no code";
 // A setting the batch shares asked differently: the reason begins with this
-// and names the setting, which the refusal's `field` holds too.
-inline constexpr const char * kAceRefusalDiffersIn       = "requests differ in ";
+// and names the setting, which the refusal's `field` holds too. A macro as
+// well, so the rule can paste each setting's name onto it.
+#define ACE_REFUSAL_DIFFERS_IN "requests differ in "
+inline constexpr const char * kAceRefusalDiffersIn = ACE_REFUSAL_DIFFERS_IN;
 
 // A task that works from a source, given none (ace_synth_inputs_refused, and
 // the run's own check).

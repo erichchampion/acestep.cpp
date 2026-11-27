@@ -962,11 +962,6 @@ template <typename T> static bool same_setting(const T & a, const T & b) {
 // duration is not held here: a batch's takes of differing durations is
 // #1162's.
 // `field` gets the JSON name of the field that differs.
-// kAceRefusalDiffersIn as a literal, so the rule can paste each setting's
-// name onto it; held to the constant below.
-#define ACE_REFUSAL_DIFFERS_IN "requests differ in "
-static_assert(std::string_view(ACE_REFUSAL_DIFFERS_IN) == kAceRefusalDiffersIn, "two texts of one reason");
-
 static const char * shared_field_differs(const AceRequest & a,
                                          const AceRequest & b,
                                          const SynthTask &  task,
@@ -1019,7 +1014,6 @@ static const char * shared_field_differs(const AceRequest & a,
     return nullptr;
 }
 
-#undef ACE_REFUSAL_DIFFERS_IN
 
 // A request's own fault in a batch of `task`, said as that rather than as a
 // difference: a region bound that is no number, where the task reads a
