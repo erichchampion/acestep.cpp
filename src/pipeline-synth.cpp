@@ -841,10 +841,6 @@ static const SynthTask kSynthTasks[] = {
     { TASK_COMPLETE,    run_complete,    true,  false, false, false, true,  SynthSplice::never        },
 };
 
-// Why a task the table does not hold is refused: by the batch rule, and by
-// run_task should a call reach it past the rule.
-static constexpr const char * kRefusalUnknownTask = "unknown task_type";
-
 // The table's row for a task, by name; NULL for one it does not hold.
 static const SynthTask * find_synth_task(std::string_view task) {
     for (const SynthTask & t : kSynthTasks) {
@@ -907,7 +903,7 @@ static bool inputs_refused(const SynthTask & entry, const SynthInput & src, AceS
         return false;
     }
     if (why) {
-        *why = { -1, "the task requires source audio or latents, and none was given" };
+        *why = { -1, kAceRefusalSourceRequired };
     }
     return true;
 }
@@ -970,10 +966,10 @@ static const char * shared_field_differs(const AceRequest & a,
                                          const AceRequest & b,
                                          const SynthTask &  task,
                                          const char *&      field) {
-#define ACE_SHARED(name, read)                                                      \
-    if ((read) && !same_setting(a.name, b.name)) {                                  \
-        field = #name;                                                              \
-        return "requests differ in " #name ": a batch runs as its first request's"; \
+#define ACE_SHARED(name, read)                                                       \
+    if ((read) && !same_setting(a.name, b.name)) {                                   \
+        field = #name;                                                               \
+        return ACE_REFUSAL_DIFFERS_IN #name ": a batch runs as its first request's"; \
     }
     // A task whose bounds splice only when they ask a region (the table's
     // asked_region, a lego's) reads none when neither asks one (#1190). Both
@@ -991,8 +987,9 @@ static const char * shared_field_differs(const AceRequest & a,
     // The caller refused codes that hold no code, so emptiness says it.
     if (!task.needs_source && a.audio_codes.empty() != b.audio_codes.empty()) {
         field = "audio_codes";
-        return "requests differ in audio_codes: some give codes and some none, and a batch runs as its "
-               "first request's";
+        return ACE_REFUSAL_DIFFERS_IN
+            "audio_codes: some give codes and some none, and a batch runs as its "
+            "first request's";
     }
     ACE_SHARED(audio_cover_strength, task.cover_knobs)
     ACE_SHARED(cover_noise_strength, task.cover_knobs)
@@ -1028,7 +1025,7 @@ static const char * request_own_fault(const AceRequest & req, const SynthTask & 
         return kAceRefusalRegionNonfinite;
     }
     if (!task.needs_source && !req.audio_codes.empty() && !ops_codes_given(req.audio_codes)) {
-        return "audio_codes holds no code";
+        return kAceRefusalCodesEmpty;
     }
     return nullptr;
 }
@@ -1043,25 +1040,25 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
         return true;
     };
     if (!reqs || batch_n < 1) {
-        return refuse(-1, "a batch holds one request at least");
+        return refuse(-1, kAceRefusalBatchEmpty);
     }
     // Each request's task first, so a misspelt one -- at any index -- is said
     // as that, not as a mix or the caption an unknown task is short of.
     for (int i = 0; i < batch_n; i++) {
         if (!find_synth_task(reqs[i].task_type)) {
-            return refuse(i, kRefusalUnknownTask);
+            return refuse(i, kAceRefusalUnknownTask);
         }
     }
     for (int i = 0; i < batch_n; i++) {
         // A batch runs as its first request's task: another's would run as
         // it, unsaid -- a text2music as a cover, a cover without its source.
         if (reqs[i].task_type != reqs[0].task_type) {
-            return refuse(i, "requests mix tasks: a batch runs as its first request's task");
+            return refuse(i, kAceRefusalMixedTasks);
         }
         // A planned batch's later requests take theirs from its first's plan,
         // so its first's caption is the batch's: refused as the batch's.
         if ((i == 0 || !planned) && ace_synth_request_missing_caption(&reqs[i])) {
-            return refuse(planned ? -1 : i, "caption is required");
+            return refuse(planned ? -1 : i, kAceRefusalCaptionRequired);
         }
     }
     // The engine reads a batch's shared settings from its first request alone
@@ -1200,7 +1197,7 @@ static AceSynthJob * run_task(AceSynth *             ctx,
     const std::string & task  = reqs[0].task_type;
     const SynthTask *   entry = find_synth_task(task);
     if (!entry) {
-        refused = { 0, kRefusalUnknownTask };
+        refused = { 0, kAceRefusalUnknownTask };
         return NULL;
     }
     if (inputs_refused(*entry, in.src, &refused)) {

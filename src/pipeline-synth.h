@@ -55,9 +55,25 @@ void ace_synth_default_params(AceSynthParams * p);
 // modules are acquired per op, never owned by the context. NULL on failure.
 AceSynth * ace_synth_load(ModelStore * store, const AceSynthParams * params);
 
-// The batch rule's reason for a region bound that is no number, a tool or a
-// test can compare against (cadenza-audio #1185).
+// The reasons the engine refuses a batch, each a constant a tool, a test or
+// an embedder can compare against rather than match by text (cadenza-audio
+// #1185, #1198). The batch rule's (ace_synth_batch_refused), in its order:
+inline constexpr const char * kAceRefusalBatchEmpty  = "a batch holds one request at least";
+inline constexpr const char * kAceRefusalUnknownTask = "unknown task_type";
+inline constexpr const char * kAceRefusalMixedTasks  = "requests mix tasks: a batch runs as its first request's task";
+inline constexpr const char * kAceRefusalCaptionRequired = "caption is required";
 inline constexpr const char * kAceRefusalRegionNonfinite = "a region bound is not a finite number";
+inline constexpr const char * kAceRefusalCodesEmpty      = "audio_codes holds no code";
+// A setting the batch shares asked differently: the reason begins with this
+// and names the setting, which the refusal's `field` holds too. A macro, so
+// the rule can paste each setting's name onto it.
+#define ACE_REFUSAL_DIFFERS_IN "requests differ in "
+inline constexpr const char * kAceRefusalDiffersIn = ACE_REFUSAL_DIFFERS_IN;
+
+// A task that works from a source, given none (ace_synth_inputs_refused, and
+// the run's own check).
+inline constexpr const char * kAceRefusalSourceRequired =
+    "the task requires source audio or latents, and none was given";
 
 // The reasons a run refuses its request partway, handed out through
 // ace_synth_job_run_dit's `refused` (cadenza-audio #1193).
