@@ -1292,7 +1292,7 @@ static int scenario_task_table() {
         }
         a[0].audio_codes = "  ";
         AceSynthBatchRefusal blank;
-        if (!ace_synth_batch_refused(a, 2, &blank) || blank.request != 0 || blank.field ||
+        if (!ace_synth_batch_refused(a, 2, &blank) || blank.request != 0 || blank.field || !blank.reason ||
             std::string_view(blank.reason) != kAceRefusalCodesEmpty) {
             fprintf(stderr, "[Test] FAIL: codes holding no code were not said as that (%s)\n",
                     blank.reason ? blank.reason : "no reason");
@@ -1321,14 +1321,14 @@ static int scenario_task_table() {
         a[1].audio_codes     = "1,2";
         AceSynthBatchRefusal mix;
         if (!ace_synth_batch_refused(a, 2, &mix) || !mix.field || std::string_view(mix.field) != "audio_codes" ||
-            !strstr(mix.reason, ACE_REFUSAL_DIFFERS_IN "audio_codes")) {
+            !mix.reason || !strstr(mix.reason, (std::string(kAceRefusalDiffersIn) + "audio_codes").c_str())) {
             fprintf(stderr, "[Test] FAIL: a mix of codes and none was not named by audio_codes\n");
             rc = 1;
         }
         a[1].audio_codes.clear();
         a[1].caption.clear();
         AceSynthBatchRefusal bare{ -7, "untouched", "untouched" };
-        if (!ace_synth_batch_refused(a, 2, &bare) || bare.request != 1 || bare.field ||
+        if (!ace_synth_batch_refused(a, 2, &bare) || bare.request != 1 || bare.field || !bare.reason ||
             std::string_view(bare.reason) != kAceRefusalCaptionRequired) {
             fprintf(stderr, "[Test] FAIL: a later take short of a caption was not refused, fieldless\n");
             rc = 1;
@@ -1620,7 +1620,7 @@ static int scenario_task_table() {
         }
         // An empty batch is refused, not read past.
         AceSynthBatchRefusal empty_why;
-        if (!ace_synth_batch_refused(&unknown, 0, &empty_why) || empty_why.request != -1 ||
+        if (!ace_synth_batch_refused(&unknown, 0, &empty_why) || empty_why.request != -1 || !empty_why.reason ||
             std::string_view(empty_why.reason) != kAceRefusalBatchEmpty) {
             fprintf(stderr, "[Test] FAIL: an empty batch was not refused as one\n");
             rc = 1;
@@ -1881,7 +1881,8 @@ static int scenario_task_table() {
                 AceSynthBatchRefusal why;
                 const bool           refused = ace_synth_batch_refused(b.data(), 2, &why);
                 if (refused != differ ||
-                    (refused && (!why.reason || !strstr(why.reason, ACE_REFUSAL_DIFFERS_IN "repainting_")))) {
+                    (refused && (!why.reason ||
+                                 !strstr(why.reason, (std::string(kAceRefusalDiffersIn) + "repainting_").c_str())))) {
                     fprintf(stderr, "[Test] FAIL: legos of %g..%g then %g..%g: refused %d (%s), want %d\n", first.start,
                             first.end, second.start, second.end, refused, why.reason ? why.reason : "no reason",
                             differ);
@@ -1900,7 +1901,7 @@ static int scenario_task_table() {
             b[2].track = "drums";
             AceSynthBatchRefusal why;
             if (!ace_synth_batch_refused(b.data(), 3, &why) || why.request != 2 || !why.reason ||
-                !strstr(why.reason, ACE_REFUSAL_DIFFERS_IN "track:")) {
+                !strstr(why.reason, (std::string(kAceRefusalDiffersIn) + "track:").c_str())) {
                 fprintf(stderr, "[Test] FAIL: legos of guitar, guitar, drums refused for request %d (%s), want 2\n",
                         why.request, why.reason ? why.reason : "no reason");
                 rc = 1;

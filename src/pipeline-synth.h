@@ -65,15 +65,18 @@ inline constexpr const char * kAceRefusalCaptionRequired = "caption is required"
 inline constexpr const char * kAceRefusalRegionNonfinite = "a region bound is not a finite number";
 inline constexpr const char * kAceRefusalCodesEmpty      = "audio_codes holds no code";
 // A setting the batch shares asked differently: the reason begins with this
-// and names the setting, which the refusal's `field` holds too. A macro, so
-// the rule can paste each setting's name onto it.
-#define ACE_REFUSAL_DIFFERS_IN "requests differ in "
-inline constexpr const char * kAceRefusalDiffersIn = ACE_REFUSAL_DIFFERS_IN;
+// and names the setting, which the refusal's `field` holds too.
+inline constexpr const char * kAceRefusalDiffersIn       = "requests differ in ";
 
 // A task that works from a source, given none (ace_synth_inputs_refused, and
 // the run's own check).
 inline constexpr const char * kAceRefusalSourceRequired =
     "the task requires source audio or latents, and none was given";
+
+// A run handed no synth, no requests or more than it takes
+// (ace_synth_job_run_dit): the caller's fault, not a request's -- a NULL
+// synth says it too. It names the cap, kAceSynthMaxTakes, below.
+inline constexpr const char * kAceRefusalRunBatch = "a run takes a synth and 1..9 requests";
 
 // The reasons a run refuses its request partway, handed out through
 // ace_synth_job_run_dit's `refused` (cadenza-audio #1193).
@@ -92,6 +95,7 @@ inline constexpr const char * kAceRefusalLengthTooLong =
 // takes, clamped to this, and clamp a batch's total to it too.
 // cadenza-audio's shim holds its request cap to it (cadenza-audio #1165).
 inline constexpr int kAceSynthMaxTakes = 9;
+static_assert(kAceSynthMaxTakes == 9, "kAceRefusalRunBatch says the cap");
 
 // The takes a request's synth_batch_size asks for: the size, a size below 1
 // being one take. What a batch's `asked` sums, uncapped (cadenza-audio #1269).
