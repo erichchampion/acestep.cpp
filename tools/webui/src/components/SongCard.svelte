@@ -85,8 +85,13 @@
 			// end, or for a start before the source its start (#1189)
 			// a bound left blank is the engine's default, start 0 and end -1
 			// (request_init), as the request is sent without it
+			// Both at the defaults is the whole song, which a lego runs as no
+			// region: drawn as none, as before (a lego's frame rule is the
+			// engine's, #1182).
 			const length = dur > 0 ? dur : song.duration;
-			const shown = rs != null || re != null ? regionOnSource(rs ?? 0, re ?? -1, length) : null;
+			const defaults = (rs ?? 0) === 0 && (re ?? -1) < 0;
+			const shown =
+				(rs != null || re != null) && !defaults ? regionOnSource(rs ?? 0, re ?? -1, length) : null;
 			[rangeStart, rangeEnd] = shown ?? [0, 0];
 		}
 	});
