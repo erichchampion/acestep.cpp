@@ -70,6 +70,9 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
 int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n, SynthState & s);
 
 // Build silence context + cover_steps for audio_cover_strength switching.
+// 0, or -1 through synth_failed when the switch rule and ops_encode_text's
+// need_enc_switch disagree -- the steps after a switch would run on the
+// wrong encoding (cadenza-audio #1187).
 int ops_build_context_silence(const AceSynth * ctx, int batch_n, SynthState & s);
 
 // Init noise tensor (Philox) + cover noise blend + per_S.

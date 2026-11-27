@@ -255,6 +255,11 @@ static int scenario_kind_split(const char * vae_path) {
     // the decoder's next require and not the encoder's, once, counted.
     const int dec_failed = store_test_requires_failed(MODEL_VAE_DEC);
     const int enc_failed = store_test_requires_failed(MODEL_VAE_ENC);
+    // Every kind disarmed first: the hook is the process's, and one an
+    // earlier scenario left armed is not the out-of-range arm's doing.
+    for (int k = 0; k < MODEL_KIND_COUNT; k++) {
+        store_test_fail_next_require((ModelKind) k, false);
+    }
     store_test_fail_next_require(MODEL_KIND_COUNT, true);
     store_test_fail_next_require((ModelKind) -1, true);
     for (int k = 0; k < MODEL_KIND_COUNT; k++) {
@@ -1896,8 +1901,8 @@ static int scenario_task_table() {
             }
         }
     }
-    // The ops that read the cover knobs ask the state's cover_knobs -- the
-    // table's column, which run_task sets -- not use_source_context, which a
+    // The ops that read the cover knobs ask the state's row, st.task -- the
+    // table's, which run_task sets -- not use_source_context, which a
     // lego, an extract, a complete and a text2music from codes set too
     // (#1154). A state reached without run_task's rewrite of s.rr, its knobs
     // as asked (strength 0.5, noise 0.5), switches its context to silence and
@@ -1990,13 +1995,31 @@ static int scenario_task_table() {
             rc = 1;
         }
         // Nor does a cover-knob run that would splice its source (#1187):
-        // the switch rule leans on none doing so.
+        // the switch rule leans on none doing so, failed before its encode,
+        // so the fake context's store is never asked.
         SynthState sp{};
         ace_synth_task_info("cover", &sp.task);
         request_init(&sp.rr);
-        sp.is_lego_region = true;
-        if (ops_build_context_silence(&fake, 1, sp) != -1 || sp.failure != AceSynthFailure::other) {
-            fprintf(stderr, "[Test] FAIL: a cover-knob run that splices its source ran\n");
+        sp.instruction_str = "a test's instruction";
+        sp.is_lego_region  = true;
+        AceRequest sp_req  = sp.rr;
+        if (ops_encode_text(&fake, &sp_req, 1, sp) != -1 || sp.failure != AceSynthFailure::other || !sp.failed) {
+            fprintf(stderr, "[Test] FAIL: a cover-knob run that splices its source was encoded\n");
+            rc = 1;
+        }
+        // And a cover-knob run without its source's context is failed as
+        // that where the context is built (#1187).
+        SynthState nc{};
+        nc.Oc     = Oc;
+        nc.ctx_ch = ctx_ch;
+        nc.T      = T;
+        ace_synth_task_info("cover", &nc.task);
+        request_init(&nc.rr);
+        nc.use_source_context = false;
+        AceRequest nc_req     = nc.rr;
+        if (ops_build_context(&fake, &nc_req, 1, nc) != -1 || nc.failure != AceSynthFailure::other || !nc.failed ||
+            !strstr(nc.failed, "source's context")) {
+            fprintf(stderr, "[Test] FAIL: a cover-knob run without its source's context built one\n");
             rc = 1;
         }
     }

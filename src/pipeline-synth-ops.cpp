@@ -543,6 +543,13 @@ int ops_encode_text(const AceSynth * ctx, const AceRequest * reqs, int batch_n, 
         return -1;
     }
 
+    // The switch rule leans on no run that reads the cover knobs splicing
+    // its source back (#1187): one that would is failed here, before any
+    // encode, saying so.
+    if (s.task.cover_knobs && splices_source_after_decode(s)) {
+        fprintf(stderr, "[Encode-Text] FATAL: a run that reads the cover knobs splices its source\n");
+        return synth_failed(s, AceSynthFailure::other, "a cover's run splices its source back");
+    }
     s.need_enc_switch = cover_switches_context(s);
 
     BPETokenizer * bpe = store_bpe(ctx->store, ctx->params.text_encoder_path, ctx->text_enc_key.file_id);
@@ -853,20 +860,16 @@ int ops_build_context_silence(const AceSynth * ctx, int batch_n, SynthState & s)
     // Repaint/lego_region: mask handles region; s.context switch never applies.
     // A cover's alone, by the task table (cover_switches_context, #1154): the
     // rule ops_encode_text decided its second encode by, on inputs nothing
-    // between the two should change. Checked here, as is the rule's lean on
-    // no cover-knob run splicing its source (#1187): either broken would run
-    // the steps after a switch on the wrong encoding or context, unsaid, so
-    // the run fails, saying which.
+    // between the two should change. Checked here (#1187): broken, the steps
+    // after a switch would run on the wrong encoding, unsaid, so the run
+    // fails, saying so. The rule's lean on no cover-knob run splicing its
+    // source is checked before the encode (ops_encode_text).
     s.cover_steps          = -1;
     const bool by_the_rule = cover_switches_context(s);
     if (by_the_rule != s.need_enc_switch) {
         fprintf(stderr, "[Context-Silence] FATAL: the switch rule says %d, the text encode decided %d\n", by_the_rule,
                 s.need_enc_switch);
         return synth_failed(s, AceSynthFailure::other, "the cover's context switch and its text encode disagree");
-    }
-    if (s.task.cover_knobs && splices_source_after_decode(s)) {
-        fprintf(stderr, "[Context-Silence] FATAL: a run that reads the cover knobs splices its source\n");
-        return synth_failed(s, AceSynthFailure::other, "a cover's run splices its source back");
     }
     if (by_the_rule) {
         float cover_strength = s.rr.audio_cover_strength;
