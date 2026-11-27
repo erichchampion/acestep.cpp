@@ -20,7 +20,8 @@
 		dur = $bindable(0),
 		selectable = false,
 		rangeStart = $bindable(0),
-		rangeEnd = $bindable(0)
+		rangeEnd = $bindable(0),
+		onrange
 	}: {
 		song: Song;
 		playing: boolean;
@@ -29,6 +30,11 @@
 		selectable: boolean;
 		rangeStart: number;
 		rangeEnd: number;
+		// a range the user drew, by the edge they moved: 'lo' the start
+		// alone, 'hi' the end alone, 'new' both -- a new range, or edges
+		// that crossed -- so a caller writes back only what was moved
+		// (cadenza-audio #1189)
+		onrange?: (edge: 'lo' | 'hi' | 'new', start: number, end: number) => void;
 	} = $props();
 
 	let canvas: HTMLCanvasElement;
@@ -319,6 +325,7 @@
 				rangeStart = cur;
 				rangeEnd = cur;
 			}
+			onrange?.(dragEdge, rangeStart, rangeEnd);
 			draw();
 		} else {
 			seekTo(xToNorm(e.clientX));
@@ -337,13 +344,16 @@
 				rangeStart = Math.min(anchor * dur, cur);
 				rangeEnd = Math.max(anchor * dur, cur);
 			}
-			// swap edges when crossing
+			// swap edges when crossing: both moved
+			let moved = dragEdge;
 			if (rangeStart > rangeEnd) {
 				const tmp = rangeStart;
 				rangeStart = rangeEnd;
 				rangeEnd = tmp;
-				dragEdge = dragEdge === 'lo' ? 'hi' : 'lo';
+				if (dragEdge !== 'new') dragEdge = dragEdge === 'lo' ? 'hi' : 'lo';
+				moved = 'new';
 			}
+			onrange?.(moved, rangeStart, rangeEnd);
 			draw();
 		} else {
 			seekTo(xToNorm(e.clientX));

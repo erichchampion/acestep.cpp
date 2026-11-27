@@ -71,11 +71,15 @@
 	$effect(() => {
 		if (app.props?.tasks?.length) knownTasks = app.props.tasks;
 	});
-	let taskNames = $derived(
-		knownTasks.length ? knownTasks.map((t) => t.name) : Object.keys(TASK_LABELS)
-	);
+	// a task the request asks that is not among them -- a loaded song's, say
+	// -- is offered too, so the select shows the task that will run
+	let taskNames = $derived.by(() => {
+		const names = knownTasks.length ? knownTasks.map((t) => t.name) : Object.keys(TASK_LABELS);
+		return taskType && !names.includes(taskType) ? [...names, taskType] : names;
+	});
 	let taskInfo = $derived(taskRow(knownTasks, taskType));
-	let needsTrack = $derived(taskInfo ? taskInfo.reads_track : true);
+	// once rows have loaded, a task with none reads no track
+	let needsTrack = $derived(taskInfo ? taskInfo.reads_track : knownTasks.length === 0);
 	let singleTrack = $derived(SINGLE_TRACK_TASKS.includes(taskType));
 
 	// DiT input indicators

@@ -36,11 +36,6 @@
 	let dur = $state(0);
 	let rangeStart = $state(0);
 	let rangeEnd = $state(0);
-	// the range the request's region was last drawn as: a drag is a range
-	// other than it, so drawing a -1 end or an outpaint's start does not
-	// write the drawn seconds back over them (#1189)
-	let shownStart = 0;
-	let shownEnd = 0;
 
 	let isRef = $derived(app.refSongId === song.id);
 	let isSrc = $derived(app.srcSongId === song.id);
@@ -69,16 +64,17 @@
 		}
 	}
 
-	// waveform drag to global state: only the edge that moved, so dragging
-	// one handle of a region drawn cut to the source keeps the other bound
-	// as the request asked it -- an outpaint's start before the source, a
-	// -1 end, an end past the source (#1189)
-	$effect(() => {
-		if (isSrc && rangeEnd > rangeStart) {
-			if (rangeStart !== shownStart) app.srcRangeStart = rangeStart;
-			if (rangeEnd !== shownEnd) app.srcRangeEnd = rangeEnd;
-		}
-	});
+	// waveform drag to global state: only the edge the user moved, so
+	// dragging one handle of a region drawn cut to the source keeps the
+	// other bound as the request asked it -- an outpaint's start before the
+	// source, a -1 end, an end past the source -- and a handle moved to the
+	// waveform's edge is written as moved (#1189). The drawn range is never
+	// written back for having been drawn.
+	function onRange(edge: 'lo' | 'hi' | 'new', start: number, end: number) {
+		if (!isSrc || !(end > start)) return;
+		if (edge !== 'hi') app.srcRangeStart = start;
+		if (edge !== 'lo') app.srcRangeEnd = end;
+	}
 
 	// global state to waveform visual (field input)
 	$effect(() => {
@@ -87,11 +83,11 @@
 			const re = app.srcRangeEnd;
 			// the region as the engine splices it: a -1 end is the source's
 			// end, or for a start before the source its start (#1189)
+			// a bound left blank is the engine's default, start 0 and end -1
+			// (request_init), as the request is sent without it
 			const length = dur > 0 ? dur : song.duration;
-			const shown = rs != null && re != null ? regionOnSource(rs, re, length) : null;
-			[shownStart, shownEnd] = shown ?? [0, 0];
-			rangeStart = shownStart;
-			rangeEnd = shownEnd;
+			const shown = rs != null || re != null ? regionOnSource(rs ?? 0, re ?? -1, length) : null;
+			[rangeStart, rangeEnd] = shown ?? [0, 0];
 		}
 	});
 
@@ -330,6 +326,7 @@
 		selectable={isSrc}
 		bind:rangeStart
 		bind:rangeEnd
+		onrange={onRange}
 	/>
 	<div class="card-footer">
 		<span class="format-badge">{song.format.toUpperCase()}</span>
