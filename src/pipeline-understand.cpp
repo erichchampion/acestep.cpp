@@ -231,15 +231,19 @@ bool ace_understand_request_parse(AceRequest * r, const char * json) {
         return false;
     }
     // request_parse_json starts from request_init's defaults: understand's
-    // own come back for the keys the JSON leaves out.
+    // own come back for the keys the JSON leaves out -- or gives as no
+    // number, which the parser skips as it skips an absent one.
     AceRequest   understand;
     yyjson_doc * doc  = nullptr;
     yyjson_val * root = request_root(json, doc);
     ace_understand_request_init(&understand);
-    if (!root || !yyjson_obj_get(root, "lm_temperature")) {
+    auto read_as_number = [&](const char * key) {
+        return root && yyjson_is_num(yyjson_obj_get(root, key));
+    };
+    if (!read_as_number("lm_temperature")) {
         r->lm_temperature = understand.lm_temperature;
     }
-    if (!root || !yyjson_obj_get(root, "lm_top_p")) {
+    if (!read_as_number("lm_top_p")) {
         r->lm_top_p = understand.lm_top_p;
     }
     yyjson_doc_free(doc);

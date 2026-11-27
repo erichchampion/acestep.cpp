@@ -13,8 +13,10 @@
 # JSON body's one, #1170); and a text2music sent such a part gets its job,
 # the part unread, and the log's warning names that job by its id, in the
 # engine's words (#1170). That job asks a DiT the server does not have, so
-# its worker fails it before any model loads. And /understand refuses a
-# request JSON's window_only it cannot read (#1179).
+# its worker fails it before any model loads. And (#1179) /understand
+# refuses a request JSON's window_only it cannot read, and a field and a
+# request that ask it differently; and makes a windowed job of the request's
+# window_only alone, and of it with a field that agrees.
 #
 # The first draft of #1193 refused that last cover after decoding its
 # reference, and freed the reference twice. The refusal now comes before any

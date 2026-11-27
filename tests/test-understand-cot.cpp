@@ -117,6 +117,10 @@ int main() {
         CHECK(r.lm_temperature == 0.7f && r.lm_top_p == 1.0f);
         CHECK(ace_understand_request_parse(&r, "{\"lm_top_p\":0.5,\"caption\":\"x\"}"));
         CHECK(r.lm_temperature == 0.3f && r.lm_top_p == 0.5f && r.caption == "x");
+        // A key given as no number is skipped by the parser, as an absent
+        // one is: understand's default, not generation's.
+        CHECK(ace_understand_request_parse(&r, "{\"lm_temperature\":null,\"lm_top_p\":\"0.5\"}"));
+        CHECK(r.lm_temperature == 0.3f && r.lm_top_p == 1.0f);
         CHECK(!ace_understand_request_parse(&r, "{not json"));
     }
     // The request JSON's window_only, and a field's word (#1179).
