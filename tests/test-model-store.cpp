@@ -257,6 +257,20 @@ static int scenario_kind_split(const char * vae_path) {
     const int enc_failed = store_test_requires_failed(MODEL_VAE_ENC);
     store_test_fail_next_require(MODEL_KIND_COUNT, true);
     store_test_fail_next_require((ModelKind) -1, true);
+    for (int k = 0; k < MODEL_KIND_COUNT; k++) {
+        if (store_test_require_armed((ModelKind) k)) {
+            fprintf(stderr, "[Test] FAIL: a kind out of range armed kind %d's hook\n", k);
+            store_free(s);
+            return 1;
+        }
+    }
+    // A key of another kind is refused, the hook not asked: a decoder's
+    // require given the encoder's key loads nothing (#1316).
+    if (store_require_vae_dec(s, k_enc) || store_gpu_module_count(s) != 0) {
+        fprintf(stderr, "[Test] FAIL: the decoder's require took the encoder's key\n");
+        store_free(s);
+        return 1;
+    }
     auto * enc = store_require_vae_enc(s, k_enc);
     if (!enc || store_test_requires_failed(MODEL_VAE_ENC) != enc_failed ||
         store_test_requires_failed(MODEL_KIND_COUNT) || store_test_requires_failed((ModelKind) -1)) {
@@ -1891,24 +1905,26 @@ static int scenario_task_table() {
         fake.Oc     = Oc;
         fake.ctx_ch = ctx_ch;
 
-        struct Row {
-            const char * task;
-            bool         cover_knobs;
-        };
-
-        for (const Row & w : {
-                 Row{ "text2music",  false },
-                 Row{ "cover",       true  },
-                 Row{ "cover-nofsq", true  },
-                 Row{ "lego",        false },
-                 Row{ "extract",     false },
-                 Row{ "complete",    false }
-        }) {
+        // Every row of the table, repaint among them (#1187): the gates read
+        // the row the state holds, and no row that reads the cover knobs
+        // splices its source back, which the switch rule leans on.
+        for (int row = 0; row < ace_synth_task_count(); row++) {
+            const char *     task = ace_synth_task_name(row);
             AceSynthTaskInfo info;
-            if (!ace_synth_task_info(w.task, &info) || info.cover_knobs != w.cover_knobs) {
-                fprintf(stderr, "[Test] FAIL: the table's %s cover_knobs is not %d\n", w.task, w.cover_knobs);
+            if (!ace_synth_task_info(task, &info)) {
+                fprintf(stderr, "[Test] FAIL: the table's %s has no row\n", task);
+                rc = 1;
+                continue;
+            }
+            if (info.cover_knobs && info.splices) {
+                fprintf(stderr, "[Test] FAIL: the table's %s reads the cover knobs and splices its source\n", task);
                 rc = 1;
             }
+
+            struct {
+                const char * task;
+                bool         cover_knobs;
+            } w{ task, info.cover_knobs };
             SynthState st{};
             st.Oc                 = Oc;
             st.ctx_ch             = ctx_ch;
@@ -1916,7 +1932,7 @@ static int scenario_task_table() {
             st.T_cover            = T;
             st.use_source_context = true;
             st.have_cover         = true;
-            st.cover_knobs        = info.cover_knobs;
+            st.task               = info;
             request_init(&st.rr);
             st.rr.task_type            = w.task;
             st.rr.audio_cover_strength = 0.5f;
@@ -1928,6 +1944,10 @@ static int scenario_task_table() {
             }
             AceRequest req = st.rr;
             req.seed       = 1;
+            // The text encode's decision, as ops_encode_text makes it -- the
+            // silence switch runs only with it (#1187); scenario 11 holds
+            // ops_encode_text itself to the rule.
+            st.need_enc_switch = cover_switches_context(st);
             ops_build_context_silence(&fake, 1, st);
             ops_init_noise(&fake, &req, 1, st);
             const bool switched = cover_switches_context(st) && st.cover_steps >= 0 && !st.context_silence.empty();
@@ -1940,6 +1960,23 @@ static int scenario_task_table() {
                         w.task, switched, st.cover_steps, blended, st.num_steps, steps, w.cover_knobs);
                 rc = 1;
             }
+        }
+        // A cover whose text encode made no second encoding -- the two
+        // decisions disagreeing -- does not switch to silence: the steps
+        // after a switch would run on the cover's encoding (#1187).
+        SynthState st{};
+        st.Oc     = Oc;
+        st.ctx_ch = ctx_ch;
+        st.T      = T;
+        ace_synth_task_info("cover", &st.task);
+        request_init(&st.rr);
+        st.rr.audio_cover_strength = 0.5f;
+        st.num_steps               = steps;
+        st.need_enc_switch         = false;
+        ops_build_context_silence(&fake, 1, st);
+        if (!cover_switches_context(st) || st.cover_steps != -1 || !st.context_silence.empty()) {
+            fprintf(stderr, "[Test] FAIL: a cover with no second encode switched at step %d\n", st.cover_steps);
+            rc = 1;
         }
     }
     if (rc == 0) {
@@ -2876,6 +2913,39 @@ static int scenario_failed_encodes(const char * text_enc_path, const char * dit_
                     "[Test] FAIL: a text2music given %s kept %zu source and %zu reference values, want none of the "
                     "source and the reference's (%zu)\n",
                     form, given.src_latents.size(), given.ref_latents.size(), text.ref_latents.size());
+            rc = 1;
+        }
+    }
+    // The text encode's own decision of a second encoding, ops_encode_text
+    // itself (#1187), for every row: on a state run_task never rewrote -- its
+    // knobs as asked, strength 0.5, source context on as a lego's and a
+    // stem's are -- a cover's decides one and no other task's does. The
+    // encoder's require is failed by the store's hook, so nothing loads: the
+    // decision is made before it.
+    for (int row = 0; row < ace_synth_task_count(); row++) {
+        const char *     task = ace_synth_task_name(row);
+        AceSynthTaskInfo info;
+        ace_synth_task_info(task, &info);
+        SynthState st{};
+        st.task               = info;
+        st.use_source_context = true;
+        st.instruction_str    = "a test's instruction";
+        request_init(&st.rr);
+        st.rr.task_type            = task;
+        st.rr.audio_cover_strength = 0.5f;
+        AceRequest req             = st.rr;
+        req.caption                = "a short test";
+        const int failed_before    = store_test_requires_failed(MODEL_TEXT_ENC);
+        store_test_fail_next_require(MODEL_TEXT_ENC, true);
+        const int encoded = ops_encode_text(synth, &req, 1, st);
+        store_test_fail_next_require(MODEL_TEXT_ENC, false);
+        if (encoded == 0 || store_test_requires_failed(MODEL_TEXT_ENC) != failed_before + 1 ||
+            st.need_enc_switch != info.cover_knobs) {
+            fprintf(stderr,
+                    "[Test] FAIL: a %s's text encode returned %d (hook fired %d) and decided a second "
+                    "encoding %d, want %d\n",
+                    task, encoded, store_test_requires_failed(MODEL_TEXT_ENC) - failed_before, st.need_enc_switch,
+                    info.cover_knobs);
             rc = 1;
         }
     }

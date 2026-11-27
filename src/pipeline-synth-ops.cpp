@@ -729,6 +729,14 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
         }
     }
 
+    // A task that reads the cover knobs works from its source's context:
+    // its function sets use_source_context, held to here, where the context
+    // is built from it (cadenza-audio #1187).
+    if (s.task.cover_knobs && !s.use_source_context) {
+        fprintf(stderr, "[Build-Context] FATAL: a cover's run without its source's context\n");
+        return -1;
+    }
+
     s.context.resize(batch_n * s.T * s.ctx_ch);
 
     if (s.use_source_context && s.have_cover) {
@@ -846,8 +854,16 @@ void ops_build_context_silence(const AceSynth * ctx, int batch_n, SynthState & s
     // A cover's alone, by the task table (cover_switches_context, #1154): the
     // rule ops_encode_text decided its second encode by, on inputs nothing
     // between the two changes, so the two cannot disagree (#1187).
-    s.cover_steps = -1;
-    if (cover_switches_context(s)) {
+    // And it switches only with the second encode made: were the two ever
+    // to disagree, a switch with none would run the steps after it on the
+    // cover's encoding, unsaid -- said here, and run unswitched (#1187).
+    s.cover_steps          = -1;
+    const bool by_the_rule = cover_switches_context(s);
+    if (by_the_rule != s.need_enc_switch) {
+        fprintf(stderr, "[Context-Silence] ERROR: the switch rule says %d, the text encode decided %d: no switch\n",
+                by_the_rule, s.need_enc_switch);
+    }
+    if (by_the_rule && s.need_enc_switch) {
         float cover_strength = s.rr.audio_cover_strength;
         // Build silence s.context: all frames use silence_latent
         std::vector<float> silence_single(s.T * s.ctx_ch);

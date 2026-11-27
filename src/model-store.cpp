@@ -703,6 +703,10 @@ int store_test_requires_failed(ModelKind kind) {
     return kind_in_range(kind) ? g_test_requires_failed[kind].load() : 0;
 }
 
+bool store_test_require_armed(ModelKind kind) {
+    return kind_in_range(kind) && g_test_fail_require[kind].load();
+}
+
 // Whether this require is the one the hook fails, disarming it: a relaxed
 // load first, so a shipping require pays no read-modify-write.
 static bool require_failed_by_test(ModelKind kind) {
@@ -730,12 +734,21 @@ static bool require_failed_by_test(ModelKind kind) {
 // GPU failure is not the file's and is rethrown for the caller (#403).
 template <typename T, typename Load>
 static T * require_module(ModelStore *     s,
+                          ModelKind        kind,
                           const ModelKey & key_in,
                           const char *     label,
                           void (*del)(void *),
                           size_t (*bytes_of)(const T *),
-                          Load             load) {
-    if (require_failed_by_test(key_in.kind)) {
+                          Load load) {
+    // The kind is the require's own, not the key's: a key built with
+    // another kind would be cached as that module and handed back as this
+    // type -- a caller's error, refused, not loaded (cadenza-audio #1316).
+    if (key_in.kind != kind) {
+        fprintf(stderr, "[Store] ERROR: require %s given a key of kind %d, not %d\n", label, (int) key_in.kind,
+                (int) kind);
+        return nullptr;
+    }
+    if (require_failed_by_test(kind)) {
         fprintf(stderr, "[Store] Require %s: failed by the test hook\n", label);
         return nullptr;
     }
@@ -772,32 +785,32 @@ static T * require_module(ModelStore *     s,
 }
 
 Qwen3LM * store_require_lm(ModelStore * s, const ModelKey & key_in) {
-    return require_module<Qwen3LM>(s, key_in, "LM", del_lm, bytes_of_lm, [](Qwen3LM * m, const ModelKey & k) {
+    return require_module<Qwen3LM>(s, MODEL_LM, key_in, "LM", del_lm, bytes_of_lm, [](Qwen3LM * m, const ModelKey & k) {
         return qw3lm_load(m, k.path.c_str(), k.max_seq, k.n_kv_sets);
     });
 }
 
 Qwen3GGML * store_require_text_enc(ModelStore * s, const ModelKey & key_in) {
-    return require_module<Qwen3GGML>(s, key_in, "TextEnc", del_text_enc, bytes_of_text_enc,
-                                     [](Qwen3GGML * m, const ModelKey & k) {
-                                         return qwen3_load_text_encoder(m, k.path.c_str());
-                                     });
+    return require_module<Qwen3GGML>(
+        s, MODEL_TEXT_ENC, key_in, "TextEnc", del_text_enc, bytes_of_text_enc,
+        [](Qwen3GGML * m, const ModelKey & k) { return qwen3_load_text_encoder(m, k.path.c_str()); });
 }
 
 CondGGML * store_require_cond_enc(ModelStore * s, const ModelKey & key_in) {
-    return require_module<CondGGML>(s, key_in, "CondEnc", del_cond_enc, bytes_of_cond_enc,
+    return require_module<CondGGML>(s, MODEL_COND_ENC, key_in, "CondEnc", del_cond_enc, bytes_of_cond_enc,
                                     [](CondGGML * m, const ModelKey & k) { return cond_ggml_load(m, k.path.c_str()); });
 }
 
 DiTGGML * store_require_dit(ModelStore * s, const ModelKey & key_in) {
-    return require_module<DiTGGML>(s, key_in, "DiT", del_dit, bytes_of_dit, [](DiTGGML * m, const ModelKey & k) {
-        const char * adapter = k.adapter_path.empty() ? nullptr : k.adapter_path.c_str();
-        return dit_ggml_load(m, k.path.c_str(), adapter, k.adapter_scale);
-    });
+    return require_module<DiTGGML>(s, MODEL_DIT, key_in, "DiT", del_dit, bytes_of_dit,
+                                   [](DiTGGML * m, const ModelKey & k) {
+                                       const char * adapter = k.adapter_path.empty() ? nullptr : k.adapter_path.c_str();
+                                       return dit_ggml_load(m, k.path.c_str(), adapter, k.adapter_scale);
+                                   });
 }
 
 VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & key_in) {
-    return require_module<VAEEncoder>(s, key_in, "VAE-Enc", del_vae_enc, bytes_of_vae_enc,
+    return require_module<VAEEncoder>(s, MODEL_VAE_ENC, key_in, "VAE-Enc", del_vae_enc, bytes_of_vae_enc,
                                       [](VAEEncoder * m, const ModelKey & k) {
                                           vae_enc_load(m, k.path.c_str());  // void: a failure is a fatal
                                           return true;
@@ -805,7 +818,7 @@ VAEEncoder * store_require_vae_enc(ModelStore * s, const ModelKey & key_in) {
 }
 
 VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & key_in) {
-    return require_module<VAEGGML>(s, key_in, "VAE-Dec", del_vae_dec, bytes_of_vae_dec,
+    return require_module<VAEGGML>(s, MODEL_VAE_DEC, key_in, "VAE-Dec", del_vae_dec, bytes_of_vae_dec,
                                    [](VAEGGML * m, const ModelKey & k) {
                                        vae_ggml_load(m, k.path.c_str());  // void: a failure is a fatal
                                        return true;
@@ -813,15 +826,14 @@ VAEGGML * store_require_vae_dec(ModelStore * s, const ModelKey & key_in) {
 }
 
 TokGGML * store_require_fsq_tok(ModelStore * s, const ModelKey & key_in) {
-    return require_module<TokGGML>(s, key_in, "FSQ-Tok", del_fsq_tok, bytes_of_fsq_tok,
+    return require_module<TokGGML>(s, MODEL_FSQ_TOK, key_in, "FSQ-Tok", del_fsq_tok, bytes_of_fsq_tok,
                                    [](TokGGML * m, const ModelKey & k) { return tok_ggml_load(m, k.path.c_str()); });
 }
 
 DetokGGML * store_require_fsq_detok(ModelStore * s, const ModelKey & key_in) {
-    return require_module<DetokGGML>(s, key_in, "FSQ-Detok", del_fsq_detok, bytes_of_fsq_detok,
-                                     [](DetokGGML * m, const ModelKey & k) {
-                                         return detok_ggml_load(m, k.path.c_str());
-                                     });
+    return require_module<DetokGGML>(
+        s, MODEL_FSQ_DETOK, key_in, "FSQ-Detok", del_fsq_detok, bytes_of_fsq_detok,
+        [](DetokGGML * m, const ModelKey & k) { return detok_ggml_load(m, k.path.c_str()); });
 }
 
 void store_release(ModelStore * s, void * handle) {

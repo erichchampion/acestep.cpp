@@ -183,8 +183,9 @@ DetokGGML *  store_require_fsq_detok(ModelStore * s, const ModelKey & k);
 
 // Tests only: with `armed`, the next require of a module of `kind` returns
 // NULL as a load that failed would, once; without, it is disarmed, fired or
-// not. Every store_require_* goes through it, so one hook reaches every "the
-// store could not give it" path no input reaches (cadenza-audio #1089). It is
+// not. Every store_require_* goes through it by its own kind -- a key of
+// another kind is refused (#1316) -- so one hook reaches every "the store
+// could not give it" path no input reaches (cadenza-audio #1089). It is
 // the process's, not one store's or one pipeline's: the next require of that
 // kind on any thread, a cached module's included, takes it -- so a test arms
 // it with no other require of that kind in flight. A kind out of range is
@@ -193,6 +194,10 @@ void store_test_fail_next_require(ModelKind kind, bool armed);
 // Tests only: how many requires of `kind` the hook above has failed: a test
 // sees it fired at the require it meant, not only a run that failed.
 int  store_test_requires_failed(ModelKind kind);
+// Tests only: whether the hook is armed for `kind` -- false for one out of
+// range -- so a test sees an out-of-range arm left every kind alone
+// (cadenza-audio #1316).
+bool store_test_require_armed(ModelKind kind);
 
 // Release decrements the refcount for the module behind this handle.
 // Pass exactly the pointer returned by require. After release, the pointer
