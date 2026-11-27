@@ -129,19 +129,21 @@ code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code
 [ "$code" = 200 ] || fail "a text2music with a source: HTTP $code, want 200: $(cat "$work/body")"
 id="$(sed -n 's/^{"id":"\([^"]*\)"}$/\1/p' "$work/body")"
 [ -n "$id" ] || fail "a text2music with a source: no job id in $(cat "$work/body")"
+# Polled to a deadline, each poll short: the job fails at once, and the
+# server's log thread copies the warning to the file a moment after.
+WARNING="[Server] WARNING: job $id: task 'text2music' ignores the given source: not read"
+deadline=$((SECONDS + REQUEST_TIMEOUT_S))
 status=""
-for _ in $(seq 1 $((REQUEST_TIMEOUT_S * 10))); do
-    status="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" "$URL/job?id=$id")" ||
-        fail "a text2music with a source: no answer for job $id"
-    case "$status" in *'"status":"failed"'*) break ;; esac
+while [ "$SECONDS" -lt "$deadline" ]; do
+    status="$(curl -sS --max-time 2 "$URL/job?id=$id")" || status=""
+    case "$status" in *'"status":"failed"'*) grep -qF "$WARNING" "$work/server.log" && break ;; esac
     sleep 0.1
 done
 case "$status" in
     *'"status":"failed"'*"DiT not found: $NO_DIT"*) ;;
     *) fail "a text2music with a source: job $id did not fail for its DiT, before any load: $status" ;;
 esac
-grep -qF "[Server] WARNING: job $id: task 'text2music' ignores the given source: not read" "$work/server.log" ||
-    fail "a text2music with a source: no warning naming job $id"
+grep -qF "$WARNING" "$work/server.log" || fail "a text2music with a source: no warning naming job $id"
 answers "after a text2music with a source"
 echo "ok: a text2music with a junk audio part -- job $id, its source unread and said so"
 echo "PASS"

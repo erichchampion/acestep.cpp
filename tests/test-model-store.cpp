@@ -250,28 +250,40 @@ static int scenario_kind_split(const char * vae_path) {
     ModelKey k_dec = { MODEL_VAE_DEC, vae_path, 0, 0, "", 1.0f };
 
     // The tests' fail-next hook is the store's, by kind (cadenza-audio
-    // #1089): armed for the decoder, it fails the decoder's next require and
-    // not the encoder's, once, counted; a kind out of range is ignored.
+    // #1089). A kind out of range is ignored: armed, it fails no require --
+    // the encoder's loads -- and counts none. Armed for the decoder, it fails
+    // the decoder's next require and not the encoder's, once, counted.
     const int dec_failed = store_test_requires_failed(MODEL_VAE_DEC);
     const int enc_failed = store_test_requires_failed(MODEL_VAE_ENC);
     store_test_fail_next_require(MODEL_KIND_COUNT, true);
     store_test_fail_next_require((ModelKind) -1, true);
-    store_test_fail_next_require(MODEL_VAE_DEC, true);
     auto * enc = store_require_vae_enc(s, k_enc);
-    if (store_require_vae_dec(s, k_dec) || store_gpu_module_count(s) != 1 ||
-        store_test_requires_failed(MODEL_VAE_DEC) != dec_failed + 1 ||
-        store_test_requires_failed(MODEL_VAE_ENC) != enc_failed || store_test_requires_failed(MODEL_KIND_COUNT) ||
-        store_test_requires_failed((ModelKind) -1)) {
-        fprintf(stderr, "[Test] FAIL: the decoder's armed require was not the one failed, or not once\n");
+    if (!enc || store_test_requires_failed(MODEL_VAE_ENC) != enc_failed ||
+        store_test_requires_failed(MODEL_KIND_COUNT) || store_test_requires_failed((ModelKind) -1)) {
+        fprintf(stderr, "[Test] FAIL: the VAE encoder did not load, or a kind out of range failed a require\n");
         if (enc) {
             store_release(s, enc);
         }
         store_free(s);
         return 1;
     }
+    store_test_fail_next_require(MODEL_VAE_DEC, true);
+    auto * refused = store_require_vae_dec(s, k_dec);
+    if (refused || store_gpu_module_count(s) != 1 || store_test_requires_failed(MODEL_VAE_DEC) != dec_failed + 1 ||
+        store_test_requires_failed(MODEL_VAE_ENC) != enc_failed) {
+        fprintf(stderr, "[Test] FAIL: the decoder's armed require was not the one failed, or not once\n");
+        store_test_fail_next_require(MODEL_VAE_DEC, false);
+        if (refused) {
+            store_release(s, refused);
+        }
+        store_release(s, enc);
+        store_free(s);
+        return 1;
+    }
     auto * dec = store_require_vae_dec(s, k_dec);
     if (!enc || !dec) {
         fprintf(stderr, "[Test] FAIL: VAE enc or dec load\n");
+        store_release(s, enc);
         store_free(s);
         return 1;
     }
