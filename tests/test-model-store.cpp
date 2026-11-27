@@ -265,9 +265,16 @@ static int scenario_kind_split(const char * vae_path) {
         }
     }
     // A key of another kind is refused, the hook not asked: a decoder's
-    // require given the encoder's key loads nothing (#1316).
-    if (store_require_vae_dec(s, k_enc) || store_gpu_module_count(s) != 0) {
-        fprintf(stderr, "[Test] FAIL: the decoder's require took the encoder's key\n");
+    // require given the encoder's key loads nothing, and leaves the
+    // decoder's armed hook for its own next require (#1316).
+    const int dec_before = store_test_requires_failed(MODEL_VAE_DEC);
+    store_test_fail_next_require(MODEL_VAE_DEC, true);
+    const bool took_key = store_require_vae_dec(s, k_enc) != nullptr;
+    const bool kept_arm = store_test_require_armed(MODEL_VAE_DEC);
+    store_test_fail_next_require(MODEL_VAE_DEC, false);
+    if (took_key || store_gpu_module_count(s) != 0 || !kept_arm ||
+        store_test_requires_failed(MODEL_VAE_DEC) != dec_before) {
+        fprintf(stderr, "[Test] FAIL: the decoder's require took the encoder's key, or spent the hook on it\n");
         store_free(s);
         return 1;
     }
@@ -1948,7 +1955,10 @@ static int scenario_task_table() {
             // silence switch runs only with it (#1187); scenario 11 holds
             // ops_encode_text itself to the rule.
             st.need_enc_switch = cover_switches_context(st);
-            ops_build_context_silence(&fake, 1, st);
+            if (ops_build_context_silence(&fake, 1, st) != 0) {
+                fprintf(stderr, "[Test] FAIL: a %s's context switch failed\n", w.task);
+                rc = 1;
+            }
             ops_init_noise(&fake, &req, 1, st);
             const bool switched = cover_switches_context(st) && st.cover_steps >= 0 && !st.context_silence.empty();
             const bool blended  = cover_blends_noise(st) && st.num_steps < steps;
@@ -1973,9 +1983,20 @@ static int scenario_task_table() {
         st.rr.audio_cover_strength = 0.5f;
         st.num_steps               = steps;
         st.need_enc_switch         = false;
-        ops_build_context_silence(&fake, 1, st);
-        if (!cover_switches_context(st) || st.cover_steps != -1 || !st.context_silence.empty()) {
-            fprintf(stderr, "[Test] FAIL: a cover with no second encode switched at step %d\n", st.cover_steps);
+        if (ops_build_context_silence(&fake, 1, st) != -1 || !cover_switches_context(st) || st.cover_steps != -1 ||
+            !st.context_silence.empty() || st.failure != AceSynthFailure::other || !st.failed) {
+            fprintf(stderr, "[Test] FAIL: a cover with no second encode switched at step %d, or did not fail\n",
+                    st.cover_steps);
+            rc = 1;
+        }
+        // Nor does a cover-knob run that would splice its source (#1187):
+        // the switch rule leans on none doing so.
+        SynthState sp{};
+        ace_synth_task_info("cover", &sp.task);
+        request_init(&sp.rr);
+        sp.is_lego_region = true;
+        if (ops_build_context_silence(&fake, 1, sp) != -1 || sp.failure != AceSynthFailure::other) {
+            fprintf(stderr, "[Test] FAIL: a cover-knob run that splices its source ran\n");
             rc = 1;
         }
     }

@@ -734,7 +734,7 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
     // is built from it (cadenza-audio #1187).
     if (s.task.cover_knobs && !s.use_source_context) {
         fprintf(stderr, "[Build-Context] FATAL: a cover's run without its source's context\n");
-        return -1;
+        return synth_failed(s, AceSynthFailure::other, "a cover's run without its source's context");
     }
 
     s.context.resize(batch_n * s.T * s.ctx_ch);
@@ -847,23 +847,28 @@ int ops_build_context(const AceSynth * ctx, const AceRequest * reqs, int batch_n
     return 0;
 }
 
-void ops_build_context_silence(const AceSynth * ctx, int batch_n, SynthState & s) {
+int ops_build_context_silence(const AceSynth * ctx, int batch_n, SynthState & s) {
     // Cover mode: build silence s.context for audio_cover_strength switching
     // When step >= s.cover_steps, DiT switches from cover s.context to silence s.context
     // Repaint/lego_region: mask handles region; s.context switch never applies.
     // A cover's alone, by the task table (cover_switches_context, #1154): the
     // rule ops_encode_text decided its second encode by, on inputs nothing
-    // between the two changes, so the two cannot disagree (#1187).
-    // And it switches only with the second encode made: were the two ever
-    // to disagree, a switch with none would run the steps after it on the
-    // cover's encoding, unsaid -- said here, and run unswitched (#1187).
+    // between the two should change. Checked here, as is the rule's lean on
+    // no cover-knob run splicing its source (#1187): either broken would run
+    // the steps after a switch on the wrong encoding or context, unsaid, so
+    // the run fails, saying which.
     s.cover_steps          = -1;
     const bool by_the_rule = cover_switches_context(s);
     if (by_the_rule != s.need_enc_switch) {
-        fprintf(stderr, "[Context-Silence] ERROR: the switch rule says %d, the text encode decided %d: no switch\n",
-                by_the_rule, s.need_enc_switch);
+        fprintf(stderr, "[Context-Silence] FATAL: the switch rule says %d, the text encode decided %d\n", by_the_rule,
+                s.need_enc_switch);
+        return synth_failed(s, AceSynthFailure::other, "the cover's context switch and its text encode disagree");
     }
-    if (by_the_rule && s.need_enc_switch) {
+    if (s.task.cover_knobs && splices_source_after_decode(s)) {
+        fprintf(stderr, "[Context-Silence] FATAL: a run that reads the cover knobs splices its source\n");
+        return synth_failed(s, AceSynthFailure::other, "a cover's run splices its source back");
+    }
+    if (by_the_rule) {
         float cover_strength = s.rr.audio_cover_strength;
         // Build silence s.context: all frames use silence_latent
         std::vector<float> silence_single(s.T * s.ctx_ch);
@@ -885,6 +890,7 @@ void ops_build_context_silence(const AceSynth * ctx, int batch_n, SynthState & s
         fprintf(stderr, "[Context-Silence] audio_cover_strength=%.2f -> switch at step %d/%d\n", cover_strength,
                 s.cover_steps, s.num_steps);
     }
+    return 0;
 }
 
 void ops_init_noise(const AceSynth * ctx, const AceRequest * reqs, int batch_n, SynthState & s) {

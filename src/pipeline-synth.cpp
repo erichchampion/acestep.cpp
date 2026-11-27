@@ -589,7 +589,9 @@ static int run_tail(AceSynth * ctx, const AceRequest * reqs, int batch_n, SynthS
     if (ops_build_context(ctx, reqs, batch_n, s) != 0) {
         return -1;
     }
-    ops_build_context_silence(ctx, batch_n, s);
+    if (ops_build_context_silence(ctx, batch_n, s) != 0) {
+        return -1;
+    }
     ops_init_noise(ctx, reqs, batch_n, s);
     if (ops_dit_generate(ctx, batch_n, s, progress) != 0) {
         return -1;
@@ -853,18 +855,26 @@ static const SynthTask * find_synth_task(std::string_view task) {
     return nullptr;
 }
 
+// A row as a tool reads it: the one copy of its columns, for
+// ace_synth_task_info and the state run_task fills (cadenza-audio #1187).
+static AceSynthTaskInfo task_info_of(const SynthTask & entry) {
+    AceSynthTaskInfo info;
+    info.needs_source  = entry.needs_source;
+    info.needs_caption = entry.needs_caption;
+    info.cover_knobs   = entry.cover_knobs;
+    info.reads_region  = entry.reads_region;
+    info.reads_track   = entry.reads_track;
+    info.splices       = entry.splices != SynthSplice::never;
+    return info;
+}
+
 bool ace_synth_task_info(const char * task, AceSynthTaskInfo * info) {
     const SynthTask * entry = task ? find_synth_task(task) : nullptr;
     if (!entry) {
         return false;
     }
     if (info) {
-        info->needs_source  = entry->needs_source;
-        info->needs_caption = entry->needs_caption;
-        info->cover_knobs   = entry->cover_knobs;
-        info->reads_region  = entry->reads_region;
-        info->reads_track   = entry->reads_track;
-        info->splices       = entry->splices != SynthSplice::never;
+        *info = task_info_of(*entry);
     }
     return true;
 }
@@ -1213,7 +1223,7 @@ static AceSynthJob * run_task(AceSynth *             ctx,
     // The task's row, which the ops ask of the task -- the cover knobs
     // among it (cadenza-audio #1154, #1187): the rewrite below is what the
     // run says and records of them. The row is the one found above.
-    ace_synth_task_info(entry->name, &s.task);
+    s.task         = task_info_of(*entry);
     // The cover knobs' defaults, which both rules below run a knob at.
     AceRequest   def;
     request_init(&def);
