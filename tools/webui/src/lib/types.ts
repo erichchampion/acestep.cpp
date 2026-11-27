@@ -68,7 +68,8 @@ export interface AceProps {
 		vae: string[];
 	};
 	adapters: string[];
-	tasks: AceTaskInfo[];
+	// absent from an older server's /props
+	tasks?: AceTaskInfo[];
 	cli: Record<string, string | number>;
 	default: AceRequest;
 	presets: {

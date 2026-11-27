@@ -37,7 +37,7 @@
 		buildSynthBatch,
 		taskRow
 	} from '../lib/fields.js';
-	import type { AceRequest, Song } from '../lib/types.js';
+	import type { AceRequest, AceTaskInfo, Song } from '../lib/types.js';
 	import Dialog from './Dialog.svelte';
 	import DialogButton from './DialogButton.svelte';
 
@@ -65,10 +65,16 @@
 	);
 	// the tasks the engine lists, with what each reads (cadenza-audio #1124);
 	// before /props has loaded, the form's own names, and no track cleared
+	// the last rows /props gave, kept through a poll that fails (which
+	// clears app.props), so the track and codes rules hold mid-session
+	let knownTasks = $state<AceTaskInfo[]>([]);
+	$effect(() => {
+		if (app.props?.tasks?.length) knownTasks = app.props.tasks;
+	});
 	let taskNames = $derived(
-		app.props?.tasks?.length ? app.props.tasks.map((t) => t.name) : Object.keys(TASK_LABELS)
+		knownTasks.length ? knownTasks.map((t) => t.name) : Object.keys(TASK_LABELS)
 	);
-	let taskInfo = $derived(taskRow(app.props?.tasks, taskType));
+	let taskInfo = $derived(taskRow(knownTasks, taskType));
 	let needsTrack = $derived(taskInfo ? taskInfo.reads_track : true);
 	let singleTrack = $derived(SINGLE_TRACK_TASKS.includes(taskType));
 
@@ -446,7 +452,7 @@
 				app.request,
 				adapterList,
 				() => Math.floor(Math.random() * 0x100000000),
-				app.props?.tasks
+				knownTasks
 			);
 			if (typeof batch === 'string') {
 				toast(batch);
@@ -867,7 +873,9 @@
 					}}
 				>
 					{#each taskNames as name (name)}
-						<option value={name}>{TASK_LABELS[name] ?? name}</option>
+						<option value={name}
+							>{Object.hasOwn(TASK_LABELS, name) ? TASK_LABELS[name] : name}</option
+						>
 					{/each}
 				</select>
 			</div>

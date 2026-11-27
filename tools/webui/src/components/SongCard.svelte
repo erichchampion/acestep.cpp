@@ -69,11 +69,14 @@
 		}
 	}
 
-	// waveform drag to global state
+	// waveform drag to global state: only the edge that moved, so dragging
+	// one handle of a region drawn cut to the source keeps the other bound
+	// as the request asked it -- an outpaint's start before the source, a
+	// -1 end, an end past the source (#1189)
 	$effect(() => {
-		if (isSrc && rangeEnd > rangeStart && (rangeStart !== shownStart || rangeEnd !== shownEnd)) {
-			app.srcRangeStart = rangeStart;
-			app.srcRangeEnd = rangeEnd;
+		if (isSrc && rangeEnd > rangeStart) {
+			if (rangeStart !== shownStart) app.srcRangeStart = rangeStart;
+			if (rangeEnd !== shownEnd) app.srcRangeEnd = rangeEnd;
 		}
 	});
 
