@@ -9,6 +9,8 @@
 
 import {
 	buildSynthBatch,
+	codesOf,
+	holdsCode,
 	regionOnSource,
 	taskRow,
 	pickSections,
@@ -154,17 +156,42 @@ const none = buildSynthBatch(codes(['', '']), form, [], seed, tasks);
 expect('codes in none run', typeof none !== 'string', none);
 const mixed = buildSynthBatch(codes(['1,2', '']), form, [], seed, tasks);
 expect('a mix is refused', typeof mixed === 'string' && mixed.includes('some do not'), mixed);
+// The white space a paste leaves around codes is trimmed, as the form's
+// light reads it (#1182): a space or a newline alone is no codes, and codes
+// in a newline are sent without it.
 const blank = buildSynthBatch(codes(['', ' ']), form, [], seed, tasks);
+expect('codes of a space alone are none', typeof blank !== 'string', blank);
+const pasted = buildSynthBatch(codes(['\n1,2\n', ' 3 ']), form, [], seed, tasks);
 expect(
-	'codes of a space hold no code',
-	typeof blank === 'string' && blank.includes('no code'),
-	blank
+	'pasted codes are sent trimmed',
+	typeof pasted !== 'string' && pasted.toSend.map((r) => r.audio_codes).join('|') === '1,2|3',
+	pasted
 );
+const strayNewline = buildSynthBatch(codes(['1,2', '\n']), form, [], seed, tasks);
+expect(
+	'a newline alone is no codes, so beside codes it is a mix',
+	typeof strayNewline === 'string' && strayNewline.includes('some do not'),
+	strayNewline
+);
+expect("codesOf trims as it's sent", codesOf({ audio_codes: '\t 5,6 \n' } as AceRequest) === '5,6');
 const commas = buildSynthBatch(codes([',', '']), form, [], seed, tasks);
 expect(
 	'codes of a comma hold no code',
 	typeof commas === 'string' && commas.includes('no code'),
 	commas
+);
+// A code is an int, as from_chars reads it (ops_codes_given, #1182): a run of
+// digits past an int's range holds none.
+expect('the largest int is a code', holdsCode('2147483647'));
+expect('the smallest int is a code', holdsCode(', -2147483648'));
+expect('one past the largest int is none', !holdsCode('4294967296'));
+expect('one past the smallest int is none', !holdsCode('-2147483649'));
+expect('a sign alone is none', !holdsCode('-,1'));
+const tooBig = buildSynthBatch(codes(['4294967296', '1']), form, [], seed, tasks);
+expect(
+	'codes past an int are refused as holding none',
+	typeof tooBig === 'string' && tooBig.includes('no code'),
+	tooBig
 );
 const cover = buildSynthBatch(codes(['1,2', '']), { ...form, task_type: 'cover' }, [], seed, tasks);
 expect("a cover's codes are each request's own", typeof cover !== 'string', cover);
@@ -184,6 +211,35 @@ expect(
 	'a fractional Batch is whole',
 	half.expanded.length === 4 && half.toSend[0].synth_batch_size === 2,
 	half
+);
+// Exactly 9 takes run (#1182): 3 compositions at Batch 3.
+const nine = buildSynthBatch(
+	codes(['', '', '']),
+	{ ...form, synth_batch_size: 3 },
+	[],
+	seed,
+	tasks
+);
+expect('exactly 9 takes run', typeof nine !== 'string' && nine.expanded.length === 9, nine);
+// A Batch below 1, or none, is 1: one take a composition.
+for (const below of [0, -2, 0.5, '', undefined]) {
+	const b = buildSynthBatch(pending, { ...form, synth_batch_size: below as number }, [], seed);
+	expect(
+		`a Batch of ${JSON.stringify(below)} is 1`,
+		typeof b !== 'string' &&
+			b.expanded.length === 2 &&
+			b.toSend.every((r) => r.synth_batch_size === 1),
+		b
+	);
+}
+// A fractional Seed is whole, as the server reads it (toward zero), so the
+// take list says the seeds that ran.
+const fractional = built(buildSynthBatch(pending, { ...form, seed: 5.5 }, [], seed));
+expect(
+	'a fractional Seed is whole',
+	fractional.toSend.every((r) => r.seed === 5) &&
+		fractional.expanded.map((r) => r.seed).join() === '5,6,5,6',
+	fractional
 );
 
 if (failed) {

@@ -35,6 +35,7 @@
 		clearSection,
 		withCurrentSettings,
 		buildSynthBatch,
+		codesOf,
 		taskRow
 	} from '../lib/fields.js';
 	import type { AceRequest, AceTaskInfo, Song } from '../lib/types.js';
@@ -84,7 +85,8 @@
 	let singleTrack = $derived(SINGLE_TRACK_TASKS.includes(taskType));
 
 	// DiT input indicators
-	let hasCodes = $derived(!!app.request.audio_codes?.trim() && app.srcSongId == null);
+	// codes as a synth would send them (codesOf), so the light and the batch agree
+	let hasCodes = $derived(codesOf(app.request) !== '' && app.srcSongId == null);
 	let hasSrc = $derived(app.srcSongId != null);
 	let hasRange = $derived(app.srcRangeStart != null || app.srcRangeEnd != null);
 	let hasRef = $derived(app.refSongId != null);

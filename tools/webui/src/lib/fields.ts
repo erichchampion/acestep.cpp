@@ -153,6 +153,34 @@ function batchRequest(r: AceRequest, shared: Partial<AceRequest>): AceRequest {
 	return { ...out, ...shared } as AceRequest;
 }
 
+// a request's audio codes as the webui sends them: the white space a paste
+// leaves around them trimmed, so a stray newline or space is no codes, as
+// the form's "LM codes" light shows it (cadenza-audio #1182).
+export function codesOf(r: Partial<AceRequest>): string {
+	return String(r.audio_codes ?? '').trim();
+}
+
+// the server's rule for codes that are given: whether one is held -- past
+// leading commas and spaces, an integer starts that fits an int, as
+// ops_codes_given reads it with from_chars, so a run of digits past an
+// int's range holds none (cadenza-audio #1182)
+export function holdsCode(codes: string): boolean {
+	const first = /^-?[0-9]+/.exec(codes.replace(/^[, ]*/, ''));
+	if (!first) return false;
+	const v = Number(first[0]);
+	return v >= -2147483648 && v <= 2147483647;
+}
+
+// a number as the server reads one into an integer: whole, toward zero
+function whole(n: number | undefined): number | undefined {
+	return n == null ? undefined : Math.trunc(n);
+}
+
+// the most takes the server runs in one batch: the engine's kAceSynthMaxTakes
+// (pipeline-synth.h). Its copy here goes once the server refuses a batch
+// past it itself (cadenza-audio #1182, item 5).
+const SERVER_MAX_TAKES = 9;
+
 // a /synth batch: what is sent, and the takes it makes, one per seed.
 export interface SynthBatch {
 	toSend: AceRequest[];
@@ -205,7 +233,8 @@ export function buildSynthBatch(
 ): SynthBatch | string {
 	// whole, as the server reads it
 	const synthBatch = Math.max(1, Math.floor(num(form.synth_batch_size) || 1));
-	const userSeed = num(form.seed);
+	// whole, as the server reads it, so the take list says the seeds it ran
+	const userSeed = whole(num(form.seed));
 	const hasSeed = userSeed != null && userSeed >= 0;
 	const shared = pickSections(form, SYNTH_SECTIONS);
 	// seed and synth_batch_size are per request, set below
@@ -213,29 +242,29 @@ export function buildSynthBatch(
 	delete shared.synth_batch_size;
 	if (shared.adapter && !adapters.includes(String(shared.adapter))) delete shared.adapter;
 
-	// the server's rules, as it reads codes: given when not empty, holding
-	// one when, past leading commas and spaces, an integer starts
-	// (ops_codes_given)
+	// the server's rules, as it reads codes: given when not empty, and then
+	// holding one (holdsCode)
 	const task = String(shared.task_type || 'text2music');
-	const codesOf = (r: AceRequest) => String(r.audio_codes ?? '');
-	const holdsCode = (c: string) => /^-?[0-9]/.test(c.replace(/^[, ]*/, ''));
+	const codes = pending.map(codesOf);
+	const given = codes.map((c) => c !== '');
 	const row = taskRow(tasks, task);
 	if (row && !row.needs_source) {
-		if (pending.some((r) => codesOf(r) !== '' && !holdsCode(codesOf(r)))) {
+		if (codes.some((c, i) => given[i] && !holdsCode(c))) {
 			return "A composition's audio codes hold no code: fix them, or clear them.";
 		}
-		if (pending.some((r) => codesOf(r) !== '') && !pending.every((r) => codesOf(r) !== '')) {
+		if (given.some(Boolean) && !given.every(Boolean)) {
 			return 'Some compositions carry audio codes and some do not: give every one its codes, or clear them all.';
 		}
 	}
-	if (pending.length * synthBatch > 9) {
-		return `A batch makes 9 takes at most, and this asks for ${pending.length * synthBatch}: lower Batch, or synthesize fewer compositions.`;
+	if (pending.length * synthBatch > SERVER_MAX_TAKES) {
+		return `A batch makes ${SERVER_MAX_TAKES} takes at most, and this asks for ${pending.length * synthBatch}: lower Batch, or synthesize fewer compositions.`;
 	}
 
 	const toSend: AceRequest[] = [];
 	const expanded: AceRequest[] = [];
-	for (const p of pending) {
+	for (const [i, p] of pending.entries()) {
 		const r = batchRequest(p, shared);
+		if ('audio_codes' in r) r.audio_codes = codes[i];
 		const base = hasSeed ? (userSeed as number) : seed();
 		toSend.push({ ...r, seed: base, synth_batch_size: synthBatch });
 		// each take's song keeps the batch size it was made at, so loading
