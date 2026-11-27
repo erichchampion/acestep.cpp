@@ -554,6 +554,7 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
         AceUnderstandCall  from_latents, whole_latents;
         std::vector<float> l_lat, wl_lat;
         int                l_T = 0, wl_T = 0;
+        ace_test_record_understand_codes(true);
         if (!failed && (!call(true, from_latents, l_lat, l_T, &h_lat) || from_latents.codes_total != (h_T + 4) / 5 ||
                         from_latents.codes_start != 50 || from_latents.codes_used != 50 || l_T != 0)) {
             fprintf(stderr,
@@ -568,6 +569,7 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
             failed = true;
         }
         const std::vector<int> middle = ace_test_last_understand_codes();
+        ace_test_record_understand_codes(false);
         if (!failed) {
             int agree = 0;
             for (size_t j = 0; j < cut.size() && j < middle.size(); j++) {

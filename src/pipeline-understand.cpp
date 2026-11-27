@@ -22,6 +22,7 @@
 #include "yyjson.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -145,13 +146,24 @@ static int middle_start(int total, int fit) {
     return fit > 0 && total > fit ? (total - fit) / 2 : 0;
 }
 
-// The codes the last call's prompt read (ace_test_last_understand_codes).
-static std::mutex       g_test_codes_mutex;
-static std::vector<int> g_test_last_codes;
+// The codes the last call's prompt read (ace_test_last_understand_codes),
+// kept only while a test asks: a shipping call pays one relaxed load.
+static std::atomic<bool> g_test_record_codes{ false };
+static std::mutex        g_test_codes_mutex;
+static std::vector<int>  g_test_last_codes;
 
 static void set_test_last_codes(const int * codes, int n) {
+    if (!g_test_record_codes.load(std::memory_order_relaxed)) {
+        return;
+    }
     std::lock_guard<std::mutex> lock(g_test_codes_mutex);
     g_test_last_codes.assign(codes, codes + n);
+}
+
+void ace_test_record_understand_codes(bool on) {
+    std::lock_guard<std::mutex> lock(g_test_codes_mutex);
+    g_test_last_codes.clear();
+    g_test_record_codes.store(on);
 }
 
 std::vector<int> ace_test_last_understand_codes() {
@@ -208,6 +220,8 @@ int ace_understand_generate(AceUnderstand *      ctx,
     if (!ctx || !req || !out) {
         return -1;
     }
+    // A call that stops before its prompt records none, not a former call's.
+    set_test_last_codes(nullptr, 0);
     AceUnderstandCall defaults;
     ace_understand_default_call(&defaults);
     if (!call) {

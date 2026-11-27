@@ -143,6 +143,11 @@ RequestJsonExtra ace_understand_window_json(const AceUnderstandCall & call);
 // Tests only: the codes the last call's prompt read -- the window's, or the
 // middle the clip kept -- so a test can tell a window cut from the wrong
 // place, which reports the same start and count (cadenza-audio #1179).
+// Recorded only once a test turns it on (ace_test_record_understand_codes,
+// which clears it either way); each call clears it as it starts, so a call
+// that stops before its prompt leaves none. The process's, not a call's: a
+// test reads it with no other call in flight.
+void             ace_test_record_understand_codes(bool on);
 std::vector<int> ace_test_last_understand_codes();
 
 // The audio codes a call's prompt holds whole (cadenza-audio #648): the

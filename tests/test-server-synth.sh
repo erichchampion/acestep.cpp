@@ -160,5 +160,13 @@ for bad in '"maybe"' '2' '[true]'; do
         fail "/understand with window_only $bad: not the request's reason: $(cat "$work/body")"
     echo "ok: /understand with the request's window_only $bad -- $(cat "$work/body")"
 done
+# Asked twice, differently -- by its field and by the request -- is a 400 too.
+code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
+    --form-string 'request={"window_only":true}' --form-string 'window_only=0' \
+    -F "audio=@$work/junk.wav;type=audio/wav" "$URL/understand")" || fail "/understand asked twice: no answer"
+[ "$code" = 400 ] || fail "/understand asked twice: HTTP $code, want 400: $(cat "$work/body")"
+grep -qF "window_only is asked twice, differently" "$work/body" ||
+    fail "/understand asked twice: not its reason: $(cat "$work/body")"
+echo "ok: /understand with window_only asked twice, differently -- $(cat "$work/body")"
 answers "after /understand's refusals"
 echo "PASS"

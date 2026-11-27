@@ -1319,7 +1319,9 @@ static void understand_worker(std::shared_ptr<Job> job,
 // and a value of another kind as "?" -- a word no field takes, refused as
 // one (cadenza-audio #1179).
 static std::string json_window_only(const std::string & json) {
-    yyjson_doc * doc = yyjson_read(json.c_str(), json.size(), 0);
+    // As request_parse_json reads it, to its first NUL, so the two read one
+    // text (and one that parsed there parses here).
+    yyjson_doc * doc = yyjson_read(json.c_str(), strlen(json.c_str()), 0);
     if (!doc) {
         return "";
     }
@@ -1341,13 +1343,39 @@ static std::string json_window_only(const std::string & json) {
     return said;
 }
 
+// What a window_only word asks: on, off, none (empty) or a word no field
+// takes -- trimmed, as a file part ends with its newline, then any case.
+static constexpr int kWindowOff = 0, kWindowOn = 1, kWindowNone = -1, kWindowBad = -2;
+
+static int window_word(std::string word) {
+    while (!word.empty() && isspace((unsigned char) word.back())) {
+        word.pop_back();
+    }
+    while (!word.empty() && isspace((unsigned char) word.front())) {
+        word.erase(word.begin());
+    }
+    for (char & c : word) {
+        c = (char) tolower((unsigned char) c);
+    }
+    if (word.empty()) {
+        return kWindowNone;
+    }
+    if (word == "1" || word == "true" || word == "yes" || word == "on") {
+        return kWindowOn;
+    }
+    if (word == "0" || word == "false" || word == "no" || word == "off") {
+        return kWindowOff;
+    }
+    return kWindowBad;
+}
+
 // POST /understand
 // multipart/form-data: full pipeline (audio + optional JSON params)
 //   part "request":     JSON text (optional, for model selection and sampling params)
 //   part "audio":       WAV or MP3 file (required unless src_latents provided)
 //   part "src_latents": pre-encoded latent bytes (raw f32, [T*64])
 //   field "window_only", or the request JSON's "window_only" (a bool, 0 or 1,
-//                        or the field's words; a field, sent, is the one read):
+//                        or the field's words; both sent, they must agree):
 //                        "1"/"true"/"yes"/"on" (any case) to encode only the
 //                        window the LM reads (cadenza-audio #1149); "0"/
 //                        "false"/"no"/"off" or none, the whole. The result's
@@ -1386,29 +1414,25 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
     // Opt-in (cadenza-audio #1149): the default hands back every code and
     // latent of the input, whatever its length. Asked by a field or part of
     // its own, or by the request JSON's "window_only", where the other
-    // per-call options go (#1179): a field, when sent, is the one read.
-    const bool  window_field = req.form.has_field("window_only") || req.form.has_file("window_only");
-    std::string window       = req.form.has_field("window_only") ? req.form.get_field("window_only") :
-                               req.form.has_file("window_only")  ? req.form.get_file("window_only").content :
-                               request_sent                      ? json_window_only(request_json) :
-                                                                   "";
-    // Trimmed, as a file part ends with its newline; then any case.
-    while (!window.empty() && isspace((unsigned char) window.back())) {
-        window.pop_back();
-    }
-    while (!window.empty() && isspace((unsigned char) window.front())) {
-        window.erase(window.begin());
-    }
-    for (char & c : window) {
-        c = (char) tolower((unsigned char) c);
-    }
-    const bool window_on = window == "1" || window == "true" || window == "yes" || window == "on";
-    if (!window_on && !window.empty() && window != "0" && window != "false" && window != "no" && window != "off") {
-        json_error(res, 400,
-                   window_field ? "window_only takes 1, true, yes or on (or 0, false, no, off)" :
-                                  "the request's window_only takes true or false (or 1, 0, or a field's words)");
+    // per-call options go (#1179). Both may say it; both said, they must
+    // agree. An empty field is none.
+    const int field   = window_word(req.form.has_field("window_only") ? req.form.get_field("window_only") :
+                                    req.form.has_file("window_only")  ? req.form.get_file("window_only").content :
+                                                                        "");
+    const int in_json = request_sent ? window_word(json_window_only(request_json)) : kWindowNone;
+    if (field == kWindowBad) {
+        json_error(res, 400, "window_only takes 1, true, yes or on (or 0, false, no, off)");
         return;
     }
+    if (in_json == kWindowBad) {
+        json_error(res, 400, "the request's window_only takes true or false (or 1, 0, or a field's words)");
+        return;
+    }
+    if (field != kWindowNone && in_json != kWindowNone && field != in_json) {
+        json_error(res, 400, "window_only is asked twice, differently: by its field and by the request");
+        return;
+    }
+    const bool window_on = (field != kWindowNone ? field : in_json) == kWindowOn;
 
     std::vector<float> src_latents;
     int                src_T_latent = 0;
