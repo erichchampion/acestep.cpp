@@ -5,8 +5,12 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <vector>
+
+struct yyjson_mut_doc;
+struct yyjson_mut_val;
 
 struct AceRequest {
     // text content
@@ -143,13 +147,19 @@ bool request_parse(AceRequest * r, const char * path);
 // Returns false on malformed JSON.
 bool request_parse_json(AceRequest * r, const char * json);
 
-// Write struct to JSON file (overwrites). Returns false on file error.
-bool request_write(const AceRequest * r, const char * path);
+// Keys a caller adds to a request's JSON object beside its fields, through
+// yyjson (`root` is the object, `doc` its document): a result's own report,
+// such as understand's window (cadenza-audio #1179). Empty: none.
+using RequestJsonExtra = std::function<void(yyjson_mut_doc * doc, yyjson_mut_val * root)>;
 
-// Serialize struct to JSON string.
+// Write struct to JSON file (overwrites), with `extra`'s keys if any.
+// Returns false on file error.
+bool request_write(const AceRequest * r, const char * path, const RequestJsonExtra & extra = {});
+
+// Serialize struct to JSON string, with `extra`'s keys if any.
 // sparse=true: omit fields at their default value (for cards and exports).
 // sparse=false: serialize all fields (for /props documentation).
-std::string request_to_json(const AceRequest * r, bool sparse = true);
+std::string request_to_json(const AceRequest * r, bool sparse = true, const RequestJsonExtra & extra = {});
 
 // Parse JSON: single object {} or array [{}, ...] into a vector.
 // Returns false on malformed JSON or empty result.

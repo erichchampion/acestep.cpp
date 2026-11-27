@@ -16,8 +16,10 @@
 #include "prompt.h"
 #include "qwen3-lm.h"
 #include "sampling.h"
+#include "synth-input.h"
 #include "timer.h"
 #include "vae-enc.h"
+#include "yyjson.h"
 
 #include <algorithm>
 #include <cmath>
@@ -25,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <random>
 #include <string>
 #include <vector>
@@ -134,6 +137,42 @@ static int understand_fit(int max_seq, int framing, int reserve) {
     return max_seq - framing - 1 - reserve;
 }
 
+// The first of the middle `fit` of `total` codes, 0 when all fit: the one
+// rule for where a long input's window is, which the window cut before the
+// encode and the prompt's clip after it both ask, so codes_start is the
+// window's whichever cuts (cadenza-audio #1179).
+static int middle_start(int total, int fit) {
+    return fit > 0 && total > fit ? (total - fit) / 2 : 0;
+}
+
+// The codes the last call's prompt read (ace_test_last_understand_codes).
+static std::mutex       g_test_codes_mutex;
+static std::vector<int> g_test_last_codes;
+
+static void set_test_last_codes(const int * codes, int n) {
+    std::lock_guard<std::mutex> lock(g_test_codes_mutex);
+    g_test_last_codes.assign(codes, codes + n);
+}
+
+std::vector<int> ace_test_last_understand_codes() {
+    std::lock_guard<std::mutex> lock(g_test_codes_mutex);
+    return g_test_last_codes;
+}
+
+RequestJsonExtra ace_understand_window_json(const AceUnderstandCall & call) {
+    if (!call.window_only) {
+        return {};
+    }
+    const int start = call.codes_start, used = call.codes_used, total = call.codes_total;
+    return [start, used, total](yyjson_mut_doc * doc, yyjson_mut_val * root) {
+        yyjson_mut_val * window = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_int(doc, window, "codes_start", start);
+        yyjson_mut_obj_add_int(doc, window, "codes_used", used);
+        yyjson_mut_obj_add_int(doc, window, "codes_total", total);
+        yyjson_mut_obj_add_val(doc, root, "understand_window", window);
+    };
+}
+
 int ace_understand_code_capacity(const AceUnderstand * ctx, bool metadata_only, int decode_reserve) {
     if (!ctx || !ctx->have_lm) {
         return -1;
@@ -207,32 +246,37 @@ int ace_understand_generate(AceUnderstand *      ctx,
     // encoded with the encoder's overlap of real audio each side, trimmed
     // after, so the window's edges are encoded with their neighbours as the
     // whole's are (a tile seam may still fall elsewhere).
-    const bool have_latents_in = (src_latents && src_T_latent > 0);
-    int        window_start    = 0;   // the whole's codes before the window
-    int        window_total    = -1;  // the whole's codes, when windowed
-    int        trim_front      = 0;   // latent frames of margin before the window
-    int        window_frames   = 0;   // the window's latent frames, margins off
+    // The source, read as the synth reads one (SynthInput, #1131): latents
+    // win when both are given.
+    SynthInput src{ src_audio, src_len, src_latents, src_T_latent };
+    int        window_start  = 0;   // the whole's codes before the window
+    int        window_total  = -1;  // the whole's codes, when windowed
+    int        trim_front    = 0;   // latent frames of margin before the window
+    int        window_frames = 0;   // the window's latent frames, margins off
     if (call->window_only) {
-        const int fit   = ace_understand_code_capacity(ctx, metadata_only, call->decode_reserve);
-        const int total = have_latents_in ? (src_T_latent + 4) / 5 :
-                                            (src_audio && src_len > 0 ? (src_len / ACE_LATENT_HOP + 4) / 5 : 0);
+        const int fit = ace_understand_code_capacity(ctx, metadata_only, call->decode_reserve);
+        const int total =
+            src.has_latents() ? (src.T_latent + 4) / 5 : (src.has_audio() ? (src.len / ACE_LATENT_HOP + 4) / 5 : 0);
         if (fit > 0 && total > fit) {
-            window_start = (total - fit) / 2;
+            window_start = middle_start(total, fit);
             window_total = total;
-            if (have_latents_in) {
-                const int f0 = window_start * 5;
-                src_latents += (size_t) f0 * 64;
-                src_T_latent = std::min(fit * 5, src_T_latent - f0);
+            // The window ends a code short of the whole's last at most --
+            // the whole's codes count a part code, the middle leaves one of
+            // the (total - fit) over at its end -- so it is inside the
+            // source, no end to clamp: fit * 5 frames, fit * 5 * 1920 samples.
+            if (src.has_latents()) {
+                src.latents += (size_t) window_start * 5 * 64;
+                src.T_latent = fit * 5;
             } else {
                 const int margin = std::max(0, ctx->params.vae_overlap) * ACE_LATENT_HOP;
                 const int s0     = window_start * 5 * ACE_LATENT_HOP;
-                const int s1     = std::min(src_len, (window_start + fit) * 5 * ACE_LATENT_HOP);
+                const int s1     = (window_start + fit) * 5 * ACE_LATENT_HOP;
                 const int a0     = std::max(0, s0 - margin);
-                const int a1     = std::min(src_len, s1 + margin);
+                const int a1     = std::min(src.len, s1 + margin);
                 trim_front       = (s0 - a0) / ACE_LATENT_HOP;
-                window_frames    = std::max(1, (s1 - s0) / ACE_LATENT_HOP);
-                src_audio += (size_t) a0 * 2;
-                src_len = a1 - a0;
+                window_frames    = fit * 5;
+                src.audio += (size_t) a0 * 2;
+                src.len = a1 - a0;
             }
             fprintf(stderr, "[Understand-Window] codes %d..%d of %d (%.1fs of %.1fs), the rest not encoded\n",
                     window_start, window_start + fit, total, (float) fit / 5.0f, (float) total / 5.0f);
@@ -243,18 +287,17 @@ int ace_understand_generate(AceUnderstand *      ctx,
     // pre-encoded latents come from a previous run (or any client cache)
     // and skip the VAE encoder entirely; raw audio takes the encoder path,
     // acquiring VAE-Enc just for this step. Latents win when both are set.
-    bool have_latents = (src_latents && src_T_latent > 0);
-    bool have_audio   = (src_audio && src_len > 0);
-    if (!have_latents && !have_audio) {
+    if (!src.given()) {
         fprintf(stderr, "[Understand] ERROR: src_audio or src_latents is required\n");
         return -1;
     }
 
+    const bool         have_latents = src.has_latents();
     std::vector<float> latents;
     int                T_25Hz = 0;
     if (have_latents) {
-        latents.assign(src_latents, src_latents + (size_t) src_T_latent * 64);
-        T_25Hz = src_T_latent;
+        latents.assign(src.latents, src.latents + (size_t) src.T_latent * 64);
+        T_25Hz = src.T_latent;
         fprintf(stderr, "[Understand-VAE] Latents in: %d frames (%.2fs), VAE encode skipped\n", T_25Hz,
                 latent_frames_sec(T_25Hz));
     } else {
@@ -262,7 +305,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
         // this step: acquire, encode, release so the store can free it before
         // the tokenizer comes in (STRICT) or keep it resident (NEVER).
         Timer t_vae;
-        int   max_T_lat = (src_len / ACE_LATENT_HOP) + ACE_VAE_ENC_SLACK_FRAMES;
+        int   max_T_lat = (src.len / ACE_LATENT_HOP) + ACE_VAE_ENC_SLACK_FRAMES;
         latents.assign((size_t) max_T_lat * 64, 0.0f);
 
         VAEEncoder * vae_enc = store_require_vae_enc(ctx->store, ctx->vae_enc_key);
@@ -272,7 +315,7 @@ int ace_understand_generate(AceUnderstand *      ctx,
         }
         {
             ModelHandle vae_guard(ctx->store, vae_enc);
-            T_25Hz = vae_enc_encode_tiled(vae_enc, src_audio, src_len, latents.data(), max_T_lat, ctx->params.vae_chunk,
+            T_25Hz = vae_enc_encode_tiled(vae_enc, src.audio, src.len, latents.data(), max_T_lat, ctx->params.vae_chunk,
                                           ctx->params.vae_overlap, progress);
         }
         if (T_25Hz < 0) {
@@ -420,20 +463,21 @@ int ace_understand_generate(AceUnderstand *      ctx,
     const int reserve = understand_reserve(call->decode_reserve, metadata_only);
     const int fit     = understand_fit(model->cfg.max_seq_len, ctx->framing, reserve);
     if (fit < 1) {
-        fprintf(stderr, "[Understand] FATAL: the %d-token context holds no codes beside %d of framing and %d for the decode\n",
+        fprintf(stderr,
+                "[Understand] FATAL: the %d-token context holds no codes beside %d of framing and %d for the decode\n",
                 model->cfg.max_seq_len, ctx->framing, reserve);
         return -1;
     }
-    int start = 0, used = (int) codes.size();
+    int start = middle_start((int) codes.size(), fit), used = (int) codes.size();
     if (used > fit) {
-        start = (used - fit) / 2;
-        used  = fit;
+        used = fit;
         fprintf(stderr, "[Understand-Clip] %d of %zu codes from %d (%.1fs of %.1fs), %d tokens kept for the decode\n",
                 used, codes.size(), start, (float) used / 5.0f, (float) codes.size() / 5.0f, reserve);
     }
     call->codes_start = window_start + start;
     call->codes_used  = used;
 
+    set_test_last_codes(codes.data() + start, used);
     std::vector<int> prompt = build_understand_prompt(*bpe, codes.data() + start, used);
     fprintf(stderr, "[Understand-Prompt] %zu tokens (%d codes + framing)\n", prompt.size(), used);
 

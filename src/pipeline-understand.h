@@ -133,6 +133,18 @@ int ace_understand_generate(AceUnderstand *      ctx,
                             AceProgress          progress     = {},
                             AceUnderstandCall *  call         = nullptr);
 
+// The keys a windowed call's result JSON carries beside its request's
+// fields -- understand_window {codes_start, codes_used, codes_total}, which
+// window of the whole its audio_codes hold -- for request_to_json and
+// request_write; none for a call that did not ask window_only. ace-server's
+// /understand and ace-understand -o say it alike (cadenza-audio #1149, #1179).
+RequestJsonExtra ace_understand_window_json(const AceUnderstandCall & call);
+
+// Tests only: the codes the last call's prompt read -- the window's, or the
+// middle the clip kept -- so a test can tell a window cut from the wrong
+// place, which reports the same start and count (cadenza-audio #1179).
+std::vector<int> ace_test_last_understand_codes();
+
 // The audio codes a call's prompt holds whole (cadenza-audio #648): the
 // context less the prompt's framing (measured at load), its end and the
 // decode's reserve (as AceUnderstandCall: <= 0 is the engine's). Past this a

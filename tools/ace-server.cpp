@@ -1304,20 +1304,41 @@ static void understand_worker(std::shared_ptr<Job> job,
         g_loaded_vae.clear();
     }
 
-    std::string request_json = request_to_json(&out);
     // Which window a windowed result holds (#1149): its codes' first and
-    // count among the whole's. An extra key the request parser ignores.
-    if (window_only && !request_json.empty() && request_json.back() == '}') {
-        request_json.pop_back();
-        request_json += ",\"understand_window\":{\"codes_start\":" + std::to_string(call.codes_start) +
-                        ",\"codes_used\":" + std::to_string(call.codes_used) +
-                        ",\"codes_total\":" + std::to_string(call.codes_total) + "}}";
-    }
-    std::string json_part = "[" + request_json + "]";
+    // count among the whole's, a key the request parser ignores, built as
+    // the request's own (#1179).
+    std::string json_part = "[" + request_to_json(&out, true, ace_understand_window_json(call)) + "]";
     job->result_body      = multipart_build_json_latent(json_part, captured_latent, captured_T_latent);
     job->result_mime      = MULTIPART_MIME;
     job->status.store(JobStatus::DONE);
     fprintf(stderr, "[Server] Job %s done (understand)\n", job->id.c_str());
+}
+
+// The request JSON's "window_only", as a form field's words: a bool or a
+// number 0/1 as "1"/"0", a string as itself, "" for none or no JSON object,
+// and a value of another kind as "?" -- a word no field takes, refused as
+// one (cadenza-audio #1179).
+static std::string json_window_only(const std::string & json) {
+    yyjson_doc * doc = yyjson_read(json.c_str(), json.size(), 0);
+    if (!doc) {
+        return "";
+    }
+    std::string  said;
+    yyjson_val * root = yyjson_doc_get_root(doc);
+    yyjson_val * v    = yyjson_is_obj(root) ? yyjson_obj_get(root, "window_only") : nullptr;
+    if (!v || yyjson_is_null(v)) {
+        said = "";
+    } else if (yyjson_is_bool(v)) {
+        said = yyjson_get_bool(v) ? "1" : "0";
+    } else if (yyjson_is_int(v) && (yyjson_get_sint(v) == 0 || yyjson_get_sint(v) == 1)) {
+        said = yyjson_get_sint(v) ? "1" : "0";
+    } else if (yyjson_is_str(v)) {
+        said = yyjson_get_str(v);
+    } else {
+        said = "?";
+    }
+    yyjson_doc_free(doc);
+    return said;
 }
 
 // POST /understand
@@ -1325,7 +1346,9 @@ static void understand_worker(std::shared_ptr<Job> job,
 //   part "request":     JSON text (optional, for model selection and sampling params)
 //   part "audio":       WAV or MP3 file (required unless src_latents provided)
 //   part "src_latents": pre-encoded latent bytes (raw f32, [T*64])
-//   field "window_only": "1"/"true"/"yes"/"on" (any case) to encode only the
+//   field "window_only", or the request JSON's "window_only" (a bool, 0 or 1,
+//                        or the field's words; a field, sent, is the one read):
+//                        "1"/"true"/"yes"/"on" (any case) to encode only the
 //                        window the LM reads (cadenza-audio #1149); "0"/
 //                        "false"/"no"/"off" or none, the whole. The result's
 //                        audio_codes and latent part then hold that window,
@@ -1351,25 +1374,24 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
     ace_req.lm_temperature = 0.3f;  // understand default: lower than generation
     ace_req.lm_top_p       = 1.0f;  // understand default: no nucleus sampling
 
-    if (req.form.has_file("request")) {
-        const std::string & json = req.form.get_file("request").content;
-        if (!request_parse_json(&ace_req, json.c_str())) {
-            json_error(res, 400, "Multipart: invalid JSON in 'request' part");
-            return;
-        }
-    } else if (req.form.has_field("request")) {
-        const std::string & json = req.form.get_field("request");
-        if (!request_parse_json(&ace_req, json.c_str())) {
-            json_error(res, 400, "Multipart: invalid JSON in 'request' part");
-            return;
-        }
+    const std::string request_json = req.form.has_file("request")  ? req.form.get_file("request").content :
+                                     req.form.has_field("request") ? req.form.get_field("request") :
+                                                                     "";
+    const bool        request_sent = req.form.has_file("request") || req.form.has_field("request");
+    if (request_sent && !request_parse_json(&ace_req, request_json.c_str())) {
+        json_error(res, 400, "Multipart: invalid JSON in 'request' part");
+        return;
     }
 
     // Opt-in (cadenza-audio #1149): the default hands back every code and
-    // latent of the input, whatever its length.
-    std::string window = req.form.has_field("window_only") ? req.form.get_field("window_only") :
-                         req.form.has_file("window_only")  ? req.form.get_file("window_only").content :
-                                                             "";
+    // latent of the input, whatever its length. Asked by a field or part of
+    // its own, or by the request JSON's "window_only", where the other
+    // per-call options go (#1179): a field, when sent, is the one read.
+    const bool  window_field = req.form.has_field("window_only") || req.form.has_file("window_only");
+    std::string window       = req.form.has_field("window_only") ? req.form.get_field("window_only") :
+                               req.form.has_file("window_only")  ? req.form.get_file("window_only").content :
+                               request_sent                      ? json_window_only(request_json) :
+                                                                   "";
     // Trimmed, as a file part ends with its newline; then any case.
     while (!window.empty() && isspace((unsigned char) window.back())) {
         window.pop_back();
@@ -1382,7 +1404,9 @@ static void handle_understand(const httplib::Request & req, httplib::Response & 
     }
     const bool window_on = window == "1" || window == "true" || window == "yes" || window == "on";
     if (!window_on && !window.empty() && window != "0" && window != "false" && window != "no" && window != "off") {
-        json_error(res, 400, "window_only takes 1, true, yes or on (or 0, false, no, off)");
+        json_error(res, 400,
+                   window_field ? "window_only takes 1, true, yes or on (or 0, false, no, off)" :
+                                  "the request's window_only takes true or false (or 1, 0, or a field's words)");
         return;
     }
 

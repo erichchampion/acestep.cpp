@@ -528,10 +528,32 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
                 failed = true;
             }
         }
-        // Latents in, windowed: cut exactly, the same report.
-        AceUnderstandCall  from_latents;
-        std::vector<float> l_lat;
-        int                l_T = 0;
+        // A windowed call's JSON says which window it holds; a whole call's
+        // says none -- the server's and the CLI's words (#1179).
+        if (!failed) {
+            // Compared without the writer's whitespace.
+            auto squeezed = [](std::string s) {
+                s.erase(std::remove_if(s.begin(), s.end(), [](unsigned char ch) { return isspace(ch); }), s.end());
+                return s;
+            };
+            const std::string w_json = squeezed(request_to_json(&req, true, ace_understand_window_json(windowed)));
+            const std::string h_json = squeezed(request_to_json(&req, true, ace_understand_window_json(whole)));
+            if (w_json.find("\"understand_window\":{\"codes_start\":50,\"codes_used\":50,\"codes_total\":150}") ==
+                    std::string::npos ||
+                h_json.find("understand_window") != std::string::npos) {
+                fprintf(stderr, "[Test] FAIL: the window's JSON: windowed %s, whole %s\n", w_json.c_str(),
+                        h_json.c_str());
+                failed = true;
+            }
+        }
+        // Latents in, windowed: cut exactly, the same report -- and from the
+        // middle, not only said so (#1179): the codes its prompt read are
+        // the whole's middle codes, the ones a whole run given the same
+        // latents clips to. A cut from the start reads the chirp's first
+        // 10 s, which tokenize to other codes.
+        AceUnderstandCall  from_latents, whole_latents;
+        std::vector<float> l_lat, wl_lat;
+        int                l_T = 0, wl_T = 0;
         if (!failed && (!call(true, from_latents, l_lat, l_T, &h_lat) || from_latents.codes_total != (h_T + 4) / 5 ||
                         from_latents.codes_start != 50 || from_latents.codes_used != 50 || l_T != 0)) {
             fprintf(stderr,
@@ -539,6 +561,25 @@ static int scenario_integration(const char * lm_path, const char * dit_path, con
                     "codes 50..+50 of %d, none\n",
                     from_latents.codes_start, from_latents.codes_used, from_latents.codes_total, l_T, (h_T + 4) / 5);
             failed = true;
+        }
+        const std::vector<int> cut = ace_test_last_understand_codes();
+        if (!failed && !call(false, whole_latents, wl_lat, wl_T, &h_lat)) {
+            fprintf(stderr, "[Test] FAIL: latents in, whole: not cancelled at its LM's first poll\n");
+            failed = true;
+        }
+        const std::vector<int> middle = ace_test_last_understand_codes();
+        if (!failed) {
+            int agree = 0;
+            for (size_t j = 0; j < cut.size() && j < middle.size(); j++) {
+                agree += cut[j] == middle[j];
+            }
+            if (cut.size() != 50 || middle.size() != 50 || agree < 45) {
+                fprintf(stderr,
+                        "[Test] FAIL: latents in, the window read %zu codes and the whole's middle %zu, %d the "
+                        "same; want 50 each, 45 the same at least\n",
+                        cut.size(), middle.size(), agree);
+                failed = true;
+            }
         }
         if (failed) {
             ace_understand_free(und);

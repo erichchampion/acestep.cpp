@@ -13,7 +13,8 @@
 # JSON body's one, #1170); and a text2music sent such a part gets its job,
 # the part unread, and the log's warning names that job by its id, in the
 # engine's words (#1170). That job asks a DiT the server does not have, so
-# its worker fails it before any model loads.
+# its worker fails it before any model loads. And /understand refuses a
+# request JSON's window_only it cannot read (#1179).
 #
 # The first draft of #1193 refused that last cover after decoding its
 # reference, and freed the reference twice. The refusal now comes before any
@@ -146,4 +147,18 @@ esac
 grep -qF "$WARNING" "$work/server.log" || fail "a text2music with a source: no warning naming job $id"
 answers "after a text2music with a source"
 echo "ok: a text2music with a junk audio part -- job $id, its source unread and said so"
+
+# /understand's request JSON may ask window_only, as the form field does
+# (cadenza-audio #1179): a value it cannot read is a 400 that says so,
+# before any part is read or job made.
+for bad in '"maybe"' '2' '[true]'; do
+    code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
+        --form-string "request={\"window_only\":$bad}" -F "audio=@$work/junk.wav;type=audio/wav" \
+        "$URL/understand")" || fail "/understand with window_only $bad: no answer"
+    [ "$code" = 400 ] || fail "/understand with window_only $bad: HTTP $code, want 400: $(cat "$work/body")"
+    grep -qF "the request's window_only takes true or false" "$work/body" ||
+        fail "/understand with window_only $bad: not the request's reason: $(cat "$work/body")"
+    echo "ok: /understand with the request's window_only $bad -- $(cat "$work/body")"
+done
+answers "after /understand's refusals"
 echo "PASS"

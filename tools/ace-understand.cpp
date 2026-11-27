@@ -233,7 +233,9 @@ static int understand_main(int argc, char ** argv) {
 
     // write output JSON
     // A failed write fails the tool (cadenza-audio #1266).
-    if (output_path && !request_write(&out, output_path)) {
+    // A windowed call's JSON says which window it holds, as the server's
+    // does (cadenza-audio #1179).
+    if (output_path && !request_write(&out, output_path, ace_understand_window_json(call))) {
         fprintf(stderr, "[Ace-Understand] FATAL: failed to write %s\n", output_path);
         return 1;
     }

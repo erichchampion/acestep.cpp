@@ -547,14 +547,23 @@ static yyjson_mut_doc * request_build_doc(const AceRequest * r, bool sparse) {
     return doc;
 }
 
-bool request_write(const AceRequest * r, const char * path) {
+// A request's document with a caller's keys added (RequestJsonExtra).
+static yyjson_mut_doc * request_build_doc_with(const AceRequest * r, bool sparse, const RequestJsonExtra & extra) {
+    yyjson_mut_doc * doc = request_build_doc(r, sparse);
+    if (doc && extra) {
+        extra(doc, yyjson_mut_doc_get_root(doc));
+    }
+    return doc;
+}
+
+bool request_write(const AceRequest * r, const char * path, const RequestJsonExtra & extra) {
     FILE * f = fopen(path, "w");
     if (!f) {
         fprintf(stderr, "[Request] ERROR: cannot write %s\n", path);
         return false;
     }
 
-    yyjson_mut_doc * doc = request_build_doc(r, true);
+    yyjson_mut_doc * doc = request_build_doc_with(r, true, extra);
     size_t           len;
     char *           json = yyjson_mut_write(doc, WRITE_FLAGS | YYJSON_WRITE_NEWLINE_AT_END, &len);
     yyjson_mut_doc_free(doc);
@@ -574,8 +583,8 @@ bool request_write(const AceRequest * r, const char * path) {
     return true;
 }
 
-std::string request_to_json(const AceRequest * r, bool sparse) {
-    yyjson_mut_doc * doc = request_build_doc(r, sparse);
+std::string request_to_json(const AceRequest * r, bool sparse, const RequestJsonExtra & extra) {
+    yyjson_mut_doc * doc = request_build_doc_with(r, sparse, extra);
     size_t           len;
     char *           json = yyjson_mut_write(doc, WRITE_FLAGS, &len);
     yyjson_mut_doc_free(doc);
