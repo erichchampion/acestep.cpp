@@ -111,7 +111,9 @@ export function buildSparse(r: AceRequest): AceRequest {
 	const out: AceRequest = { caption: String(r.caption || '') };
 	for (const f of FIELDS) {
 		if (f.key === 'caption') continue;
-		const val = resolveField(f, get(r, f.key));
+		// the codes as a synth sends them, so an export says what would run
+		const raw = f.key === 'audio_codes' ? codesOf(r) : get(r, f.key);
+		const val = resolveField(f, raw);
 		if (val !== undefined) set(out, f.key, val);
 	}
 	return out;
@@ -154,10 +156,15 @@ function batchRequest(r: AceRequest, shared: Partial<AceRequest>): AceRequest {
 }
 
 // a request's audio codes as the webui sends them: the white space a paste
-// leaves around them trimmed, so a stray newline or space is no codes, as
-// the form's "LM codes" light shows it (cadenza-audio #1182).
+// leaves trimmed, and any inside -- a line break, a tab -- made a space,
+// which the server skips between codes where it stops at a break
+// (parse_csv). So a stray newline is no codes, as the form's "LM codes"
+// light shows it, and codes wrapped over lines are sent whole
+// (cadenza-audio #1182).
 export function codesOf(r: Partial<AceRequest>): string {
-	return String(r.audio_codes ?? '').trim();
+	return String(r.audio_codes ?? '')
+		.replace(/\s+/g, ' ')
+		.trim();
 }
 
 // the server's rule for codes that are given: whether one is held -- past
@@ -179,7 +186,7 @@ function whole(n: number | undefined): number | undefined {
 // the most takes the server runs in one batch: the engine's kAceSynthMaxTakes
 // (pipeline-synth.h). Its copy here goes once the server refuses a batch
 // past it itself (cadenza-audio #1182, item 5).
-const SERVER_MAX_TAKES = 9;
+export const SERVER_MAX_TAKES = 9;
 
 // a /synth batch: what is sent, and the takes it makes, one per seed.
 export interface SynthBatch {
@@ -231,10 +238,15 @@ export function buildSynthBatch(
 	seed: () => number,
 	tasks?: readonly AceTaskInfo[]
 ): SynthBatch | string {
-	// whole, as the server reads it
-	const synthBatch = Math.max(1, Math.floor(num(form.synth_batch_size) || 1));
-	// whole, as the server reads it, so the take list says the seeds it ran
+	// whole, as the server reads it, and 1 at least
+	const synthBatch = Math.max(1, whole(num(form.synth_batch_size)) ?? 1);
+	// whole, as the server reads it, so the take list says the seeds it ran;
+	// one past what a take's seed can be counted from exactly is refused,
+	// not sent as the null JSON makes of Infinity (a random seed unsaid)
 	const userSeed = whole(num(form.seed));
+	if (userSeed != null && !Number.isSafeInteger(userSeed + synthBatch)) {
+		return 'The Seed is too large to use: give a smaller one, or none for a random seed.';
+	}
 	const hasSeed = userSeed != null && userSeed >= 0;
 	const shared = pickSections(form, SYNTH_SECTIONS);
 	// seed and synth_batch_size are per request, set below
@@ -269,8 +281,8 @@ export function buildSynthBatch(
 		toSend.push({ ...r, seed: base, synth_batch_size: synthBatch });
 		// each take's song keeps the batch size it was made at, so loading
 		// it sets the toolbar's again
-		for (let i = 0; i < synthBatch; i++) {
-			expanded.push({ ...r, seed: base + i, synth_batch_size: synthBatch });
+		for (let take = 0; take < synthBatch; take++) {
+			expanded.push({ ...r, seed: base + take, synth_batch_size: synthBatch });
 		}
 	}
 	return { toSend, expanded };

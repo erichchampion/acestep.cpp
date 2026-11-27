@@ -8,6 +8,7 @@
 // types.
 
 import {
+	buildSparse,
 	buildSynthBatch,
 	codesOf,
 	holdsCode,
@@ -174,6 +175,22 @@ expect(
 	strayNewline
 );
 expect("codesOf trims as it's sent", codesOf({ audio_codes: '\t 5,6 \n' } as AceRequest) === '5,6');
+// Codes wrapped over lines are sent whole: the server stops at a break.
+const wrapped = buildSynthBatch(codes(['1,2,3\n4,5,6', '7\t8']), form, [], seed, tasks);
+expect(
+	'codes over lines are sent whole',
+	typeof wrapped !== 'string' &&
+		wrapped.toSend.map((r) => r.audio_codes).join('|') === '1,2,3 4,5,6|7 8',
+	wrapped
+);
+expect(
+	'an export carries the codes as sent',
+	buildSparse({ caption: 'x', audio_codes: '\n1,2\n3\n' } as AceRequest).audio_codes === '1,2 3'
+);
+expect(
+	'an export of a newline alone carries no codes',
+	!('audio_codes' in buildSparse({ caption: 'x', audio_codes: '\n' } as AceRequest))
+);
 const commas = buildSynthBatch(codes([',', '']), form, [], seed, tasks);
 expect(
 	'codes of a comma hold no code',
@@ -231,6 +248,12 @@ for (const below of [0, -2, 0.5, '', undefined]) {
 			b.toSend.every((r) => r.synth_batch_size === 1),
 		b
 	);
+}
+// A Seed past what a take's seed can be counted from exactly is refused, not
+// sent as null (a random seed unsaid).
+for (const big of [1e400, 2 ** 53]) {
+	const b = buildSynthBatch(pending, { ...form, seed: big }, [], seed);
+	expect(`a Seed of ${big} is refused`, typeof b === 'string' && b.includes('Seed'), b);
 }
 // A fractional Seed is whole, as the server reads it (toward zero), so the
 // take list says the seeds that ran.

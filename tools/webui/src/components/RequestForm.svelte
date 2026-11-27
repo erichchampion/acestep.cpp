@@ -36,6 +36,8 @@
 		withCurrentSettings,
 		buildSynthBatch,
 		codesOf,
+		holdsCode,
+		SERVER_MAX_TAKES,
 		taskRow
 	} from '../lib/fields.js';
 	import type { AceRequest, AceTaskInfo, Song } from '../lib/types.js';
@@ -85,8 +87,9 @@
 	let singleTrack = $derived(SINGLE_TRACK_TASKS.includes(taskType));
 
 	// DiT input indicators
-	// codes as a synth would send them (codesOf), so the light and the batch agree
-	let hasCodes = $derived(codesOf(app.request) !== '' && app.srcSongId == null);
+	// codes as a synth would send them, and holding a code, so the light and
+	// the batch agree
+	let hasCodes = $derived(holdsCode(codesOf(app.request)) && app.srcSongId == null);
 	let hasSrc = $derived(app.srcSongId != null);
 	let hasRange = $derived(app.srcRangeStart != null || app.srcRangeEnd != null);
 	let hasRef = $derived(app.refSongId != null);
@@ -1086,7 +1089,7 @@
 			type="number"
 			class="batch-input"
 			min="1"
-			max="9"
+			max={SERVER_MAX_TAKES}
 			placeholder={ph(d?.synth_batch_size)}
 			bind:value={app.request.synth_batch_size}
 			title="Number of DiT variations per request. Each uses a consecutive seed."
