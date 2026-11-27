@@ -94,7 +94,8 @@ static std::vector<std::string> synth_batch_notes(const AceSynthBatchTakes & bat
 //   job or partway, as ace_synth_job_run_dit says it (cadenza-audio #1160,
 //   #1193) -- its request counted across every group, as audio_out is; or
 //   why a group's run or its VAE decode failed otherwise, its failure and
-//   failed (cadenza-audio #1092, #1286), set with every failure.
+//   failed (cadenza-audio #1092, #1286), set with every failure -- with the
+//   take a decode failed at as its request, counted as audio_out is.
 // Returns 0 on success, -1 on any error or cancellation.
 static int synth_batch_run(AceSynth *                             ctx,
                            std::vector<std::vector<AceRequest>> & groups,
@@ -160,6 +161,10 @@ static int synth_batch_run(AceSynth *                             ctx,
         ace_synth_job_free(jobs[g]);
         jobs[g] = nullptr;
         if (rc != 0) {
+            // The take a decode failed at, counted across every group.
+            if (refused && refused->request >= 0) {
+                refused->request += audio_off[g];
+            }
             for (int j = g + 1; j < n_groups; j++) {
                 ace_synth_job_free(jobs[j]);
             }

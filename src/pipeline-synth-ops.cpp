@@ -1224,7 +1224,8 @@ static int ops_vae_decode_track(VAEGGML *        vae,
                              -1 :
                              vae_ggml_decode_tiled(vae, dit_out, T_latent, audio, T_audio_max, ctx->params.vae_chunk,
                                                    ctx->params.vae_overlap, seen.progress());
-    if (T_audio < 0) {
+    // A decode of no sample is a take of no audio, as a failed one is.
+    if (T_audio <= 0) {
         free(audio);
         if (seen.cancelled) {
             fprintf(stderr, "[VAE-Decode Batch%d] Cancelled\n", b);
@@ -1340,8 +1341,9 @@ static int decode_take(VAEGGML *        vae,
     if (ops_vae_decode_track(vae, ctx, b, out, s, progress, empty) != 0) {
         return -1;
     }
-    if (!out->samples) {
+    if (!out->samples || out->n_samples <= 0) {
         fprintf(stderr, "[VAE-Decode Batch%d] ERROR: the take decoded to no audio\n", b);
+        s.failed_take = b;
         return synth_failed(s, empty.why ? empty.kind : AceSynthFailure::other,
                             empty.why ? empty.why : kAceVaeDecodeFailed);
     }

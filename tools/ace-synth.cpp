@@ -91,9 +91,14 @@ static int synth_main(int argc, char ** argv) {
         } else if (!strcmp(argv[i], "--clamp-fp16")) {
             clamp_fp16 = true;
         } else if (!strcmp(argv[i], "--vae-chunk") && i + 1 < argc) {
-            vae_chunk = atoi(argv[++i]);
+            // Any int: the tiling rule below says what a tile may be.
+            if (!ace_tool_int_flag("CLI", "--vae-chunk", argv[++i], INT_MIN, INT_MAX, vae_chunk)) {
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--vae-overlap") && i + 1 < argc) {
-            vae_overlap = atoi(argv[++i]);
+            if (!ace_tool_int_flag("CLI", "--vae-overlap", argv[++i], INT_MIN, INT_MAX, vae_overlap)) {
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             usage(argv[0]);
             return 0;
@@ -327,11 +332,16 @@ static int synth_main(int argc, char ** argv) {
                         all_basenames[(size_t) refused.request].c_str() :
                         "the batch",
                     refused.reason);
+        } else if (refused.request >= 0 && refused.request < (int) all_basenames.size()) {
+            // A take that decoded to nothing, named (cadenza-audio #1286).
+            fprintf(stderr, "[Ace-Synth] ERROR: batch run failed at %s%d: %s\n",
+                    all_basenames[(size_t) refused.request].c_str(), take_index[(size_t) refused.request],
+                    refused.failed ? refused.failed : kAceToolDiagnostic);
         } else {
             // The engine's failure, the run's or its decode's, said as it
             // named it (cadenza-audio #1092, #1286).
             fprintf(stderr, "[Ace-Synth] ERROR: batch run failed: %s\n",
-                    refused.failed ? refused.failed : "the engine's diagnostic is above");
+                    refused.failed ? refused.failed : kAceToolDiagnostic);
         }
         for (auto & a : all_audio) {
             ace_audio_free(&a);
@@ -350,7 +360,7 @@ static int synth_main(int argc, char ** argv) {
     for (int b = 0; b < (int) all_audio.size(); b++) {
         // A take with no audio fails the tool, named: the decode fails for
         // one, so this is held, not reached (cadenza-audio #1286).
-        if (!all_audio[b].samples) {
+        if (!all_audio[b].samples || all_audio[b].n_samples <= 0) {
             fprintf(stderr, "[Ace-Synth Batch%d] FATAL: %s%d decoded to no audio\n", b, all_basenames[b].c_str(),
                     take_index[b]);
             wrote_all = false;

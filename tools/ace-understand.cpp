@@ -85,13 +85,23 @@ static int understand_main(int argc, char ** argv) {
         } else if (!strcmp(argv[i], "--dump") && i + 1 < argc) {
             dump_dir = argv[++i];
         } else if (!strcmp(argv[i], "--max-seq") && i + 1 < argc) {
-            params.max_seq = atoi(argv[++i]);
+            if (!ace_tool_int_flag("CLI", "--max-seq", argv[++i], kAceToolMaxSeqDefault, INT_MAX, params.max_seq)) {
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--max-batch") && i + 1 < argc) {
-            params.max_batch = atoi(argv[++i]);
+            // A batch of one at least, its KV sets (twice it) an int.
+            if (!ace_tool_int_flag("CLI", "--max-batch", argv[++i], 1, INT_MAX / 2, params.max_batch)) {
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--vae-chunk") && i + 1 < argc) {
-            params.vae_chunk = atoi(argv[++i]);
+            // Any int: the tiling rule below says what a tile may be.
+            if (!ace_tool_int_flag("CLI", "--vae-chunk", argv[++i], INT_MIN, INT_MAX, params.vae_chunk)) {
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--vae-overlap") && i + 1 < argc) {
-            params.vae_overlap = atoi(argv[++i]);
+            if (!ace_tool_int_flag("CLI", "--vae-overlap", argv[++i], INT_MIN, INT_MAX, params.vae_overlap)) {
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--window-only")) {
             window_only = true;
         } else if (!strcmp(argv[i], "--no-fsm")) {

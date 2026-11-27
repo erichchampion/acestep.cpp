@@ -194,8 +194,18 @@ add_tool_refusal(test-server-port-trailing "--port takes a whole number from 0 t
                  $<TARGET_FILE:ace-server> --models /nonexistent --port 80x)
 add_tool_refusal(test-server-port-past-most "--port takes a whole number from 0 to 65535"
                  $<TARGET_FILE:ace-server> --models /nonexistent --port 65536)
-add_tool_refusal(test-server-max-seq-none "--max-seq takes a whole number from 1"
-                 $<TARGET_FILE:ace-server> --models /nonexistent --max-seq 0)
+add_tool_refusal(test-server-max-seq-negative "--max-seq takes a whole number from 0"
+                 $<TARGET_FILE:ace-server> --models /nonexistent --max-seq -1)
+# And the other tools' numeric flags, read by the same helper: junk refused.
+add_tool_refusal(test-synth-chunk-junk "--vae-chunk takes a whole number"
+                 $<TARGET_FILE:ace-synth> --request ${CMAKE_CURRENT_SOURCE_DIR}/request-text2music.json
+                 --models /nonexistent --vae-chunk 8x)
+add_tool_refusal(test-understand-batch-none "--max-batch takes a whole number from 1"
+                 $<TARGET_FILE:ace-understand> --models /nonexistent --src-audio /nonexistent --max-batch 0)
+add_tool_refusal(test-lm-max-seq-junk "--max-seq takes a whole number from 0"
+                 $<TARGET_FILE:ace-lm> --models /nonexistent --max-seq x)
+add_tool_refusal(test-codec-chunk-junk "--vae-chunk takes a whole number"
+                 $<TARGET_FILE:neural-codec> --vae /nonexistent --decode -i /nonexistent --vae-chunk 8x)
 add_tool_refusal(test-understand-chunk-zero "VAE chunk must be 1 to 15000 latent frames \\(--vae-chunk"
                  $<TARGET_FILE:ace-understand> --models /nonexistent --src-audio /nonexistent --vae-chunk 0)
 # neural-codec's latent files, bounded as ace-server's payloads are: a header

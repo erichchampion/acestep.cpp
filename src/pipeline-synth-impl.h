@@ -202,6 +202,9 @@ struct SynthState {
     // failure and failed (cadenza-audio #1092). none for a run that has not.
     AceSynthFailure failure = AceSynthFailure::none;
     const char *    failed  = nullptr;
+    // The take a decode failed at for decoding to no audio, -1 for none: a
+    // decode hands it out as `refused`'s request (cadenza-audio #1286).
+    int             failed_take = -1;
 
     // stacked encoder hidden states
     int                max_enc_S;

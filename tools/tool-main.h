@@ -24,7 +24,10 @@
 #include "gpu-compute.h"
 
 #include <cctype>
+#include <cerrno>
+#include <climits>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 // A fatal's words for a job's error: its log line less the "[Tag] FATAL: "
@@ -78,6 +81,30 @@ inline int ace_tool_main(int (*body)(int, char **), int argc, char ** argv) {
 inline bool ace_tool_tiling_refused(const char * tag, int chunk, int overlap) {
     return vae_tiling_refused_said(tag, chunk, overlap, "--vae-chunk", "--vae-overlap");
 }
+
+// A tool's numeric flag, its argument read whole (strtol, base 10) and held
+// to [lo, hi] into `out`; false, said under `tag`, for anything else -- atoi
+// read "80x" as 80 and "x" as 0 (cadenza-audio #1194). Every tool reads its
+// numeric flags by it, each range the flag's own meaning.
+inline bool ace_tool_int_flag(const char * tag, const char * flag, const char * arg, long lo, long hi, int & out) {
+    char * end   = nullptr;
+    errno        = 0;
+    const long v = strtol(arg, &end, 10);
+    if (end == arg || *end || errno || v < lo || v > hi) {
+        fprintf(stderr, "[%s] ERROR: %s takes a whole number from %ld to %ld, not '%s'\n", tag, flag, lo, hi, arg);
+        return false;
+    }
+    out = (int) v;
+    return true;
+}
+
+// Where a tool says the engine explains a failure it gave no words for: one
+// phrase for every tool (cadenza-audio #1286).
+inline constexpr const char * kAceToolDiagnostic = "the engine's diagnostic is on stderr";
+
+// The max_seq a tool's --max-seq takes: 0 for the model's default, as the
+// loads read it, or a length.
+inline constexpr long kAceToolMaxSeqDefault = 0;
 
 // Whether `job` ran to its end, rather than throwing a fatal: its words in
 // `what` when it threw one.

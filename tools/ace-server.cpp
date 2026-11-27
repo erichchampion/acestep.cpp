@@ -140,9 +140,17 @@ static void fd_close(int fd) {
 // server instance pointer for the signal handler
 static httplib::Server * g_svr = nullptr;
 
+// A SIGINT or SIGTERM stops the server: a running one at once, and one not
+// yet listening before it does -- httplib's stop() is a no-op until it runs,
+// so the signal also decommissions it (its listen then returns at once) and
+// is seen by the flag (cadenza-audio #1194).
+static std::atomic<bool> g_stop_asked{ false };
+
 static void on_signal(int) {
+    g_stop_asked.store(true);
     if (g_svr) {
         g_svr->stop();
+        g_svr->decommission();
     }
 }
 
@@ -235,7 +243,7 @@ struct Job {
 };
 
 // Said after a failure the engine explains only in its log.
-static constexpr const char * kDiagnosticOnStderr = ": the engine's diagnostic is on stderr";
+static const std::string kDiagnosticOnStderr = std::string(": ") + kAceToolDiagnostic;
 
 // Fail `job`, saying why: the reason logged, and said in the status JSON as
 // "error", so no failed job reads {"status":"failed"} alone -- every
@@ -250,6 +258,7 @@ static void job_fail(Job & job, const std::string & why) {
 // its status, with no error -- else failed, saying why.
 static void job_stopped(Job & job, const std::string & why) {
     if (job.cancel.load()) {
+        fprintf(stderr, "[Server] job %s: cancelled\n", job.id.c_str());
         job.status.store(JobStatus::CANCELLED);
         return;
     }
@@ -862,8 +871,14 @@ static void synth_worker(std::shared_ptr<Job>    job,
     // takes in groups[0]. Which request the client sent each take came from:
     // a refusal names that, not the take's place in the expanded batch (#1193).
     std::vector<std::vector<AceRequest>> groups(1);
-    std::vector<int>                     take_request;
-    synth_batch_expand(ace_reqs, batch_takes, groups[0], take_request);
+    std::vector<int>                     take_request, take_index;
+    synth_batch_expand(ace_reqs, batch_takes, groups[0], take_request, &take_index);
+    // A take as the client sent it: its request, and its place among that
+    // request's takes (cadenza-audio #1286).
+    auto take_name = [&](int k) {
+        return "Request " + std::to_string(take_request[(size_t) k]) + ", take " +
+               std::to_string(take_index[(size_t) k]);
+    };
     for (const std::string & note :
          synth_batch_notes(batch_takes, (int) ace_reqs.size(), [](int i) { return "request " + std::to_string(i); })) {
         fprintf(stderr, "[Server] job %s: %s\n", job->id.c_str(), note.c_str());
@@ -899,8 +914,10 @@ static void synth_worker(std::shared_ptr<Job>    job,
                                         refused.reason :
                                     std::string(refused.reason));
         } else {
-            job_stopped(*job, std::string("the run failed") + (refused.failed ? std::string(": ") + refused.failed :
-                                                                                std::string(kDiagnosticOnStderr)));
+            // A take that decoded to nothing is named as the client sent it.
+            const bool at_take = refused.request >= 0 && refused.request < (int) take_request.size();
+            job_stopped(*job, (at_take ? take_name(refused.request) + ": " : std::string()) + "the run failed" +
+                                  (refused.failed ? std::string(": ") + refused.failed : kDiagnosticOnStderr));
         }
         return;
     }
@@ -928,11 +945,11 @@ static void synth_worker(std::shared_ptr<Job>    job,
     // slot left empty all the same fails the job, naming it (cadenza-audio
     // #1286), not a part of no audio.
     for (int b = 0; b < total_tracks; b++) {
-        if (!audio[b].samples) {
+        if (!audio[b].samples || audio[b].n_samples <= 0) {
             for (auto & a : audio) {
                 ace_audio_free(&a);
             }
-            job_fail(*job, "take " + std::to_string(b) + " decoded to no audio" + kDiagnosticOnStderr);
+            job_fail(*job, take_name(b) + ": decoded to no audio" + kDiagnosticOnStderr);
             return;
         }
     }
@@ -1770,21 +1787,6 @@ static void handle_props(const httplib::Request &, httplib::Response & res) {
     res.set_content(json_write_doc(doc, flags), "application/json");
 }
 
-// A numeric flag's argument, read whole (strtol, base 10) and held to
-// [lo, hi] into `out`; false, said, for anything else -- atoi read "80x" as
-// 80 and "x" as 0 (cadenza-audio #1194).
-static bool int_flag(const char * flag, const char * arg, long lo, long hi, int & out) {
-    char * end   = nullptr;
-    errno        = 0;
-    const long v = strtol(arg, &end, 10);
-    if (end == arg || *end || errno || v < lo || v > hi) {
-        fprintf(stderr, "[Server] ERROR: %s takes a whole number from %ld to %ld, not '%s'\n", flag, lo, hi, arg);
-        return false;
-    }
-    out = (int) v;
-    return true;
-}
-
 static void usage(const char * prog) {
     AceLmParams    lm_d;
     AceSynthParams synth_d;
@@ -1840,18 +1842,20 @@ static int server_main(int argc, char ** argv) {
         } else if (!strcmp(argv[i], "--adapters") && i + 1 < argc) {
             adapters_dir = argv[++i];
         } else if (!strcmp(argv[i], "--max-seq") && i + 1 < argc) {
-            if (!int_flag("--max-seq", argv[++i], 1, INT_MAX, g_lm_params.max_seq)) {
+            if (!ace_tool_int_flag("Server", "--max-seq", argv[++i], kAceToolMaxSeqDefault, INT_MAX,
+                                   g_lm_params.max_seq)) {
                 return 1;
             }
 
             // vae tiling
         } else if (!strcmp(argv[i], "--vae-chunk") && i + 1 < argc) {
             // Any int: the tiling rule below says what a tile may be.
-            if (!int_flag("--vae-chunk", argv[++i], INT_MIN, INT_MAX, g_synth_params.vae_chunk)) {
+            if (!ace_tool_int_flag("Server", "--vae-chunk", argv[++i], INT_MIN, INT_MAX, g_synth_params.vae_chunk)) {
                 return 1;
             }
         } else if (!strcmp(argv[i], "--vae-overlap") && i + 1 < argc) {
-            if (!int_flag("--vae-overlap", argv[++i], INT_MIN, INT_MAX, g_synth_params.vae_overlap)) {
+            if (!ace_tool_int_flag("Server", "--vae-overlap", argv[++i], INT_MIN, INT_MAX,
+                                   g_synth_params.vae_overlap)) {
                 return 1;
             }
         } else if (!strcmp(argv[i], "--keep-loaded")) {
@@ -1861,11 +1865,12 @@ static int server_main(int argc, char ** argv) {
         } else if (!strcmp(argv[i], "--host") && i + 1 < argc) {
             host = argv[++i];
         } else if (!strcmp(argv[i], "--port") && i + 1 < argc) {
-            if (!int_flag("--port", argv[++i], 0, kMaxPort, port)) {  // 0: a free one
+            if (!ace_tool_int_flag("Server", "--port", argv[++i], 0, kMaxPort, port)) {  // 0: a free one
                 return 1;
             }
         } else if (!strcmp(argv[i], "--max-batch") && i + 1 < argc) {
-            if (!int_flag("--max-batch", argv[++i], INT_MIN, INT_MAX, g_max_batch)) {  // clamped to 1..9 below
+            if (!ace_tool_int_flag("Server", "--max-batch", argv[++i], INT_MIN, INT_MAX,
+                                   g_max_batch)) {  // clamped to 1..9 below
                 return 1;
             }
 
@@ -2095,7 +2100,8 @@ static int server_main(int argc, char ** argv) {
                 have_understand ? " /understand" : "");
         fprintf(stderr, "[Server] Models: %zu LM, %zu Text-Enc, %zu DiT, %zu VAE, %zu Adapter\n", g_registry.lm.size(),
                 g_registry.text_enc.size(), g_registry.dit.size(), g_registry.vae.size(), g_registry.adapters.size());
-        if (!svr.listen_after_bind()) {
+        // A stop asked before the listen ends it, cleanly, not as a failure.
+        if (!g_stop_asked.load() && !svr.listen_after_bind() && !g_stop_asked.load()) {
             fprintf(stderr, "[Server] FATAL: cannot listen on %s:%d\n", host, bound);
             exit_code = 1;
         }

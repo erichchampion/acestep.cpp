@@ -1132,6 +1132,11 @@ int ace_test_cover_knob_fixes() {
     return g_test_cover_knob_fixes.load();
 }
 
+// What run_task says of a run that stopped with no op's own words: a cancel
+// the callback asked for, or a failure no op named (cadenza-audio #1092).
+static constexpr const char * kRunCancelled = "the run was cancelled";
+static constexpr const char * kRunFailed    = "the run failed";
+
 // Dispatches on reqs[0].task_type to the right task function. task_type is
 // always set: request_init defaults it to text2music, the JSON parser ignores
 // empty strings.
@@ -1248,13 +1253,13 @@ static AceSynthJob * run_task(AceSynth *             ctx,
     } else if (rc != 0) {
         if (seen.cancelled) {
             refused.failure = AceSynthFailure::cancelled;
-            refused.failed  = "the run was cancelled";
+            refused.failed  = kRunCancelled;
         } else if (s.failure != AceSynthFailure::none) {
             refused.failure = s.failure;
             refused.failed  = s.failed;
         } else {
             refused.failure = AceSynthFailure::other;
-            refused.failed  = "the run failed";
+            refused.failed  = kRunFailed;
         }
     }
     return rc == 0 ? job_owner.release() : NULL;
@@ -1322,8 +1327,9 @@ const float * ace_synth_job_get_latent(const AceSynthJob * job, int track_idx, i
 // said it -- or, should none, as `other`. `failed` unset by a decode that
 // ran; its reason never set.
 template <class Decode> static int run_decode(SynthState & s, AceSynthBatchRefusal * failed, Decode decode) {
-    s.failure = AceSynthFailure::none;
-    s.failed  = nullptr;
+    s.failure     = AceSynthFailure::none;
+    s.failed      = nullptr;
+    s.failed_take = -1;
     if (failed) {
         *failed = {};
     }
@@ -1331,6 +1337,7 @@ template <class Decode> static int run_decode(SynthState & s, AceSynthBatchRefus
     if (rc != 0) {
         synth_failed(s, AceSynthFailure::other, kAceVaeDecodeFailed);
         if (failed) {
+            failed->request = s.failed_take;
             failed->failure = s.failure;
             failed->failed  = s.failed;
         }
@@ -1338,8 +1345,9 @@ template <class Decode> static int run_decode(SynthState & s, AceSynthBatchRefus
     return rc;
 }
 
-// Why a decode is refused its arguments.
-static constexpr const char * kDecodeArguments = "a decode takes a synth, a job and its output";
+// Why a decode is refused its arguments, or its take.
+static constexpr const char * kDecodeArguments   = "a decode takes a synth, a job and its output";
+static constexpr const char * kDecodeTakeUnknown = "the take is not one of the job's";
 
 // A decode refused its arguments, said as `other` through `failed`.
 static int decode_refused(AceSynthBatchRefusal * failed, const char * why) {
@@ -1373,7 +1381,7 @@ int ace_synth_job_run_vae_take(AceSynth *             ctx,
         return decode_refused(failed, kDecodeArguments);
     }
     if (take < 0 || take >= job->batch_n) {
-        return decode_refused(failed, "the take is not one of the job's");
+        return decode_refused(failed, kDecodeTakeUnknown);
     }
     return run_decode(job->state, failed, [&] { return ops_vae_decode_one(ctx, take, out, job->state, progress); });
 }

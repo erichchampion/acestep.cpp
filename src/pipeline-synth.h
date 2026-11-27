@@ -212,9 +212,10 @@ const float * ace_synth_job_get_latent(const AceSynthJob * job, int track_idx, i
 // could not give (model_unavailable), a cancel, a bad argument (other) --
 // and never its reason, as a decode refuses no request. Unset by a decode
 // that ran. A take whose own decode made no audio fails the decode, said
-// why -- out_of_memory for its output, other for the decode -- the takes
-// before it keeping theirs: never a success with an empty take
-// (cadenza-audio #1286).
+// why -- out_of_memory for its output, other for the decode -- its index in
+// the job as `failed`'s request (-1 for any other failure), the takes before
+// it keeping theirs: never a success with an empty take (cadenza-audio
+// #1286).
 int ace_synth_job_run_vae(AceSynth *             ctx,
                           AceSynthJob *          job,
                           AceAudio *             out,

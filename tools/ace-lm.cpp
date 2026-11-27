@@ -60,7 +60,9 @@ static int lm_main(int argc, char ** argv) {
         } else if (!strcmp(argv[i], "--request") && i + 1 < argc) {
             request_path = argv[++i];
         } else if (!strcmp(argv[i], "--max-seq") && i + 1 < argc) {
-            params.max_seq = atoi(argv[++i]);
+            if (!ace_tool_int_flag("Ace-LM", "--max-seq", argv[++i], kAceToolMaxSeqDefault, INT_MAX, params.max_seq)) {
+                return 1;
+            }
         } else if (!strcmp(argv[i], "--no-fsm")) {
             params.use_fsm = false;
         } else if (!strcmp(argv[i], "--no-fa")) {

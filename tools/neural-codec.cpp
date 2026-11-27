@@ -354,9 +354,14 @@ static int codec_main(int argc, char ** argv) {
                 return 1;
             }
         } else if (strcmp(argv[i], "--vae-chunk") == 0 && i + 1 < argc) {
-            chunk_size = atoi(argv[++i]);
+            // Any int: the tiling rule below says what a tile may be.
+            if (!ace_tool_int_flag("VAE", "--vae-chunk", argv[++i], INT_MIN, INT_MAX, chunk_size)) {
+                return 1;
+            }
         } else if (strcmp(argv[i], "--vae-overlap") == 0 && i + 1 < argc) {
-            overlap = atoi(argv[++i]);
+            if (!ace_tool_int_flag("VAE", "--vae-overlap", argv[++i], INT_MIN, INT_MAX, overlap)) {
+                return 1;
+            }
         } else if (strcmp(argv[i], "--encode") == 0) {
             mode = 0;
         } else if (strcmp(argv[i], "--decode") == 0) {
