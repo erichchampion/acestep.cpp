@@ -24,6 +24,7 @@
 	import { saveJob, clearJob, putSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
 	import { displaySongName } from '../lib/songName.js';
+	import { regionOnSource } from '../lib/fields.js';
 	import Waveform from './Waveform.svelte';
 	import Menu, { type MenuItem } from './Menu.svelte';
 	import Dialog from './Dialog.svelte';
@@ -35,6 +36,11 @@
 	let dur = $state(0);
 	let rangeStart = $state(0);
 	let rangeEnd = $state(0);
+	// the range the request's region was last drawn as: a drag is a range
+	// other than it, so drawing a -1 end or an outpaint's start does not
+	// write the drawn seconds back over them (#1189)
+	let shownStart = 0;
+	let shownEnd = 0;
 
 	let isRef = $derived(app.refSongId === song.id);
 	let isSrc = $derived(app.srcSongId === song.id);
@@ -65,7 +71,7 @@
 
 	// waveform drag to global state
 	$effect(() => {
-		if (isSrc && rangeEnd > rangeStart) {
+		if (isSrc && rangeEnd > rangeStart && (rangeStart !== shownStart || rangeEnd !== shownEnd)) {
 			app.srcRangeStart = rangeStart;
 			app.srcRangeEnd = rangeEnd;
 		}
@@ -76,13 +82,13 @@
 		if (isSrc) {
 			const rs = app.srcRangeStart;
 			const re = app.srcRangeEnd;
-			if (rs != null && re != null && re > rs) {
-				rangeStart = rs;
-				rangeEnd = re;
-			} else {
-				rangeStart = 0;
-				rangeEnd = 0;
-			}
+			// the region as the engine splices it: a -1 end is the source's
+			// end, or for a start before the source its start (#1189)
+			const length = dur > 0 ? dur : song.duration;
+			const shown = rs != null && re != null ? regionOnSource(rs, re, length) : null;
+			[shownStart, shownEnd] = shown ?? [0, 0];
+			rangeStart = shownStart;
+			rangeEnd = shownEnd;
 		}
 	});
 

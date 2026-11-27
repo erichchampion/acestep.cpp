@@ -1739,6 +1739,28 @@ static void handle_props(const httplib::Request &, httplib::Response & res) {
     }
     yyjson_mut_obj_add_val(doc, root, "adapters", adapters_arr);
 
+    // tasks: the engine's task table, row by row in its order, as
+    // ace_synth_task_info says each -- what a client such as the webui reads
+    // in place of naming tasks itself (cadenza-audio #1124)
+    yyjson_mut_val * tasks = yyjson_mut_arr(doc);
+    for (int i = 0; i < ace_synth_task_count(); i++) {
+        const char *     name = ace_synth_task_name(i);
+        AceSynthTaskInfo info;
+        if (!name || !ace_synth_task_info(name, &info)) {
+            continue;
+        }
+        yyjson_mut_val * row = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_str(doc, row, "name", name);
+        yyjson_mut_obj_add_bool(doc, row, "needs_source", info.needs_source);
+        yyjson_mut_obj_add_bool(doc, row, "needs_caption", info.needs_caption);
+        yyjson_mut_obj_add_bool(doc, row, "cover_knobs", info.cover_knobs);
+        yyjson_mut_obj_add_bool(doc, row, "reads_region", info.reads_region);
+        yyjson_mut_obj_add_bool(doc, row, "reads_track", info.reads_track);
+        yyjson_mut_obj_add_bool(doc, row, "splices", info.splices);
+        yyjson_mut_arr_append(tasks, row);
+    }
+    yyjson_mut_obj_add_val(doc, root, "tasks", tasks);
+
     // cli: server settings
     yyjson_mut_val * cli = yyjson_mut_obj(doc);
     yyjson_mut_obj_add_val(doc, root, "cli", cli);

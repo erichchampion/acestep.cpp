@@ -7,14 +7,25 @@ export const LOG_MAX_LINES = 50;
 export const WAVEFORM_HEIGHT = 64;
 export const WAVEFORM_BINS = 4096;
 
-// task types (mirrors task-types.h)
-export const TASK_TEXT2MUSIC = 'text2music';
-export const TASK_COVER = 'cover';
-export const TASK_COVER_NOFSQ = 'cover-nofsq';
-export const TASK_REPAINT = 'repaint';
-export const TASK_LEGO = 'lego';
-export const TASK_EXTRACT = 'extract';
-export const TASK_COMPLETE = 'complete';
+// The words the form shows for each task. The tasks themselves, and what
+// each reads, are the engine's: GET /props lists them from its task table
+// (cadenza-audio #1124), and the form offers the ones it lists, in its
+// order. A listed task with no words here shows its name; before /props has
+// loaded, the form offers these.
+export const TASK_LABELS: Readonly<Record<string, string>> = {
+	text2music: 'Text2Music: from prompt and LM codes',
+	cover: 'Cover: reinterpret in a new style',
+	'cover-nofsq': 'Cover (no FSQ): closer to the original',
+	repaint: 'Repaint: regenerate a region',
+	lego: 'Lego: add a stem over backing audio',
+	extract: 'Extract: isolate one stem from a mix',
+	complete: 'Complete: auto-arrange around a partial track'
+};
+
+// The tasks whose track is one stem, so the form offers one track pill at a
+// time: the form's choice of control, which the engine's table has no
+// column for (a complete takes several).
+export const SINGLE_TRACK_TASKS: readonly string[] = ['lego', 'extract'];
 
 // Solver names (mirrors task-types.h SOLVER_* and the C++ solver registry).
 // The string is the canonical solver key resolved by solver_lookup().

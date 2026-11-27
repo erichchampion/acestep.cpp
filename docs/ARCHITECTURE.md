@@ -1033,10 +1033,20 @@ default AceRequest (source of truth for webui dropdowns and placeholders):
     "vae": ["vae-BF16.gguf"]
   },
   "adapters": [],
+  "tasks": [
+    { "name": "text2music", "needs_source": false, "needs_caption": true, "cover_knobs": false,
+      "reads_region": false, "reads_track": false, "splices": false },
+    ...
+  ],
   "cli": { "max_batch": 1 },
   "default": { "caption": "", "duration": 0, ... }
 }
 ```
+
+`tasks` is the engine's task table, row by row in its order, as
+`ace_synth_task_info` says each: the webui offers the tasks it lists, and
+reads which take a track and which a source from it, rather than naming
+them itself (cadenza-audio #1124).
 
 ### Concurrency
 

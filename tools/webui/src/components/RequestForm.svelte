@@ -18,13 +18,8 @@
 	} from '../lib/api.js';
 	import { putSong, getAllSongs, saveJob, loadJob, loadJobId, clearJob } from '../lib/db.js';
 	import {
-		TASK_TEXT2MUSIC,
-		TASK_COVER,
-		TASK_COVER_NOFSQ,
-		TASK_REPAINT,
-		TASK_LEGO,
-		TASK_EXTRACT,
-		TASK_COMPLETE,
+		TASK_LABELS,
+		SINGLE_TRACK_TASKS,
 		SOLVER_EULER,
 		SOLVER_SDE,
 		SOLVER_DPM3M,
@@ -39,7 +34,8 @@
 		buildSparse,
 		clearSection,
 		withCurrentSettings,
-		buildSynthBatch
+		buildSynthBatch,
+		taskRow
 	} from '../lib/fields.js';
 	import type { AceRequest, Song } from '../lib/types.js';
 	import Dialog from './Dialog.svelte';
@@ -67,10 +63,14 @@
 				: app.props.presets.sft
 			: null
 	);
-	let needsTrack = $derived(
-		taskType === TASK_LEGO || taskType === TASK_EXTRACT || taskType === TASK_COMPLETE
+	// the tasks the engine lists, with what each reads (cadenza-audio #1124);
+	// before /props has loaded, the form's own names, and no track cleared
+	let taskNames = $derived(
+		app.props?.tasks?.length ? app.props.tasks.map((t) => t.name) : Object.keys(TASK_LABELS)
 	);
-	let singleTrack = $derived(taskType === TASK_LEGO || taskType === TASK_EXTRACT);
+	let taskInfo = $derived(taskRow(app.props?.tasks, taskType));
+	let needsTrack = $derived(taskInfo ? taskInfo.reads_track : true);
+	let singleTrack = $derived(SINGLE_TRACK_TASKS.includes(taskType));
 
 	// DiT input indicators
 	let hasCodes = $derived(!!app.request.audio_codes?.trim() && app.srcSongId == null);
@@ -441,8 +441,12 @@
 			// batch whose requests differ in a setting it shares (#1164). The
 			// server expands each by synth_batch_size; `expanded` predicts
 			// the takes, for the song cards (#1175).
-			const batch = buildSynthBatch(reqs, app.request, adapterList, () =>
-				Math.floor(Math.random() * 0x100000000)
+			const batch = buildSynthBatch(
+				reqs,
+				app.request,
+				adapterList,
+				() => Math.floor(Math.random() * 0x100000000),
+				app.props?.tasks
 			);
 			if (typeof batch === 'string') {
 				toast(batch);
@@ -862,13 +866,9 @@
 						app.request.task_type = e.currentTarget.value;
 					}}
 				>
-					<option value={TASK_TEXT2MUSIC}>Text2Music: from prompt and LM codes</option>
-					<option value={TASK_COVER}>Cover: reinterpret in a new style</option>
-					<option value={TASK_COVER_NOFSQ}>Cover (no FSQ): closer to the original</option>
-					<option value={TASK_REPAINT}>Repaint: regenerate a region</option>
-					<option value={TASK_LEGO}>Lego: add a stem over backing audio</option>
-					<option value={TASK_EXTRACT}>Extract: isolate one stem from a mix</option>
-					<option value={TASK_COMPLETE}>Complete: auto-arrange around a partial track</option>
+					{#each taskNames as name (name)}
+						<option value={name}>{TASK_LABELS[name] ?? name}</option>
+					{/each}
 				</select>
 			</div>
 			<div class="model-row track-row">

@@ -111,6 +111,19 @@ refused() {
 }
 
 answers "at the start"
+
+# /props lists the engine's task table, row by row, for a client to read in
+# place of naming tasks itself (cadenza-audio #1124): every task, each with
+# its columns -- a lego's, and a text2music's, checked whole.
+props="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" "$URL/props" | tr -d ' \n')" || fail "no answer from /props"
+for want in \
+    '{"name":"text2music","needs_source":false,"needs_caption":true,"cover_knobs":false,"reads_region":false,"reads_track":false,"splices":false}' \
+    '{"name":"lego","needs_source":true,"needs_caption":false,"cover_knobs":false,"reads_region":true,"reads_track":true,"splices":true}'; do
+    case "$props" in *"$want"*) ;; *) fail "/props has no task row $want: $props" ;; esac
+done
+rows="$(printf '%s' "$props" | grep -o '"needs_source":' | wc -l | tr -d ' ')"
+[ "$rows" = 7 ] || fail "/props lists $rows tasks, want the table's 7"
+echo "ok: /props lists the task table's 7 rows"
 refused "a plain-JSON cover with no source" "$HINT_JSON" \
     -H 'Content-Type: application/json' --data-binary "$COVER"
 refused "a multipart cover with only its request part" "$HINT_MULTIPART" \

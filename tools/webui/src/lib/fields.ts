@@ -4,7 +4,7 @@
 // helpers derive clear, preserve, serialize, and pick logic from this table.
 // adding a field = adding one line here.
 
-import type { AceRequest } from './types.js';
+import type { AceRequest, AceTaskInfo } from './types.js';
 
 export type FieldSection =
 	| 'content'
@@ -159,6 +159,32 @@ export interface SynthBatch {
 	expanded: AceRequest[];
 }
 
+// the engine's row for a task, from the list /props gives; undefined for
+// one it does not list, or before /props has loaded (cadenza-audio #1124)
+export function taskRow(
+	tasks: readonly AceTaskInfo[] | undefined,
+	name: string
+): AceTaskInfo | undefined {
+	return tasks?.find((t) => t.name === name);
+}
+
+// the part of a region the source's waveform can show, in seconds, or null
+// for none: its end read as the engine reads it (asked_region_end) -- a
+// negative end is the source's end, or for a start before the source its
+// start -- and the whole cut to the source's [0, duration]. So a repaint or
+// a lego from a start to -1 shows to the source's end, and an outpaint
+// before the source shows only its part on the source (cadenza-audio #1189).
+export function regionOnSource(
+	start: number,
+	end: number,
+	duration: number
+): [number, number] | null {
+	const asked = end >= 0 ? end : start < 0 ? 0 : duration;
+	const from = Math.max(0, start);
+	const to = Math.min(duration, asked);
+	return to > from ? [from, to] : null;
+}
+
 // build a /synth batch from the pending requests and the form, or say why
 // it cannot be sent (cadenza-audio #1175). Every request takes the form's
 // synth sections (batchRequest); each its own seed, `seed()` when the form
@@ -166,13 +192,16 @@ export interface SynthBatch {
 // seed, seed+1, ... and `expanded` predicts for the take list. An adapter
 // the server does not list is dropped. A text2music batch whose requests
 // mix audio codes and none is refused, and so are codes that hold no code,
-// both as the server refuses them (cadenza-audio #1159); so is a batch past
-// the server's 9 takes, which it would cut short unsaid.
+// both as the server refuses them (cadenza-audio #1159) -- for a task the
+// engine's table says takes no source, by the rows /props lists; before they
+// have loaded the server says it (#1124); so is a batch past the server's 9
+// takes, which it would cut short unsaid.
 export function buildSynthBatch(
 	pending: AceRequest[],
 	form: AceRequest,
 	adapters: readonly string[],
-	seed: () => number
+	seed: () => number,
+	tasks?: readonly AceTaskInfo[]
 ): SynthBatch | string {
 	// whole, as the server reads it
 	const synthBatch = Math.max(1, Math.floor(num(form.synth_batch_size) || 1));
@@ -190,7 +219,8 @@ export function buildSynthBatch(
 	const task = String(shared.task_type || 'text2music');
 	const codesOf = (r: AceRequest) => String(r.audio_codes ?? '');
 	const holdsCode = (c: string) => /^-?[0-9]/.test(c.replace(/^[, ]*/, ''));
-	if (task === 'text2music') {
+	const row = taskRow(tasks, task);
+	if (row && !row.needs_source) {
 		if (pending.some((r) => codesOf(r) !== '' && !holdsCode(codesOf(r)))) {
 			return "A composition's audio codes hold no code: fix them, or clear them.";
 		}

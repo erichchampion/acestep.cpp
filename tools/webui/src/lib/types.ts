@@ -46,6 +46,18 @@ export interface AceRequest {
 	vae?: string;
 }
 
+// A task as the engine's task table holds it (ace_synth_task_info),
+// listed by GET /props in the table's order (cadenza-audio #1124).
+export interface AceTaskInfo {
+	name: string;
+	needs_source: boolean;
+	needs_caption: boolean;
+	cover_knobs: boolean;
+	reads_region: boolean;
+	reads_track: boolean;
+	splices: boolean;
+}
+
 // GET /props response
 export interface AceProps {
 	version: string;
@@ -56,6 +68,7 @@ export interface AceProps {
 		vae: string[];
 	};
 	adapters: string[];
+	tasks: AceTaskInfo[];
 	cli: Record<string, string | number>;
 	default: AceRequest;
 	presets: {

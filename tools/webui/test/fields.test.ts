@@ -9,11 +9,13 @@
 
 import {
 	buildSynthBatch,
+	regionOnSource,
+	taskRow,
 	pickSections,
 	SYNTH_SECTIONS,
 	type SynthBatch
 } from '../src/lib/fields.ts';
-import type { AceRequest } from '../src/lib/types.ts';
+import type { AceRequest, AceTaskInfo } from '../src/lib/types.ts';
 
 let failed = 0;
 function expect(what: string, ok: boolean, got?: unknown): void {
@@ -105,30 +107,77 @@ expect(
 // alone; a cover's codes are each request's own.
 const codes = (c: string[]) =>
 	c.map((a, i) => ({ caption: `c${i}`, audio_codes: a }) as AceRequest);
-const all = buildSynthBatch(codes(['1,2', ' ,3']), form, [], seed);
+// The task rows /props lists (#1124): the codes rule is a task's that takes
+// no source, by its row; with no rows loaded the server says it.
+const row = (name: string, needs_source: boolean): AceTaskInfo => ({
+	name,
+	needs_source,
+	needs_caption: true,
+	cover_knobs: false,
+	reads_region: false,
+	reads_track: false,
+	splices: false
+});
+const tasks = [row('text2music', false), row('cover', true), row('a-new-task', false)];
+expect('a row is found by name', taskRow(tasks, 'cover')?.needs_source === true);
+expect('no row for a task not listed', taskRow(tasks, 'covers') === undefined);
+expect('no row before /props loads', taskRow(undefined, 'cover') === undefined);
+const sourceless = (task: string, c: string[]) =>
+	buildSynthBatch(codes(c), { ...form, task_type: task }, [], seed, tasks);
+const unloaded = buildSynthBatch(codes(['1,2', '']), form, [], seed);
+expect("with no rows, a mix is the server's to refuse", typeof unloaded !== 'string', unloaded);
+const newTask = sourceless('a-new-task', ['1,2', '']);
+expect(
+	'a new sourceless task the engine lists is held to the codes rule',
+	typeof newTask === 'string' && newTask.includes('some do not'),
+	newTask
+);
+
+// The region the source's waveform shows, its -1 end read as the engine
+// reads it (asked_region_end, #1189).
+const same = (a: [number, number] | null, b: [number, number] | null) =>
+	a === b || (a !== null && b !== null && a[0] === b[0] && a[1] === b[1]);
+expect('a region of its own', same(regionOnSource(2, 5, 10), [2, 5]));
+expect('a -1 end is the source end', same(regionOnSource(2, -1, 10), [2, 10]));
+expect('an end past the source is cut to it', same(regionOnSource(2, 12, 10), [2, 10]));
+expect(
+	'an outpaint before the source shows its part on it',
+	same(regionOnSource(-3, 4, 10), [0, 4])
+);
+expect('an outpaint to -1 shows nothing on the source', same(regionOnSource(-3, -1, 10), null));
+expect('an end at or before the start shows nothing', same(regionOnSource(5, 5, 10), null));
+expect('a region past the source shows nothing', same(regionOnSource(11, 12, 10), null));
+
+const all = buildSynthBatch(codes(['1,2', ' ,3']), form, [], seed, tasks);
 expect('codes in all run', typeof all !== 'string', all);
-const none = buildSynthBatch(codes(['', '']), form, [], seed);
+const none = buildSynthBatch(codes(['', '']), form, [], seed, tasks);
 expect('codes in none run', typeof none !== 'string', none);
-const mixed = buildSynthBatch(codes(['1,2', '']), form, [], seed);
+const mixed = buildSynthBatch(codes(['1,2', '']), form, [], seed, tasks);
 expect('a mix is refused', typeof mixed === 'string' && mixed.includes('some do not'), mixed);
-const blank = buildSynthBatch(codes(['', ' ']), form, [], seed);
+const blank = buildSynthBatch(codes(['', ' ']), form, [], seed, tasks);
 expect(
 	'codes of a space hold no code',
 	typeof blank === 'string' && blank.includes('no code'),
 	blank
 );
-const commas = buildSynthBatch(codes([',', '']), form, [], seed);
+const commas = buildSynthBatch(codes([',', '']), form, [], seed, tasks);
 expect(
 	'codes of a comma hold no code',
 	typeof commas === 'string' && commas.includes('no code'),
 	commas
 );
-const cover = buildSynthBatch(codes(['1,2', '']), { ...form, task_type: 'cover' }, [], seed);
+const cover = buildSynthBatch(codes(['1,2', '']), { ...form, task_type: 'cover' }, [], seed, tasks);
 expect("a cover's codes are each request's own", typeof cover !== 'string', cover);
 
 // The server's 9 takes: 4 compositions at Batch 3 are refused, not cut to
 // 9; a Batch of 2.5 is 2, as the server reads it.
-const many = buildSynthBatch(codes(['', '', '', '']), { ...form, synth_batch_size: 3 }, [], seed);
+const many = buildSynthBatch(
+	codes(['', '', '', '']),
+	{ ...form, synth_batch_size: 3 },
+	[],
+	seed,
+	tasks
+);
 expect('past 9 takes is refused', typeof many === 'string' && many.includes('9 takes'), many);
 const half = built(buildSynthBatch(pending, { ...form, synth_batch_size: 2.5 }, [], seed));
 expect(
