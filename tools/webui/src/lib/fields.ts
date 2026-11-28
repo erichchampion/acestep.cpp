@@ -238,11 +238,22 @@ export function regionOnSource(
 	return to > from ? [from, to] : null;
 }
 
-// an edit a waveform drag makes of a region, by the edge it moved: 'lo' the
-// start alone, 'hi' the end alone, 'new' both -- a new range, or edges that
-// crossed -- and 'clear' when the drag ended with nothing drawn (cadenza-audio
-// #1182)
-export type RegionEdge = 'lo' | 'hi' | 'new' | 'clear';
+// the edge a waveform drag moves: 'lo' the start alone, 'hi' the end alone,
+// 'new' both -- a new range, or edges that crossed (cadenza-audio #1189)
+export type DragEdge = 'lo' | 'hi' | 'new';
+
+// an edit a drag makes of a region: the edge it moved, or 'clear' when a
+// drag that took hold of a drawn region ended with none drawn (#1182)
+export type RegionEdge = DragEdge | 'clear';
+
+// whether a drag's end clears the region: only one that began on a drawn
+// region's handle and ends with nothing drawn -- a handle dropped on the
+// other. A click with no drag on no drawn region ('new') leaves the request
+// as it was: a region the waveform cannot show -- an outpaint before the
+// source, one past its end, one on audio not yet decoded -- is kept (#1182)
+export function dragEndClears(began: DragEdge, start: number, end: number): boolean {
+	return began !== 'new' && !(end > start);
+}
 
 // the region a request asks, a bound null when left blank
 export interface AskedRegion {
@@ -253,9 +264,8 @@ export interface AskedRegion {
 // the region after a drag: only the edge the user moved is written, so the
 // other keeps the bound the request asked -- an outpaint's start before the
 // source, a -1 end, an end past the source (#1189); a range drawn empty
-// mid-drag writes nothing, and one that ends empty -- a click with no drag,
-// a handle dropped on the other -- clears the region, so the request asks
-// none where the waveform shows none (#1182)
+// mid-drag writes nothing, and 'clear' (dragEndClears) none, so the request
+// asks none where the waveform shows none (#1182)
 export function regionAfterDrag(
 	edge: RegionEdge,
 	start: number,

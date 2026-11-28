@@ -13,6 +13,7 @@ import {
 	buildSynthBatch,
 	SEED_MAX,
 	codesOf,
+	dragEndClears,
 	holdsCode,
 	regionAfterDrag,
 	regionOnSource,
@@ -154,9 +155,18 @@ expect('an outpaint to -1 shows nothing on the source', same(regionOnSource(-3, 
 expect('an end at or before the start shows nothing', same(regionOnSource(5, 5, 10), null));
 expect('a region past the source shows nothing', same(regionOnSource(11, 12, 10), null));
 
+// When a drag's end clears the region (#1182): a handle dropped on the other
+// does; a click with no drag on no drawn region -- an outpaint before the
+// source, a region past it -- leaves the request's; so does a handle moved
+// and released with a region drawn.
+expect('a handle dropped on the other clears', dragEndClears('lo', 4, 4));
+expect('the end handle dropped on the start clears', dragEndClears('hi', 4, 4));
+expect('a click on no drawn region keeps the request', !dragEndClears('new', 2, 2));
+expect('a handle released with a region drawn keeps it', !dragEndClears('hi', 2, 5));
+expect('a new range drawn keeps it', !dragEndClears('new', 2, 5));
+
 // A drag's edit of the region (#1189, #1182): only the edge moved is
-// written; a range drawn empty mid-drag writes nothing; one that ends empty
-// -- a click with no drag, a handle dropped on the other -- clears it.
+// written; a range drawn empty mid-drag writes nothing; 'clear' clears it.
 const asked = { start: -3, end: -1 };
 const region = (r: { start: number | null; end: number | null }) => `${r.start},${r.end}`;
 expect(

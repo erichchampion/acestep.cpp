@@ -5,7 +5,7 @@
 	import { app } from '../lib/state.svelte.js';
 	import { putSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
-	import type { RegionEdge } from '../lib/fields.js';
+	import { dragEndClears, type DragEdge, type RegionEdge } from '../lib/fields.js';
 	import {
 		getContext,
 		registerPlaying,
@@ -31,9 +31,9 @@
 		selectable: boolean;
 		rangeStart: number;
 		rangeEnd: number;
-		// a range the user drew, by the edge they moved (RegionEdge), so a
-		// caller writes back only what was moved (cadenza-audio #1189), and
-		// 'clear' as a drag ends with nothing drawn (#1182)
+		// a range the user drew, by the edge they moved, so a caller writes
+		// back only what was moved (cadenza-audio #1189), and 'clear' as a
+		// drag that took hold of a drawn region ends with none (#1182)
 		onrange?: (edge: RegionEdge, start: number, end: number) => void;
 	} = $props();
 
@@ -54,7 +54,9 @@
 
 	// pointer state
 	let dragging = false;
-	let dragEdge: RegionEdge = 'new';
+	let dragEdge: DragEdge = 'new';
+	// the edge the drag took hold of, before any crossing swaps it
+	let began: DragEdge = 'new';
 	let anchor = -1;
 
 	onMount(() => {
@@ -303,6 +305,11 @@
 	}
 
 	function onPointerDown(e: PointerEvent) {
+		// the primary button, a touch or a pen: a right-click edits nothing
+		if (e.button !== 0) return;
+		// no region is drawn or edited before the audio has a length: a
+		// press then would read as a new range at 0 (#1182)
+		if (selectable && dur <= 0) return;
 		dragging = true;
 		canvas.setPointerCapture(e.pointerId);
 		if (selectable) {
@@ -325,6 +332,7 @@
 				rangeStart = cur;
 				rangeEnd = cur;
 			}
+			began = dragEdge;
 			onrange?.(dragEdge, rangeStart, rangeEnd);
 			draw();
 		} else {
@@ -360,11 +368,11 @@
 		}
 	}
 
-	// a drag that ends with nothing drawn -- a click with no drag, a handle
-	// dropped on the other -- asks no region, said only now, as a new drag
-	// starts empty too (#1182)
-	function onPointerUp() {
-		if (dragging && selectable && !(rangeEnd > rangeStart)) {
+	// a drag's end -- the pointer up, or the system cancelling it: one that
+	// took hold of a drawn region and ends with none drawn asks no region
+	// (dragEndClears), said only now, as a new drag starts empty too (#1182)
+	function onDragEnd() {
+		if (dragging && selectable && dragEndClears(began, rangeStart, rangeEnd)) {
 			onrange?.('clear', rangeStart, rangeEnd);
 		}
 		dragging = false;
@@ -377,7 +385,9 @@
 	class="waveform"
 	onpointerdown={onPointerDown}
 	onpointermove={onPointerMove}
-	onpointerup={onPointerUp}
+	onpointerup={onDragEnd}
+	onpointercancel={onDragEnd}
+	onlostpointercapture={onDragEnd}
 ></canvas>
 
 <style>

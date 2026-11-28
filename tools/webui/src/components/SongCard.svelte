@@ -57,8 +57,6 @@
 			app.srcSongId = null;
 			app.srcRangeStart = null;
 			app.srcRangeEnd = null;
-			rangeStart = 0;
-			rangeEnd = 0;
 		} else {
 			app.srcSongId = song.id ?? null;
 		}
