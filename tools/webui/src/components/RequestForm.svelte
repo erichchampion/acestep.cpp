@@ -31,6 +31,7 @@
 		TRACK_NAMES
 	} from '../lib/config.js';
 	import {
+		asSent,
 		buildSparse,
 		clearSection,
 		withCurrentSettings,
@@ -226,7 +227,7 @@
 	}
 
 	function saveAs(format: 'json' | 'yaml') {
-		const req = buildRequest();
+		const req = asSent(buildRequest());
 		const text = format === 'json' ? JSON.stringify(req, null, 2) : yamlStringify(req);
 		const mime = format === 'json' ? 'application/json' : 'application/x-yaml';
 		const blob = new Blob([text], { type: mime });

@@ -81,7 +81,7 @@ export const FIELDS: readonly FieldDef[] = [
 
 // convert to number, undefined if empty/NaN
 export function num(v: unknown): number | undefined {
-	if (v == null || v === '') return undefined;
+	if (v == null || String(v).trim() === '') return undefined;
 	const n = Number(v);
 	return isNaN(n) ? undefined : n;
 }
@@ -111,9 +111,7 @@ export function buildSparse(r: AceRequest): AceRequest {
 	const out: AceRequest = { caption: String(r.caption || '') };
 	for (const f of FIELDS) {
 		if (f.key === 'caption') continue;
-		// the codes as a synth sends them, so an export says what would run
-		const raw = f.key === 'audio_codes' ? codesOf(r) : get(r, f.key);
-		const val = resolveField(f, raw);
+		const val = resolveField(f, get(r, f.key));
 		if (val !== undefined) set(out, f.key, val);
 	}
 	return out;
@@ -167,6 +165,22 @@ export function codesOf(r: Partial<AceRequest>): string {
 		.trim();
 }
 
+// a request as an export writes it: its codes as a synth would send them
+// (codesOf), so the file says what would run; none for codes that are none.
+// The form and the pending requests keep the codes as typed.
+export function asSent(r: AceRequest): AceRequest {
+	const out = { ...r };
+	const codes = codesOf(r);
+	if (codes) out.audio_codes = codes;
+	else delete out.audio_codes;
+	return out;
+}
+
+// the range of the int the server reads a code into (ops_codes_given's
+// from_chars)
+const CODE_MIN = -(2 ** 31);
+const CODE_MAX = 2 ** 31 - 1;
+
 // the server's rule for codes that are given: whether one is held -- past
 // leading commas and spaces, an integer starts that fits an int, as
 // ops_codes_given reads it with from_chars, so a run of digits past an
@@ -175,8 +189,12 @@ export function holdsCode(codes: string): boolean {
 	const first = /^-?[0-9]+/.exec(codes.replace(/^[, ]*/, ''));
 	if (!first) return false;
 	const v = Number(first[0]);
-	return v >= -2147483648 && v <= 2147483647;
+	return v >= CODE_MIN && v <= CODE_MAX;
 }
+
+// the largest seed a take runs: the engine's seeds are [0, UINT32_MAX], and a
+// larger one runs as its low 32 bits (request.h), so another take's twin
+export const SEED_MAX = 2 ** 32 - 1;
 
 // a number as the server reads one into an integer: whole, toward zero
 function whole(n: number | undefined): number | undefined {
@@ -241,12 +259,8 @@ export function buildSynthBatch(
 	// whole, as the server reads it, and 1 at least
 	const synthBatch = Math.max(1, whole(num(form.synth_batch_size)) ?? 1);
 	// whole, as the server reads it, so the take list says the seeds it ran;
-	// one past what a take's seed can be counted from exactly is refused,
-	// not sent as the null JSON makes of Infinity (a random seed unsaid)
+	// a negative one is a random seed
 	const userSeed = whole(num(form.seed));
-	if (userSeed != null && !Number.isSafeInteger(userSeed + synthBatch)) {
-		return 'The Seed is too large to use: give a smaller one, or none for a random seed.';
-	}
 	const hasSeed = userSeed != null && userSeed >= 0;
 	const shared = pickSections(form, SYNTH_SECTIONS);
 	// seed and synth_batch_size are per request, set below
@@ -271,13 +285,20 @@ export function buildSynthBatch(
 	if (pending.length * synthBatch > SERVER_MAX_TAKES) {
 		return `A batch makes ${SERVER_MAX_TAKES} takes at most, and this asks for ${pending.length * synthBatch}: lower Batch, or synthesize fewer compositions.`;
 	}
+	// a Seed whose last take passes the engine's range would run as another
+	// seed's twin (or, past a double's, be sent as null): refused. A random
+	// seed is held below it, so its takes stay in range too.
+	const lastSeed = SEED_MAX - (synthBatch - 1);
+	if (hasSeed && (userSeed as number) > lastSeed) {
+		return `A Seed runs its takes from it up: give one from 0 to ${lastSeed}, or none for a random seed.`;
+	}
 
 	const toSend: AceRequest[] = [];
 	const expanded: AceRequest[] = [];
 	for (const [i, p] of pending.entries()) {
 		const r = batchRequest(p, shared);
 		if ('audio_codes' in r) r.audio_codes = codes[i];
-		const base = hasSeed ? (userSeed as number) : seed();
+		const base = hasSeed ? (userSeed as number) : Math.min(seed(), lastSeed);
 		toSend.push({ ...r, seed: base, synth_batch_size: synthBatch });
 		// each take's song keeps the batch size it was made at, so loading
 		// it sets the toolbar's again

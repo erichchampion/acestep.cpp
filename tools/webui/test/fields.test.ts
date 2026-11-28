@@ -8,8 +8,10 @@
 // types.
 
 import {
+	asSent,
 	buildSparse,
 	buildSynthBatch,
+	SEED_MAX,
 	codesOf,
 	holdsCode,
 	regionOnSource,
@@ -185,11 +187,15 @@ expect(
 );
 expect(
 	'an export carries the codes as sent',
-	buildSparse({ caption: 'x', audio_codes: '\n1,2\n3\n' } as AceRequest).audio_codes === '1,2 3'
+	asSent({ caption: 'x', audio_codes: '\n1,2\n3\n' } as AceRequest).audio_codes === '1,2 3'
 );
 expect(
 	'an export of a newline alone carries no codes',
-	!('audio_codes' in buildSparse({ caption: 'x', audio_codes: '\n' } as AceRequest))
+	!('audio_codes' in asSent({ caption: 'x', audio_codes: '\n' } as AceRequest))
+);
+expect(
+	'a pending request keeps its codes as typed',
+	buildSparse({ caption: 'x', audio_codes: '1,2\n3' } as AceRequest).audio_codes === '1,2\n3'
 );
 const commas = buildSynthBatch(codes([',', '']), form, [], seed, tasks);
 expect(
@@ -249,12 +255,39 @@ for (const below of [0, -2, 0.5, '', undefined]) {
 		b
 	);
 }
-// A Seed past what a take's seed can be counted from exactly is refused, not
-// sent as null (a random seed unsaid).
-for (const big of [1e400, 2 ** 53]) {
-	const b = buildSynthBatch(pending, { ...form, seed: big }, [], seed);
-	expect(`a Seed of ${big} is refused`, typeof b === 'string' && b.includes('Seed'), b);
+// A Seed's takes run from it up, in the engine's [0, UINT32_MAX] (request.h):
+// one whose last take passes it is refused -- Infinity too, which JSON would
+// send as null -- and a random seed is held below it.
+const atBatch2 = (s: number) =>
+	buildSynthBatch(pending, { ...form, seed: s, synth_batch_size: 2 }, [], seed);
+expect('a Seed whose last take is the most runs', typeof atBatch2(SEED_MAX - 1) !== 'string');
+for (const big of [SEED_MAX, 2 ** 53, 1e400]) {
+	const b = atBatch2(big);
+	expect(`a Seed of ${big} at Batch 2 is refused`, typeof b === 'string' && b.includes('0 to'), b);
 }
+for (const negative of [-1, -1e400, ' ']) {
+	const b = built(atBatch2(negative as number));
+	expect(
+		`a Seed of ${JSON.stringify(negative)} is a random one`,
+		b.toSend.every((r) => (r.seed as number) >= 0 && (r.seed as number) < SEED_MAX),
+		b
+	);
+}
+const topRandom = built(
+	buildSynthBatch(pending, { ...form, synth_batch_size: 2 }, [], () => SEED_MAX)
+);
+expect(
+	"a random seed's takes stay in range",
+	topRandom.expanded.every((r) => (r.seed as number) <= SEED_MAX),
+	topRandom.expanded
+);
+// The cap is said before the Seed: a Batch past it is the cap's to refuse.
+const hugeBatch = buildSynthBatch(pending, { ...form, seed: 5, synth_batch_size: 1e20 }, [], seed);
+expect(
+	'a huge Batch is refused by the cap, not the Seed',
+	typeof hugeBatch === 'string' && hugeBatch.includes('takes at most'),
+	hugeBatch
+);
 // A fractional Seed is whole, as the server reads it (toward zero), so the
 // take list says the seeds that ran.
 const fractional = built(buildSynthBatch(pending, { ...form, seed: 5.5 }, [], seed));
