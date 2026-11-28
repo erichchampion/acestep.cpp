@@ -39,13 +39,17 @@ export function lmSubmitFormat(req: AceRequest): Promise<string> {
 	});
 }
 
+// a /synth batch's JSON, each request in the format asked: one request or
+// an array, which both the JSON body and the multipart request part read
+// (cadenza-audio #1328)
+function synthBody(reqs: AceRequest[], format: string): string {
+	const withFormat = reqs.map((r) => ({ ...r, output_format: format }));
+	return JSON.stringify(withFormat.length === 1 ? withFormat[0] : withFormat);
+}
+
 // POST /synth: submit synth request, returns job ID
 export function synthSubmit(reqs: AceRequest[], format: string): Promise<string> {
-	const reqsWithFormat = reqs.map((r) => ({ ...r, output_format: format }));
-	const body =
-		reqsWithFormat.length === 1
-			? JSON.stringify(reqsWithFormat[0])
-			: JSON.stringify(reqsWithFormat);
+	const body = synthBody(reqs, format);
 	return submitJob('synth', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -64,11 +68,7 @@ export function synthSubmitWithAudio(
 	refLatents: Blob | null,
 	format: string
 ): Promise<string> {
-	const reqsWithFormat = reqs.map((r) => ({ ...r, output_format: format }));
-	const body =
-		reqsWithFormat.length === 1
-			? JSON.stringify(reqsWithFormat[0])
-			: JSON.stringify(reqsWithFormat);
+	const body = synthBody(reqs, format);
 	const form = new FormData();
 	form.append('request', new Blob([body], { type: 'application/json' }), 'request.json');
 	if (srcLatents) form.append('src_latents', srcLatents, 'src.latents');

@@ -19,7 +19,10 @@
 # window_only alone, and of it with a field that agrees. And (#1182) /props
 # says the takes cap, and /synth refuses a batch asking past it, saying what
 # it asks, where a batch at it gets its job. And (#1328) a multipart's
-# request part may be an array: two covers sharing a source get their job.
+# request part may be an array: two covers sharing a source get their job,
+# two asking past the takes cap are refused by it, and a cover and a
+# text2music are refused by the batch rule, by the request at fault, before
+# the source is decoded.
 #
 # The first draft of #1193 refused that last cover after decoding its
 # reference, and freed the reference twice. The refusal now comes before any
@@ -39,7 +42,7 @@ SERVER="$1"
 MODELS="$2"
 REF="$3"
 # How long the server may take to scan the models and bind, a request to be
-# answered, and the one job to fail: none loads a model, so all are short.
+# answered, and the jobs to fail: none loads a model, so all are short.
 START_TIMEOUT_S=60
 REQUEST_TIMEOUT_S=30
 # The engine's reason for a task that works from a source given none, and the
@@ -184,9 +187,25 @@ code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code
     --form-string "request=[$FIVE,$FIVE]" -F "audio=@$REF;type=audio/wav" "$URL/synth")" ||
     fail "a multipart batch of 10 takes: no answer"
 [ "$code" = 400 ] || fail "a multipart batch of 10 takes: HTTP $code, want 400: $(cat "$work/body")"
-grep -qF 'this asks 10' "$work/body" || fail "a multipart batch of 10 takes: not the cap's reason: $(cat "$work/body")"
+grep -qF "$TAKES_REASON" "$work/body" || fail "a multipart batch of 10 takes: not the cap's reason: $(cat "$work/body")"
+grep -qF 'this asks 10' "$work/body" || fail "a multipart batch of 10 takes: not what it asks: $(cat "$work/body")"
 answers "after a multipart batch of 10 takes"
 echo "ok: a multipart batch of 10 takes -- $(cat "$work/body")"
+# A multipart batch the rule refuses is refused by the request at fault and
+# before its source is read: the server's first-request reads -- its task's
+# source rule, the source's warning -- hold only because of it.
+decodes_before="$(grep -c 'Source audio' "$work/server.log" || true)"
+MIXED="[$COVER_NO_DIT,{\"task_type\":\"text2music\",\"caption\":\"warm\",\"duration\":4,\"synth_model\":\"$NO_DIT\"}]"
+code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
+    --form-string "request=$MIXED" -F "audio=@$REF;type=audio/wav" "$URL/synth")" ||
+    fail "a multipart batch of two tasks: no answer"
+[ "$code" = 400 ] || fail "a multipart batch of two tasks: HTTP $code, want 400: $(cat "$work/body")"
+grep -qF 'Request 1: requests mix tasks' "$work/body" ||
+    fail "a multipart batch of two tasks: not refused by request 1's task: $(cat "$work/body")"
+[ "$(grep -c 'Source audio' "$work/server.log" || true)" = "$decodes_before" ] ||
+    fail "a multipart batch of two tasks: its source was decoded before it was refused"
+answers "after a multipart batch of two tasks"
+echo "ok: a multipart batch of two tasks -- $(cat "$work/body")"
 
 # No audio at all: a part that would be refused were it decoded.
 printf 'not audio' >"$work/junk.wav"

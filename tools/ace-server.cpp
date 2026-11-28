@@ -1010,8 +1010,8 @@ static bool refuse_sourceless(httplib::Response &        res,
 // returns JSON {"id":"N"} immediately.
 // input:
 //   application/json body        -> single request {} or batch [{req0}, {req1}, ...]
-//   multipart/form-data          -> single request + optional audio or latents
-//     part "request":     JSON text (model selection, output_format, etc.)
+//   multipart/form-data          -> request part + optional audio or latents the batch shares
+//     part "request":     JSON text, one request {} or a batch [...] as the JSON body (#1328)
 //     part "audio":       source audio (WAV or MP3)
 //     part "src_latents": pre-encoded source latents (raw f32, [T*64]), wins over "audio"
 //     part "ref_audio":   timbre reference audio (WAV or MP3), optional

@@ -949,9 +949,9 @@ POST /lm                        Submit LM generation, returns job ID
 POST /synth                     Submit synth generation, returns job ID
   body: application/json AceRequest or [AceRequest, ...]
   body: multipart/form-data (request + audio|src_latents + ref_audio|ref_latents)
-        the request part an AceRequest or an array, as the JSON body; the
-        batch shares the source and reference parts; latents win over audio
-        when both are sent on the same side
+        the request part is an AceRequest or an array, as the JSON body is;
+        the batch shares the source and reference parts; latents win over
+        audio when both are sent on the same side
   response: {"id":"2"}
   400 "Request <i>: <reason>" for a batch the engine refuses up front, every
         request checked: "unknown task_type", "requests mix tasks: a batch
