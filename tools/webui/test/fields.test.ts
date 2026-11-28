@@ -15,6 +15,7 @@ import {
 	codesOf,
 	holdsCode,
 	regionAfterDrag,
+	regionForNewSource,
 	regionOnSource,
 	taskRow,
 	pickSections,
@@ -273,6 +274,17 @@ expect(
 		['lo', 10, 10],
 		['lo', 10, 10]
 	]) === 'null,null'
+);
+
+// A new source card resets the region (#1182 item 19, the owner's call); a
+// region typed before any card was the source is kept.
+expect(
+	'a source moved from another card starts with no region',
+	region(regionForNewSource(7, { start: 2, end: 5 })) === 'null,null'
+);
+expect(
+	'a first source keeps the region typed for it',
+	region(regionForNewSource(null, { start: 2, end: 5 })) === '2,5'
 );
 
 const all = buildSynthBatch(codes(['1,2', ' ,3']), form, [], seed, tasks);

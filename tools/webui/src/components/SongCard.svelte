@@ -27,6 +27,7 @@
 	import {
 		DRAG_UNSTARTED,
 		regionAfterDrag,
+		regionForNewSource,
 		regionOnSource,
 		type DragEdge,
 		type DragPhase,
@@ -65,6 +66,12 @@
 			app.srcRangeStart = null;
 			app.srcRangeEnd = null;
 		} else {
+			const region = regionForNewSource(app.srcSongId, {
+				start: app.srcRangeStart,
+				end: app.srcRangeEnd
+			});
+			app.srcRangeStart = region.start;
+			app.srcRangeEnd = region.end;
 			app.srcSongId = song.id ?? null;
 		}
 	}

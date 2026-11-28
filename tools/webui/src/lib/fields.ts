@@ -254,6 +254,14 @@ export interface AskedRegion {
 	end: number | null;
 }
 
+// the region when a card becomes the source: none when the source moves to
+// it from another card, whose region is in that song's seconds -- the
+// owner's call (cadenza-audio #1182 item 19) -- and the request's as it was
+// when no card was the source, so a region typed first is kept
+export function regionForNewSource(previous: number | null, asked: AskedRegion): AskedRegion {
+	return previous == null ? asked : { start: null, end: null };
+}
+
 // a drag's phase, as the waveform reports each step: 'start' as it takes
 // hold, 'move', and 'end' as it is released or cancelled
 export type DragPhase = 'start' | 'move' | 'end';
