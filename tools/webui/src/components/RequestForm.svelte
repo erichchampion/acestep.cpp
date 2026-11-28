@@ -38,6 +38,9 @@
 		buildSynthBatch,
 		codesOf,
 		NO_TAKES_CAP,
+		batchMax,
+		noTakesCapWords,
+		takesCapOf,
 		holdsCode,
 		taskRow
 	} from '../lib/fields.js';
@@ -84,8 +87,8 @@
 	$effect(() => {
 		if (!app.props) return;
 		propsSeen = true;
-		const n = Number(app.props.cli?.max_takes);
-		if (Number.isFinite(n) && n > 0) maxTakes = n;
+		const cap = takesCapOf(app.props);
+		if (cap != null) maxTakes = cap;
 	});
 	// a task the request asks that is not among them -- a loaded song's, say
 	// -- is offered too, so the select shows the task that will run
@@ -479,11 +482,7 @@
 				maxTakes
 			);
 			if (typeof batch === 'string') {
-				toast(
-					batch === NO_TAKES_CAP && propsSeen
-						? "The server doesn't say how many takes a batch may make: it is older than this page, so update ace-server."
-						: batch
-				);
+				toast(batch === NO_TAKES_CAP ? noTakesCapWords(propsSeen) : batch);
 				return;
 			}
 			const { toSend, expanded } = batch;
@@ -845,7 +844,7 @@
 			type="number"
 			class="batch-input"
 			min="1"
-			max={app.props?.cli?.max_batch || 9}
+			max={app.props?.cli?.max_batch}
 			placeholder={ph(d?.lm_batch_size)}
 			bind:value={app.request.lm_batch_size}
 			title="Number of LM variations per Compose. Server must be started with --max-batch N (default 1). Higher values use more VRAM for the KV cache."
@@ -1107,7 +1106,7 @@
 			type="number"
 			class="batch-input"
 			min="1"
-			max={maxTakes}
+			max={batchMax(maxTakes, app.pendingRequests.length)}
 			placeholder={ph(d?.synth_batch_size)}
 			bind:value={app.request.synth_batch_size}
 			title="Number of DiT variations per request. Each uses a consecutive seed."

@@ -136,13 +136,23 @@ echo "ok: /props says the takes cap"
 TAKES_REASON="a batch makes 9 takes at most, its requests' synth_batch_size summed"
 code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
     -H 'Content-Type: application/json' \
-    --data-binary '[{"caption":"warm","duration":4,"synth_batch_size":5},{"caption":"cold","duration":4,"synth_batch_size":5}]' \
+    --data-binary "[{\"caption\":\"warm\",\"duration\":4,\"synth_batch_size\":5,\"synth_model\":\"$NO_DIT\"},{\"caption\":\"cold\",\"duration\":4,\"synth_batch_size\":5,\"synth_model\":\"$NO_DIT\"}]" \
     "$URL/synth")" || fail "a batch of 10 takes: no answer"
 [ "$code" = 400 ] || fail "a batch of 10 takes: HTTP $code, want 400: $(cat "$work/body")"
 grep -qF "$TAKES_REASON" "$work/body" || fail "a batch of 10 takes: not the cap's reason: $(cat "$work/body")"
 grep -qF 'this asks 10' "$work/body" || fail "a batch of 10 takes: not what it asks: $(cat "$work/body")"
 answers "after a batch of 10 takes"
 echo "ok: a batch of 10 takes -- $(cat "$work/body")"
+# A synth_batch_size past an int is held to one, not read as a single take
+# by an undefined cast (cadenza-audio #1182).
+code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    --data-binary "{\"caption\":\"warm\",\"duration\":4,\"synth_batch_size\":1e10,\"synth_model\":\"$NO_DIT\"}" \
+    "$URL/synth")" || fail "a batch size of 1e10: no answer"
+[ "$code" = 400 ] || fail "a batch size of 1e10: HTTP $code, want 400: $(cat "$work/body")"
+grep -qF "$TAKES_REASON" "$work/body" || fail "a batch size of 1e10: not the cap's reason: $(cat "$work/body")"
+answers "after a batch size of 1e10"
+echo "ok: a batch size of 1e10 -- $(cat "$work/body")"
 code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
     -H 'Content-Type: application/json' \
     --data-binary "{\"caption\":\"warm\",\"duration\":4,\"synth_batch_size\":9,\"synth_model\":\"$NO_DIT\"}" \

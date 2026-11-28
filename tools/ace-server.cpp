@@ -1081,10 +1081,6 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         json_error(res, 400, "Empty request");
         return;
     }
-    // The engine's batch rule, for every request, not only the first: an
-    // unknown task (said as that), requests that mix tasks, a request short
-    // of its caption (#1123), a region bound or codes that are no such
-    // thing, a setting the batch shares asked differently (#1159).
     // The batch's takes, by the engine's one rule for which requests run:
     // computed once, asked of here and handed to the worker, which expands by
     // it (cadenza-audio #1243, #1269).
@@ -1096,6 +1092,10 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
         json_error(res, 400, (std::string(reason) + ", and this asks " + std::to_string(batch_takes.asked)).c_str());
         return;
     }
+    // The engine's batch rule, for every request, not only the first: an
+    // unknown task (said as that), requests that mix tasks, a request short
+    // of its caption (#1123), a region bound or codes that are no such
+    // thing, a setting the batch shares asked differently (#1159).
     {
         AceSynthBatchRefusal why;
         if (ace_synth_batch_refused(ace_reqs.data(), (int) batch_takes.takes.size(), &why)) {

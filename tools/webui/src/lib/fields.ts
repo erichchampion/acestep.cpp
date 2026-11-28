@@ -308,9 +308,35 @@ export function regionAfterDrag(
 	return { region: asked, state: { wrote, empty: true } };
 }
 
-// buildSynthBatch's refusal when it is given no takes cap
-export const NO_TAKES_CAP =
-	"The server's settings have not loaded yet: synthesize once it answers.";
+// the takes cap a /props says (cli.max_takes): a whole number from 1, or
+// undefined for none -- a /props not loaded, or an older server's, which
+// says none (cadenza-audio #1182)
+export function takesCapOf(
+	props: { cli?: { max_takes?: unknown } } | null | undefined
+): number | undefined {
+	const n = Number(props?.cli?.max_takes);
+	return Number.isInteger(n) && n >= 1 ? n : undefined;
+}
+
+// why no batch is built without a takes cap: /props not yet loaded, or
+// loaded from a server older than the page, which says none (#1182)
+export function noTakesCapWords(propsSeen: boolean): string {
+	return propsSeen
+		? "The server doesn't say how many takes a batch may make: it is older than this page, so update ace-server."
+		: "The server's settings have not loaded yet: synthesize once it answers.";
+}
+
+// buildSynthBatch's refusal when it is given no takes cap, which the form
+// says as noTakesCapWords
+export const NO_TAKES_CAP = noTakesCapWords(false);
+
+// the most a request's Batch may be, the cap shared among the compositions a
+// synth sends, one at least; none without a cap
+export function batchMax(maxTakes: number | undefined, compositions: number): number | undefined {
+	return maxTakes == null
+		? undefined
+		: Math.max(1, Math.floor(maxTakes / Math.max(1, compositions)));
+}
 
 // build a /synth batch from the pending requests and the form, or say why
 // it cannot be sent (cadenza-audio #1175). Every request takes the form's

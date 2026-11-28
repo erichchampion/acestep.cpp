@@ -10,9 +10,35 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <random>
 #include <string>
 #include <vector>
+
+// A JSON number as an int field reads it: truncated toward zero, and held to
+// the type's range first, since a cast of a double past it is undefined -- a
+// synth_batch_size of 1e10 read as INT_MIN, one take, slipped past ace-server's
+// takes cap (cadenza-audio #1182). The range's ends stand for any past them.
+template <class T> static T json_whole(yyjson_val * v) {
+    const double d  = yyjson_get_num(v);
+    const double lo = (double) std::numeric_limits<T>::min();
+    const double hi = (double) std::numeric_limits<T>::max();
+    if (!(d > lo)) {
+        return std::numeric_limits<T>::min();
+    }
+    if (!(d < hi)) {
+        return std::numeric_limits<T>::max();
+    }
+    return (T) d;
+}
+
+static int json_int(yyjson_val * v) {
+    return json_whole<int>(v);
+}
+
+static int64_t json_int64(yyjson_val * v) {
+    return json_whole<int64_t>(v);
+}
 
 static const yyjson_write_flag WRITE_FLAGS =
     YYJSON_WRITE_PRETTY | YYJSON_WRITE_PRETTY_TWO_SPACES | YYJSON_WRITE_FP_TO_FIXED(2);
@@ -205,25 +231,25 @@ static void request_parse_obj(yyjson_val * obj, AceRequest * r) {
 
     // ints
     if ((v = yyjson_obj_get(obj, "bpm")) && yyjson_is_num(v)) {
-        r->bpm = (int) yyjson_get_num(v);
+        r->bpm = json_int(v);
     }
     if ((v = yyjson_obj_get(obj, "lm_batch_size")) && yyjson_is_num(v)) {
-        r->lm_batch_size = (int) yyjson_get_num(v);
+        r->lm_batch_size = json_int(v);
     }
     if ((v = yyjson_obj_get(obj, "synth_batch_size")) && yyjson_is_num(v)) {
-        r->synth_batch_size = (int) yyjson_get_num(v);
+        r->synth_batch_size = json_int(v);
     }
     if ((v = yyjson_obj_get(obj, "seed")) && yyjson_is_num(v)) {
-        r->seed = (int64_t) yyjson_get_num(v);
+        r->seed = json_int64(v);
     }
     if ((v = yyjson_obj_get(obj, "lm_seed")) && yyjson_is_num(v)) {
-        r->lm_seed = (int64_t) yyjson_get_num(v);
+        r->lm_seed = json_int64(v);
     }
     if ((v = yyjson_obj_get(obj, "lm_top_k")) && yyjson_is_num(v)) {
-        r->lm_top_k = (int) yyjson_get_num(v);
+        r->lm_top_k = json_int(v);
     }
     if ((v = yyjson_obj_get(obj, "inference_steps")) && yyjson_is_num(v)) {
-        r->inference_steps = (int) yyjson_get_num(v);
+        r->inference_steps = json_int(v);
     }
 
     // floats
@@ -273,10 +299,10 @@ static void request_parse_obj(yyjson_val * obj, AceRequest * r) {
         r->latent_rescale = json_float(v);
     }
     if ((v = yyjson_obj_get(obj, "peak_clip")) && yyjson_is_num(v)) {
-        r->peak_clip = (int) yyjson_get_num(v);
+        r->peak_clip = json_int(v);
     }
     if ((v = yyjson_obj_get(obj, "mp3_bitrate")) && yyjson_is_num(v)) {
-        r->mp3_bitrate = (int) yyjson_get_num(v);
+        r->mp3_bitrate = json_int(v);
     }
     if ((v = yyjson_obj_get(obj, "adapter_scale")) && yyjson_is_num(v)) {
         r->adapter_scale = json_float(v);

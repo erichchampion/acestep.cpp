@@ -9,6 +9,9 @@
 
 import {
 	asSent,
+	batchMax,
+	noTakesCapWords,
+	takesCapOf,
 	buildSparse,
 	buildSynthBatch,
 	SEED_MAX,
@@ -377,6 +380,31 @@ expect(
 	typeof otherCap === 'string' && otherCap.includes('8 takes'),
 	otherCap
 );
+// The cap as /props says it, and the words for none (#1182).
+expect('a cap is read from /props', takesCapOf({ cli: { max_takes: 9 } }) === 9);
+expect('an older /props says none', takesCapOf({ cli: {} }) === undefined);
+expect('no /props says none', takesCapOf(null) === undefined);
+for (const bad of [0, -3, 2.5, '9x', null]) {
+	expect(
+		`a cap of ${JSON.stringify(bad)} is none`,
+		takesCapOf({ cli: { max_takes: bad } }) === undefined
+	);
+}
+expect(
+	'none before /props loads says it has not loaded',
+	noTakesCapWords(false).includes('not loaded')
+);
+expect(
+	'none from a loaded /props says the server is older',
+	noTakesCapWords(true).includes('older')
+);
+// The Batch input's max shares the cap among the compositions sent.
+expect('one composition may ask the whole cap', batchMax(9, 1) === 9);
+expect('three share it', batchMax(9, 3) === 3);
+expect('none pending is the whole cap', batchMax(9, 0) === 9);
+expect('more than the cap still asks one', batchMax(9, 12) === 1);
+expect('no cap, no max', batchMax(undefined, 3) === undefined);
+
 const half = built(batchOf(pending, { ...form, synth_batch_size: 2.5 }, [], seed));
 expect(
 	'a fractional Batch is whole',
