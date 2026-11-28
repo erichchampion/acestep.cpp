@@ -1052,9 +1052,10 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     malloc_guard own_src{ src_interleaved }, own_ref{ ref_interleaved };
 
     if (req.is_multipart_form_data()) {
-        // multipart mode: single request + optional audio files or src_latents
-        AceRequest ace_req;
-
+        // multipart mode: the request part -- one AceRequest or an array, as
+        // the plain JSON body takes, so a batch of several compositions can
+        // carry its source or reference (cadenza-audio #1328) -- and the
+        // optional audio files or latents the batch shares
         std::string json_body;
         if (req.form.has_file("request")) {
             json_body = req.form.get_file("request").content;
@@ -1064,11 +1065,10 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
             json_error(res, 400, "Multipart: missing 'request' part");
             return;
         }
-        if (!request_parse_json(&ace_req, json_body.c_str())) {
+        if (!request_parse_json_array(json_body.c_str(), &ace_reqs)) {
             json_error(res, 400, "Multipart: invalid JSON in 'request' part");
             return;
         }
-        ace_reqs.push_back(ace_req);
     } else {
         // plain JSON body: single object {} or array [{}, ...]
         if (!request_parse_json_array(req.body.c_str(), &ace_reqs)) {

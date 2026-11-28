@@ -18,7 +18,8 @@
 # request that ask it differently; and makes a windowed job of the request's
 # window_only alone, and of it with a field that agrees. And (#1182) /props
 # says the takes cap, and /synth refuses a batch asking past it, saying what
-# it asks, where a batch at it gets its job.
+# it asks, where a batch at it gets its job. And (#1328) a multipart's
+# request part may be an array: two covers sharing a source get their job.
 #
 # The first draft of #1193 refused that last cover after decoding its
 # reference, and freed the reference twice. The refusal now comes before any
@@ -167,6 +168,25 @@ refused "a multipart cover with only its request part" "$HINT_MULTIPART" \
     --form-string "request=$COVER"
 refused "a multipart cover with a ref_audio part and no source" "$HINT_MULTIPART" \
     --form-string "request=$COVER" -F "ref_audio=@$REF;type=audio/wav"
+
+# A multipart's request part is an array as the JSON body is: a batch of two
+# covers sharing its source gets its job (cadenza-audio #1328), and a batch
+# of two asking past the takes cap is refused by it (#1182).
+COVER_NO_DIT="{\"task_type\":\"cover\",\"caption\":\"warm\",\"duration\":4,\"synth_model\":\"$NO_DIT\"}"
+code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
+    --form-string "request=[$COVER_NO_DIT,$COVER_NO_DIT]" -F "audio=@$REF;type=audio/wav" "$URL/synth")" ||
+    fail "a multipart batch of two covers: no answer"
+[ "$code" = 200 ] || fail "a multipart batch of two covers: HTTP $code, want its job: $(cat "$work/body")"
+answers "after a multipart batch of two covers"
+echo "ok: a multipart batch of two covers gets its job -- $(cat "$work/body")"
+FIVE="{\"task_type\":\"cover\",\"caption\":\"warm\",\"duration\":4,\"synth_batch_size\":5,\"synth_model\":\"$NO_DIT\"}"
+code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
+    --form-string "request=[$FIVE,$FIVE]" -F "audio=@$REF;type=audio/wav" "$URL/synth")" ||
+    fail "a multipart batch of 10 takes: no answer"
+[ "$code" = 400 ] || fail "a multipart batch of 10 takes: HTTP $code, want 400: $(cat "$work/body")"
+grep -qF 'this asks 10' "$work/body" || fail "a multipart batch of 10 takes: not the cap's reason: $(cat "$work/body")"
+answers "after a multipart batch of 10 takes"
+echo "ok: a multipart batch of 10 takes -- $(cat "$work/body")"
 
 # No audio at all: a part that would be refused were it decoded.
 printf 'not audio' >"$work/junk.wav"
