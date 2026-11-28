@@ -5,7 +5,7 @@
 	import { app } from '../lib/state.svelte.js';
 	import { putSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
-	import { dragEndClears, type DragEdge, type RegionEdge } from '../lib/fields.js';
+	import type { DragEdge } from '../lib/fields.js';
 	import {
 		getContext,
 		registerPlaying,
@@ -32,9 +32,10 @@
 		rangeStart: number;
 		rangeEnd: number;
 		// a range the user drew, by the edge they moved, so a caller writes
-		// back only what was moved (cadenza-audio #1189), and 'clear' as a
-		// drag that took hold of a drawn region ends with none (#1182)
-		onrange?: (edge: RegionEdge, start: number, end: number) => void;
+		// back only what was moved (cadenza-audio #1189), and the drag's
+		// phase: 'start' as it takes hold, 'move', and 'end' as it is
+		// released or cancelled, so a caller can tell a drag's end (#1182)
+		onrange?: (edge: DragEdge, start: number, end: number, phase: 'start' | 'move' | 'end') => void;
 	} = $props();
 
 	let canvas: HTMLCanvasElement;
@@ -55,8 +56,9 @@
 	// pointer state
 	let dragging = false;
 	let dragEdge: DragEdge = 'new';
-	// the edge the drag took hold of, before any crossing swaps it
-	let began: DragEdge = 'new';
+	// the one pointer a drag follows: a second touch neither starts another
+	// nor ends this one (#1182)
+	let dragPointer = -1;
 	let anchor = -1;
 
 	onMount(() => {
@@ -305,12 +307,15 @@
 	}
 
 	function onPointerDown(e: PointerEvent) {
-		// the primary button, a touch or a pen: a right-click edits nothing
-		if (e.button !== 0) return;
+		if (dragging) return;
+		// the primary button, a touch or a pen: a right-click, or a Mac's
+		// control-click, which opens the same menu, edits nothing
+		if (e.button !== 0 || (e.ctrlKey && e.pointerType === 'mouse')) return;
 		// no region is drawn or edited before the audio has a length: a
 		// press then would read as a new range at 0 (#1182)
 		if (selectable && dur <= 0) return;
 		dragging = true;
+		dragPointer = e.pointerId;
 		canvas.setPointerCapture(e.pointerId);
 		if (selectable) {
 			const pos = xToNorm(e.clientX);
@@ -332,8 +337,7 @@
 				rangeStart = cur;
 				rangeEnd = cur;
 			}
-			began = dragEdge;
-			onrange?.(dragEdge, rangeStart, rangeEnd);
+			onrange?.(dragEdge, rangeStart, rangeEnd, 'start');
 			draw();
 		} else {
 			seekTo(xToNorm(e.clientX));
@@ -341,7 +345,7 @@
 	}
 
 	function onPointerMove(e: PointerEvent) {
-		if (!dragging) return;
+		if (!dragging || e.pointerId !== dragPointer) return;
 		if (selectable) {
 			const cur = xToNorm(e.clientX) * dur;
 			if (dragEdge === 'lo') {
@@ -361,21 +365,21 @@
 				if (dragEdge !== 'new') dragEdge = dragEdge === 'lo' ? 'hi' : 'lo';
 				moved = 'new';
 			}
-			onrange?.(moved, rangeStart, rangeEnd);
+			onrange?.(moved, rangeStart, rangeEnd, 'move');
 			draw();
 		} else {
 			seekTo(xToNorm(e.clientX));
 		}
 	}
 
-	// a drag's end -- the pointer up, or the system cancelling it: one that
-	// took hold of a drawn region and ends with none drawn asks no region
-	// (dragEndClears), said only now, as a new drag starts empty too (#1182)
-	function onDragEnd() {
-		if (dragging && selectable && dragEndClears(began, rangeStart, rangeEnd)) {
-			onrange?.('clear', rangeStart, rangeEnd);
-		}
+	// a drag's end -- its pointer up, or the system cancelling it -- said
+	// with the range as it was left, so the caller decides what it asks
+	// (regionAfterDrag) (#1182)
+	function onDragEnd(e: PointerEvent) {
+		if (!dragging || e.pointerId !== dragPointer) return;
 		dragging = false;
+		dragPointer = -1;
+		if (selectable) onrange?.(dragEdge, rangeStart, rangeEnd, 'end');
 	}
 </script>
 

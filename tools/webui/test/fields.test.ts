@@ -13,7 +13,6 @@ import {
 	buildSynthBatch,
 	SEED_MAX,
 	codesOf,
-	dragEndClears,
 	holdsCode,
 	regionAfterDrag,
 	regionOnSource,
@@ -23,6 +22,7 @@ import {
 	type SynthBatch
 } from '../src/lib/fields.ts';
 import type { AceRequest, AceTaskInfo } from '../src/lib/types.ts';
+import type { DragEdge } from '../src/lib/fields.ts';
 
 let failed = 0;
 function expect(what: string, ok: boolean, got?: unknown): void {
@@ -155,44 +155,111 @@ expect('an outpaint to -1 shows nothing on the source', same(regionOnSource(-3, 
 expect('an end at or before the start shows nothing', same(regionOnSource(5, 5, 10), null));
 expect('a region past the source shows nothing', same(regionOnSource(11, 12, 10), null));
 
-// When a drag's end clears the region (#1182): a handle dropped on the other
-// does; a click with no drag on no drawn region -- an outpaint before the
-// source, a region past it -- leaves the request's; so does a handle moved
-// and released with a region drawn.
-expect('a handle dropped on the other clears', dragEndClears('lo', 4, 4));
-expect('the end handle dropped on the start clears', dragEndClears('hi', 4, 4));
-expect('a click on no drawn region keeps the request', !dragEndClears('new', 2, 2));
-expect('a handle released with a region drawn keeps it', !dragEndClears('hi', 2, 5));
-expect('a new range drawn keeps it', !dragEndClears('new', 2, 5));
-
-// A drag's edit of the region (#1189, #1182): only the edge moved is
-// written; a range drawn empty mid-drag writes nothing; 'clear' clears it.
-const asked = { start: -3, end: -1 };
-const region = (r: { start: number | null; end: number | null }) => `${r.start},${r.end}`;
+// A drag's edit of the region (#1189, #1182): only the edge moved is applied
+// to the region the request asks, and that region's emptiness is the
+// engine's, not the drawn range's. A step that leaves it empty writes
+// nothing; a drag's end that leaves it empty clears it once the drag has
+// written one; a click that wrote nothing keeps the request's.
+type Region = { start: number | null; end: number | null };
+const region = (r: Region) => `${r.start},${r.end}`;
+// one drag on a 10 s source, from `asked`, step by step: [edge, start, end]
+// for its start, its moves and its end
+function drag(asked: Region, steps: [DragEdge, number, number][]): string {
+	let r = asked;
+	let wrote = false;
+	steps.forEach(([edge, start, end], i) => {
+		const next = regionAfterDrag(
+			edge,
+			start,
+			end,
+			r,
+			10,
+			i === steps.length - 1,
+			i === 0 ? false : wrote
+		);
+		r = next.region;
+		wrote = next.wrote;
+	});
+	return region(r);
+}
+const outpaint = { start: -3, end: -1 };
 expect(
 	'moving the start keeps the asked end',
-	region(regionAfterDrag('lo', 2, 10, asked)) === '2,-1'
+	drag(outpaint, [
+		['lo', 2, 10],
+		['lo', 2, 10]
+	]) === '2,-1'
 );
 expect(
 	'moving the end keeps the asked start',
-	region(regionAfterDrag('hi', 0, 4, asked)) === '-3,4'
+	drag({ start: -3, end: 8 }, [
+		['hi', 0, 4],
+		['hi', 0, 4]
+	]) === '-3,4'
 );
-expect('a new range writes both', region(regionAfterDrag('new', 1, 3, asked)) === '1,3');
 expect(
-	'a range drawn empty mid-drag writes nothing',
-	region(regionAfterDrag('new', 2, 2, asked)) === '-3,-1'
+	'a new range writes both',
+	drag(outpaint, [
+		['new', 1, 1],
+		['new', 1, 3],
+		['new', 1, 3]
+	]) === '1,3'
+);
+expect(
+	'a click on no drawn region keeps the request',
+	drag(outpaint, [
+		['new', 2, 2],
+		['new', 2, 2]
+	]) === '-3,-1'
+);
+expect(
+	'a handle dropped on the other clears the region',
+	drag({ start: 4, end: 8 }, [
+		['lo', 5, 8],
+		['lo', 8, 8],
+		['lo', 8, 8]
+	]) === 'null,null'
 );
 expect(
 	'a handle on the other mid-drag writes nothing',
-	region(regionAfterDrag('lo', 4, 4, asked)) === '-3,-1'
+	drag({ start: 4, end: 8 }, [
+		['lo', 5, 8],
+		['lo', 8, 8],
+		['lo', 6, 8]
+	]) === '6,8'
 );
 expect(
-	'a drag that ends empty clears the region',
-	region(regionAfterDrag('clear', 2, 2, asked)) === 'null,null'
+	'a new range pulled back to its start clears what it drew',
+	drag(outpaint, [
+		['new', 2, 2],
+		['new', 2, 3],
+		['new', 2, 2],
+		['new', 2, 2]
+	]) === 'null,null'
 );
 expect(
-	'clearing a region never asked is still none',
-	region(regionAfterDrag('clear', 0, 0, { start: null, end: null })) === 'null,null'
+	"an outpaint's end dragged to the source's start is the region before it",
+	drag({ start: -3, end: 5 }, [
+		['hi', 0, 2],
+		['hi', 0, 0],
+		['hi', 0, 0]
+	]) === '-3,0'
+);
+expect(
+	"a start dragged to the source's end keeps a region past it",
+	drag({ start: 2, end: 12 }, [
+		['lo', 8, 10],
+		['lo', 10, 10],
+		['lo', 10, 10]
+	]) === '10,12'
+);
+expect(
+	'a start dragged onto a -1 end, the source end, clears it',
+	drag({ start: 2, end: -1 }, [
+		['lo', 6, 10],
+		['lo', 10, 10],
+		['lo', 10, 10]
+	]) === 'null,null'
 );
 
 const all = buildSynthBatch(codes(['1,2', ' ,3']), form, [], seed, tasks);

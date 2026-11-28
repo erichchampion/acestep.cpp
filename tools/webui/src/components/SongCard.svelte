@@ -24,7 +24,7 @@
 	import { saveJob, clearJob, putSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
 	import { displaySongName } from '../lib/songName.js';
-	import { regionAfterDrag, regionOnSource, type RegionEdge } from '../lib/fields.js';
+	import { regionAfterDrag, regionOnSource, type DragEdge } from '../lib/fields.js';
 	import Waveform from './Waveform.svelte';
 	import Menu, { type MenuItem } from './Menu.svelte';
 	import Dialog from './Dialog.svelte';
@@ -63,19 +63,27 @@
 	}
 
 	// waveform drag to global state, by regionAfterDrag: only the edge the
-	// user moved, so dragging one handle of a region drawn cut to the source
-	// keeps the other bound as the request asked it, and a handle moved to
-	// the waveform's edge is written as moved (#1189); a drag that ends with
-	// nothing drawn clears the region (#1182). The drawn range is never
-	// written back for having been drawn.
-	function onRange(edge: RegionEdge, start: number, end: number) {
+	// user moved, applied to the region the request asks, so the other bound
+	// keeps what it asked and a handle moved to the waveform's edge is
+	// written as moved (#1189); a drag that wrote a region and ends with it
+	// empty clears it, and a click that wrote nothing keeps a region the
+	// waveform cannot show (#1182). The drawn range is never written back
+	// for having been drawn.
+	let dragWrote = false;
+	function onRange(edge: DragEdge, start: number, end: number, phase: 'start' | 'move' | 'end') {
 		if (!isSrc) return;
-		const next = regionAfterDrag(edge, start, end, {
-			start: app.srcRangeStart,
-			end: app.srcRangeEnd
-		});
-		app.srcRangeStart = next.start;
-		app.srcRangeEnd = next.end;
+		const next = regionAfterDrag(
+			edge,
+			start,
+			end,
+			{ start: app.srcRangeStart, end: app.srcRangeEnd },
+			dur > 0 ? dur : song.duration,
+			phase === 'end',
+			phase === 'start' ? false : dragWrote
+		);
+		dragWrote = next.wrote;
+		app.srcRangeStart = next.region.start;
+		app.srcRangeEnd = next.region.end;
 	}
 
 	// global state to waveform visual (field input)
