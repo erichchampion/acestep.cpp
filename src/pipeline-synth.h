@@ -101,7 +101,9 @@ inline constexpr const char * kAceRefusalLengthTooLong =
 // The most takes the DiT runs in one batch: a run (ace_synth_job_run_dit)
 // takes 1 to this many requests, one take each -- it never reads
 // synth_batch_size. The tools expand each request to its synth_batch_size
-// takes, clamped to this, and clamp a batch's total to it too.
+// takes, clamped to this. ace-synth clamps a batch's total to it too, and
+// says which requests it drops; ace-server refuses a batch past it
+// (ace_synth_batch_takes_refused, cadenza-audio #1182).
 // cadenza-audio's shim holds its request cap to it (cadenza-audio #1165).
 inline constexpr int kAceSynthMaxTakes = 9;
 static_assert(kAceSynthMaxTakes == 9, "kAceRefusalRunBatch and kAceRefusalTooManyTakes say the cap");
@@ -402,8 +404,8 @@ bool ace_synth_batch_refused(const AceRequest * reqs, int batch_n, AceSynthBatch
 // sums to `total`. `asked` is the takes the batch asked for, each request's
 // raw size (ace_synth_request_asked) summed in 64 bits, so no batch
 // overflows it: more than `total` whenever a take is dropped -- a lone
-// request asking 50 included, and {50, 1} asks 51 -- for the tools' clamp
-// log (cadenza-audio #1269). A NULL reqs is an empty batch, whatever
+// request asking 50 included, and {50, 1} asks 51 -- for ace-synth's clamp
+// log (cadenza-audio #1269) and ace-server's refusal (#1182). A NULL reqs is an empty batch, whatever
 // batch_n says.
 // The tools allocate and expand by this, and ace_synth_requests_run counts
 // its requests, so "which requests run" is one rule (cadenza-audio #1243).

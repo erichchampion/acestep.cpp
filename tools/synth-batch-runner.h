@@ -52,7 +52,9 @@ static void synth_batch_expand(std::vector<AceRequest> &  reqs,
 // the tracks and the requests that run, and, when a take asked is dropped,
 // the takes asked against the DiT's most and -- when whole requests are --
 // the last that runs and the first dropped, each said by `name(i)` (a CLI's
-// request file, the server's index). One line each, untagged.
+// request file, the server's index). One line each, untagged. ace-server
+// refuses a batch past the cap before it runs (#1182), so it logs only the
+// tracks line; ace-synth, which clamps, logs them all.
 template <class Name>
 static std::vector<std::string> synth_batch_notes(const AceSynthBatchTakes & batch, int batch_n, Name name) {
     std::vector<std::string> notes;

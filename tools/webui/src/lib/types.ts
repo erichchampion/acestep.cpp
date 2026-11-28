@@ -70,7 +70,8 @@ export interface AceProps {
 	adapters: string[];
 	// absent from an older server's /props
 	tasks?: AceTaskInfo[];
-	cli: Record<string, string | number>;
+	// max_takes is absent from an older server's /props (cadenza-audio #1182)
+	cli: { max_batch?: number; max_takes?: number } & Record<string, string | number | undefined>;
 	default: AceRequest;
 	presets: {
 		turbo: { inference_steps: number; guidance_scale: number; shift: number };

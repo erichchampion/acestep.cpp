@@ -308,6 +308,10 @@ export function regionAfterDrag(
 	return { region: asked, state: { wrote, empty: true } };
 }
 
+// buildSynthBatch's refusal when it is given no takes cap
+export const NO_TAKES_CAP =
+	"The server's settings have not loaded yet: synthesize once it answers.";
+
 // build a /synth batch from the pending requests and the form, or say why
 // it cannot be sent (cadenza-audio #1175). Every request takes the form's
 // synth sections (batchRequest); each its own seed, `seed()` when the form
@@ -316,10 +320,10 @@ export function regionAfterDrag(
 // the server does not list is dropped. A text2music batch whose requests
 // mix audio codes and none is refused, and so are codes that hold no code,
 // both as the server refuses them (cadenza-audio #1159) -- for a task the
-// engine's table says takes no source, by the rows /props lists; before they
-// have loaded the server says it (#1124); so is a batch past the takes cap
+// engine's table says takes no source, by the rows /props lists, and with
+// none listed the server says it (#1124); so is a batch past the takes cap
 // /props says (`maxTakes`), which the server refuses too, and any batch
-// before /props has first said it (#1182).
+// given no cap (#1182).
 export function buildSynthBatch(
 	pending: AceRequest[],
 	form: AceRequest,
@@ -355,12 +359,10 @@ export function buildSynthBatch(
 		}
 	}
 	// the server's cap on a batch's takes, as /props says it (cli.max_takes),
-	// so the batch is not sent to be refused (#1182): none before /props has
-	// first loaded -- the server isn't answering, and a take list is not
-	// built for a Batch nothing bounds
-	if (maxTakes == null) {
-		return "The server's settings have not loaded yet: synthesize once it answers.";
-	}
+	// so the batch is not sent to be refused (#1182). None, and no take list
+	// is built for a Batch nothing bounds: the caller says why -- /props not
+	// yet loaded, or loaded from a server that says no cap
+	if (maxTakes == null) return NO_TAKES_CAP;
 	if (pending.length * synthBatch > maxTakes) {
 		return `A batch makes ${maxTakes} takes at most, and this asks for ${pending.length * synthBatch}: lower Batch, or synthesize fewer compositions.`;
 	}

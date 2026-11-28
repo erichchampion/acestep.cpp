@@ -37,6 +37,7 @@
 		withCurrentSettings,
 		buildSynthBatch,
 		codesOf,
+		NO_TAKES_CAP,
 		holdsCode,
 		taskRow
 	} from '../lib/fields.js';
@@ -74,6 +75,18 @@
 	$effect(() => {
 		if (app.props?.tasks?.length) knownTasks = app.props.tasks;
 	});
+	// the takes cap /props says (cli.max_takes), the last it gave kept through
+	// a poll that fails, as knownTasks are; undefined until it first loads,
+	// and then no batch is built -- nor from a /props that says none, an
+	// older server's, said as that (cadenza-audio #1182)
+	let maxTakes = $state<number | undefined>(undefined);
+	let propsSeen = $state(false);
+	$effect(() => {
+		if (!app.props) return;
+		propsSeen = true;
+		const n = Number(app.props.cli?.max_takes);
+		if (Number.isFinite(n) && n > 0) maxTakes = n;
+	});
 	// a task the request asks that is not among them -- a loaded song's, say
 	// -- is offered too, so the select shows the task that will run
 	let taskNames = $derived.by(() => {
@@ -89,14 +102,6 @@
 	// DiT input indicators
 	// codes as a synth would send them, and holding a code, so the light and
 	// the batch agree
-	// the takes cap /props says (cli.max_takes), the last it gave kept through
-	// a poll that fails, as knownTasks are; undefined until it first loads,
-	// and then no batch is built (cadenza-audio #1182)
-	let maxTakes = $state<number | undefined>(undefined);
-	$effect(() => {
-		const n = Number(app.props?.cli?.max_takes);
-		if (Number.isFinite(n) && n > 0) maxTakes = n;
-	});
 	let hasCodes = $derived(holdsCode(codesOf(app.request)) && app.srcSongId == null);
 	let hasSrc = $derived(app.srcSongId != null);
 	let hasRange = $derived(app.srcRangeStart != null || app.srcRangeEnd != null);
@@ -474,7 +479,11 @@
 				maxTakes
 			);
 			if (typeof batch === 'string') {
-				toast(batch);
+				toast(
+					batch === NO_TAKES_CAP && propsSeen
+						? "The server doesn't say how many takes a batch may make: it is older than this page, so update ace-server."
+						: batch
+				);
 				return;
 			}
 			const { toSend, expanded } = batch;
