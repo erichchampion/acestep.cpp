@@ -14,6 +14,7 @@ import {
 	SEED_MAX,
 	codesOf,
 	holdsCode,
+	regionAfterDrag,
 	regionOnSource,
 	taskRow,
 	pickSections,
@@ -152,6 +153,37 @@ expect(
 expect('an outpaint to -1 shows nothing on the source', same(regionOnSource(-3, -1, 10), null));
 expect('an end at or before the start shows nothing', same(regionOnSource(5, 5, 10), null));
 expect('a region past the source shows nothing', same(regionOnSource(11, 12, 10), null));
+
+// A drag's edit of the region (#1189, #1182): only the edge moved is
+// written; a range drawn empty mid-drag writes nothing; one that ends empty
+// -- a click with no drag, a handle dropped on the other -- clears it.
+const asked = { start: -3, end: -1 };
+const region = (r: { start: number | null; end: number | null }) => `${r.start},${r.end}`;
+expect(
+	'moving the start keeps the asked end',
+	region(regionAfterDrag('lo', 2, 10, asked)) === '2,-1'
+);
+expect(
+	'moving the end keeps the asked start',
+	region(regionAfterDrag('hi', 0, 4, asked)) === '-3,4'
+);
+expect('a new range writes both', region(regionAfterDrag('new', 1, 3, asked)) === '1,3');
+expect(
+	'a range drawn empty mid-drag writes nothing',
+	region(regionAfterDrag('new', 2, 2, asked)) === '-3,-1'
+);
+expect(
+	'a handle on the other mid-drag writes nothing',
+	region(regionAfterDrag('lo', 4, 4, asked)) === '-3,-1'
+);
+expect(
+	'a drag that ends empty clears the region',
+	region(regionAfterDrag('clear', 2, 2, asked)) === 'null,null'
+);
+expect(
+	'clearing a region never asked is still none',
+	region(regionAfterDrag('clear', 0, 0, { start: null, end: null })) === 'null,null'
+);
 
 const all = buildSynthBatch(codes(['1,2', ' ,3']), form, [], seed, tasks);
 expect('codes in all run', typeof all !== 'string', all);

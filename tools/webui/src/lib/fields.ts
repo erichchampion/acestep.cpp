@@ -238,6 +238,38 @@ export function regionOnSource(
 	return to > from ? [from, to] : null;
 }
 
+// an edit a waveform drag makes of a region, by the edge it moved: 'lo' the
+// start alone, 'hi' the end alone, 'new' both -- a new range, or edges that
+// crossed -- and 'clear' when the drag ended with nothing drawn (cadenza-audio
+// #1182)
+export type RegionEdge = 'lo' | 'hi' | 'new' | 'clear';
+
+// the region a request asks, a bound null when left blank
+export interface AskedRegion {
+	start: number | null;
+	end: number | null;
+}
+
+// the region after a drag: only the edge the user moved is written, so the
+// other keeps the bound the request asked -- an outpaint's start before the
+// source, a -1 end, an end past the source (#1189); a range drawn empty
+// mid-drag writes nothing, and one that ends empty -- a click with no drag,
+// a handle dropped on the other -- clears the region, so the request asks
+// none where the waveform shows none (#1182)
+export function regionAfterDrag(
+	edge: RegionEdge,
+	start: number,
+	end: number,
+	asked: AskedRegion
+): AskedRegion {
+	if (edge === 'clear') return { start: null, end: null };
+	if (!(end > start)) return asked;
+	return {
+		start: edge === 'hi' ? asked.start : start,
+		end: edge === 'lo' ? asked.end : end
+	};
+}
+
 // build a /synth batch from the pending requests and the form, or say why
 // it cannot be sent (cadenza-audio #1175). Every request takes the form's
 // synth sections (batchRequest); each its own seed, `seed()` when the form

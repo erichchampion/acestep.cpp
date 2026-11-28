@@ -24,7 +24,7 @@
 	import { saveJob, clearJob, putSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
 	import { displaySongName } from '../lib/songName.js';
-	import { regionOnSource } from '../lib/fields.js';
+	import { regionAfterDrag, regionOnSource, type RegionEdge } from '../lib/fields.js';
 	import Waveform from './Waveform.svelte';
 	import Menu, { type MenuItem } from './Menu.svelte';
 	import Dialog from './Dialog.svelte';
@@ -64,16 +64,20 @@
 		}
 	}
 
-	// waveform drag to global state: only the edge the user moved, so
-	// dragging one handle of a region drawn cut to the source keeps the
-	// other bound as the request asked it -- an outpaint's start before the
-	// source, a -1 end, an end past the source -- and a handle moved to the
-	// waveform's edge is written as moved (#1189). The drawn range is never
+	// waveform drag to global state, by regionAfterDrag: only the edge the
+	// user moved, so dragging one handle of a region drawn cut to the source
+	// keeps the other bound as the request asked it, and a handle moved to
+	// the waveform's edge is written as moved (#1189); a drag that ends with
+	// nothing drawn clears the region (#1182). The drawn range is never
 	// written back for having been drawn.
-	function onRange(edge: 'lo' | 'hi' | 'new', start: number, end: number) {
-		if (!isSrc || !(end > start)) return;
-		if (edge !== 'hi') app.srcRangeStart = start;
-		if (edge !== 'lo') app.srcRangeEnd = end;
+	function onRange(edge: RegionEdge, start: number, end: number) {
+		if (!isSrc) return;
+		const next = regionAfterDrag(edge, start, end, {
+			start: app.srcRangeStart,
+			end: app.srcRangeEnd
+		});
+		app.srcRangeStart = next.start;
+		app.srcRangeEnd = next.end;
 	}
 
 	// global state to waveform visual (field input)
@@ -93,6 +97,11 @@
 			const shown =
 				(rs != null || re != null) && !defaults ? regionOnSource(rs ?? 0, re ?? -1, length) : null;
 			[rangeStart, rangeEnd] = shown ?? [0, 0];
+		} else {
+			// a card no longer the source draws no region and loops in none,
+			// whichever card the source moved to (#1182)
+			rangeStart = 0;
+			rangeEnd = 0;
 		}
 	});
 

@@ -5,6 +5,7 @@
 	import { app } from '../lib/state.svelte.js';
 	import { putSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
+	import type { RegionEdge } from '../lib/fields.js';
 	import {
 		getContext,
 		registerPlaying,
@@ -30,11 +31,10 @@
 		selectable: boolean;
 		rangeStart: number;
 		rangeEnd: number;
-		// a range the user drew, by the edge they moved: 'lo' the start
-		// alone, 'hi' the end alone, 'new' both -- a new range, or edges
-		// that crossed -- so a caller writes back only what was moved
-		// (cadenza-audio #1189)
-		onrange?: (edge: 'lo' | 'hi' | 'new', start: number, end: number) => void;
+		// a range the user drew, by the edge they moved (RegionEdge), so a
+		// caller writes back only what was moved (cadenza-audio #1189), and
+		// 'clear' as a drag ends with nothing drawn (#1182)
+		onrange?: (edge: RegionEdge, start: number, end: number) => void;
 	} = $props();
 
 	let canvas: HTMLCanvasElement;
@@ -54,7 +54,7 @@
 
 	// pointer state
 	let dragging = false;
-	let dragEdge: 'lo' | 'hi' | 'new' = 'new';
+	let dragEdge: RegionEdge = 'new';
 	let anchor = -1;
 
 	onMount(() => {
@@ -360,7 +360,13 @@
 		}
 	}
 
+	// a drag that ends with nothing drawn -- a click with no drag, a handle
+	// dropped on the other -- asks no region, said only now, as a new drag
+	// starts empty too (#1182)
 	function onPointerUp() {
+		if (dragging && selectable && !(rangeEnd > rangeStart)) {
+			onrange?.('clear', rangeStart, rangeEnd);
+		}
 		dragging = false;
 	}
 </script>
