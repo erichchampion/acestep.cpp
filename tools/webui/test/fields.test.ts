@@ -37,6 +37,15 @@ function built(b: SynthBatch | string): SynthBatch {
 	if (typeof b === 'string') throw new Error(`refused: ${b}`);
 	return b;
 }
+// a batch as the form builds it, with /props' cap of 9 unless given
+const batchOf = (
+	p: AceRequest[],
+	f: AceRequest,
+	a: readonly string[],
+	s: () => number,
+	t?: readonly AceTaskInfo[],
+	cap: number | undefined = 9
+) => buildSynthBatch(p, f, a, s, t, cap);
 let next = 100;
 const seed = () => (next += 1000);
 
@@ -55,7 +64,7 @@ const form = {
 	adapter: 'warm.gguf',
 	synth_batch_size: 2
 } as AceRequest;
-const { toSend, expanded } = built(buildSynthBatch(pending, form, ['warm.gguf'], seed));
+const { toSend, expanded } = built(batchOf(pending, form, ['warm.gguf'], seed));
 
 const synthOf = (r: AceRequest) => {
 	const s = pickSections(r, SYNTH_SECTIONS);
@@ -97,9 +106,7 @@ expect('the pending request is not changed', pending[1].inference_steps === 8, p
 
 // The form's seed, when set, is every request's base; an adapter the
 // server does not list is dropped.
-const seeded = built(
-	buildSynthBatch(pending, { ...form, seed: 5, adapter: 'gone.gguf' }, [], seed)
-);
+const seeded = built(batchOf(pending, { ...form, seed: 5, adapter: 'gone.gguf' }, [], seed));
 expect(
 	"the form's seed for each",
 	seeded.toSend.every((r) => r.seed === 5),
@@ -132,8 +139,8 @@ expect('a row is found by name', taskRow(tasks, 'cover')?.needs_source === true)
 expect('no row for a task not listed', taskRow(tasks, 'covers') === undefined);
 expect('no row before /props loads', taskRow(undefined, 'cover') === undefined);
 const sourceless = (task: string, c: string[]) =>
-	buildSynthBatch(codes(c), { ...form, task_type: task }, [], seed, tasks);
-const unloaded = buildSynthBatch(codes(['1,2', '']), form, [], seed);
+	batchOf(codes(c), { ...form, task_type: task }, [], seed, tasks);
+const unloaded = batchOf(codes(['1,2', '']), form, [], seed);
 expect("with no rows, a mix is the server's to refuse", typeof unloaded !== 'string', unloaded);
 const newTask = sourceless('a-new-task', ['1,2', '']);
 expect(
@@ -287,24 +294,24 @@ expect(
 	region(regionForNewSource(null, { start: 2, end: 5 })) === '2,5'
 );
 
-const all = buildSynthBatch(codes(['1,2', ' ,3']), form, [], seed, tasks);
+const all = batchOf(codes(['1,2', ' ,3']), form, [], seed, tasks);
 expect('codes in all run', typeof all !== 'string', all);
-const none = buildSynthBatch(codes(['', '']), form, [], seed, tasks);
+const none = batchOf(codes(['', '']), form, [], seed, tasks);
 expect('codes in none run', typeof none !== 'string', none);
-const mixed = buildSynthBatch(codes(['1,2', '']), form, [], seed, tasks);
+const mixed = batchOf(codes(['1,2', '']), form, [], seed, tasks);
 expect('a mix is refused', typeof mixed === 'string' && mixed.includes('some do not'), mixed);
 // The white space a paste leaves around codes is trimmed, as the form's
 // light reads it (#1182): a space or a newline alone is no codes, and codes
 // in a newline are sent without it.
-const blank = buildSynthBatch(codes(['', ' ']), form, [], seed, tasks);
+const blank = batchOf(codes(['', ' ']), form, [], seed, tasks);
 expect('codes of a space alone are none', typeof blank !== 'string', blank);
-const pasted = buildSynthBatch(codes(['\n1,2\n', ' 3 ']), form, [], seed, tasks);
+const pasted = batchOf(codes(['\n1,2\n', ' 3 ']), form, [], seed, tasks);
 expect(
 	'pasted codes are sent trimmed',
 	typeof pasted !== 'string' && pasted.toSend.map((r) => r.audio_codes).join('|') === '1,2|3',
 	pasted
 );
-const strayNewline = buildSynthBatch(codes(['1,2', '\n']), form, [], seed, tasks);
+const strayNewline = batchOf(codes(['1,2', '\n']), form, [], seed, tasks);
 expect(
 	'a newline alone is no codes, so beside codes it is a mix',
 	typeof strayNewline === 'string' && strayNewline.includes('some do not'),
@@ -312,7 +319,7 @@ expect(
 );
 expect("codesOf trims as it's sent", codesOf({ audio_codes: '\t 5,6 \n' } as AceRequest) === '5,6');
 // Codes wrapped over lines are sent whole: the server stops at a break.
-const wrapped = buildSynthBatch(codes(['1,2,3\n4,5,6', '7\t8']), form, [], seed, tasks);
+const wrapped = batchOf(codes(['1,2,3\n4,5,6', '7\t8']), form, [], seed, tasks);
 expect(
 	'codes over lines are sent whole',
 	typeof wrapped !== 'string' &&
@@ -331,7 +338,7 @@ expect(
 	'a pending request keeps its codes as typed',
 	buildSparse({ caption: 'x', audio_codes: '1,2\n3' } as AceRequest).audio_codes === '1,2\n3'
 );
-const commas = buildSynthBatch(codes([',', '']), form, [], seed, tasks);
+const commas = batchOf(codes([',', '']), form, [], seed, tasks);
 expect(
 	'codes of a comma hold no code',
 	typeof commas === 'string' && commas.includes('no code'),
@@ -344,43 +351,44 @@ expect('the smallest int is a code', holdsCode(', -2147483648'));
 expect('one past the largest int is none', !holdsCode('4294967296'));
 expect('one past the smallest int is none', !holdsCode('-2147483649'));
 expect('a sign alone is none', !holdsCode('-,1'));
-const tooBig = buildSynthBatch(codes(['4294967296', '1']), form, [], seed, tasks);
+const tooBig = batchOf(codes(['4294967296', '1']), form, [], seed, tasks);
 expect(
 	'codes past an int are refused as holding none',
 	typeof tooBig === 'string' && tooBig.includes('no code'),
 	tooBig
 );
-const cover = buildSynthBatch(codes(['1,2', '']), { ...form, task_type: 'cover' }, [], seed, tasks);
+const cover = batchOf(codes(['1,2', '']), { ...form, task_type: 'cover' }, [], seed, tasks);
 expect("a cover's codes are each request's own", typeof cover !== 'string', cover);
 
-// The server's 9 takes: 4 compositions at Batch 3 are refused, not cut to
-// 9; a Batch of 2.5 is 2, as the server reads it.
-const many = buildSynthBatch(
-	codes(['', '', '', '']),
-	{ ...form, synth_batch_size: 3 },
-	[],
-	seed,
-	tasks
+// The takes cap /props says (cli.max_takes, #1182): 4 compositions at Batch
+// 3 are refused by it, not cut to 9, and no batch is built before /props
+// has first said it. A Batch of 2.5 is 2, as the server reads it.
+const many = batchOf(codes(['', '', '', '']), { ...form, synth_batch_size: 3 }, [], seed, tasks, 9);
+expect('past the cap is refused', typeof many === 'string' && many.includes('9 takes'), many);
+const unloadedCap = buildSynthBatch(codes(['', '']), form, [], seed, tasks, undefined);
+expect(
+	'no batch is built before /props has first said the cap',
+	typeof unloadedCap === 'string' && unloadedCap.includes('not loaded'),
+	unloadedCap
 );
-expect('past 9 takes is refused', typeof many === 'string' && many.includes('9 takes'), many);
-const half = built(buildSynthBatch(pending, { ...form, synth_batch_size: 2.5 }, [], seed));
+const otherCap = batchOf(codes(['', '', '']), { ...form, synth_batch_size: 3 }, [], seed, tasks, 8);
+expect(
+	'the cap is the one /props says',
+	typeof otherCap === 'string' && otherCap.includes('8 takes'),
+	otherCap
+);
+const half = built(batchOf(pending, { ...form, synth_batch_size: 2.5 }, [], seed));
 expect(
 	'a fractional Batch is whole',
 	half.expanded.length === 4 && half.toSend[0].synth_batch_size === 2,
 	half
 );
 // Exactly 9 takes run (#1182): 3 compositions at Batch 3.
-const nine = buildSynthBatch(
-	codes(['', '', '']),
-	{ ...form, synth_batch_size: 3 },
-	[],
-	seed,
-	tasks
-);
+const nine = batchOf(codes(['', '', '']), { ...form, synth_batch_size: 3 }, [], seed, tasks, 9);
 expect('exactly 9 takes run', typeof nine !== 'string' && nine.expanded.length === 9, nine);
 // A Batch below 1, or none, is 1: one take a composition.
 for (const below of [0, -2, 0.5, '', undefined]) {
-	const b = buildSynthBatch(pending, { ...form, synth_batch_size: below as number }, [], seed);
+	const b = batchOf(pending, { ...form, synth_batch_size: below as number }, [], seed);
 	expect(
 		`a Batch of ${JSON.stringify(below)} is 1`,
 		typeof b !== 'string' &&
@@ -393,7 +401,7 @@ for (const below of [0, -2, 0.5, '', undefined]) {
 // one whose last take passes it is refused -- Infinity too, which JSON would
 // send as null -- and a random seed is held below it.
 const atBatch2 = (s: number) =>
-	buildSynthBatch(pending, { ...form, seed: s, synth_batch_size: 2 }, [], seed);
+	batchOf(pending, { ...form, seed: s, synth_batch_size: 2 }, [], seed);
 expect('a Seed whose last take is the most runs', typeof atBatch2(SEED_MAX - 1) !== 'string');
 for (const big of [SEED_MAX, 2 ** 53, 1e400]) {
 	const b = atBatch2(big);
@@ -407,24 +415,42 @@ for (const negative of [-1, -1e400, ' ']) {
 		b
 	);
 }
-const topRandom = built(
-	buildSynthBatch(pending, { ...form, synth_batch_size: 2 }, [], () => SEED_MAX)
-);
+const topRandom = built(batchOf(pending, { ...form, synth_batch_size: 2 }, [], () => SEED_MAX));
 expect(
 	"a random seed's takes stay in range",
 	topRandom.expanded.every((r) => (r.seed as number) <= SEED_MAX),
 	topRandom.expanded
 );
 // The cap is said before the Seed: a Batch past it is the cap's to refuse.
-const hugeBatch = buildSynthBatch(pending, { ...form, seed: 5, synth_batch_size: 1e20 }, [], seed);
+const hugeBatch = batchOf(
+	pending,
+	{ ...form, seed: 5, synth_batch_size: 1e20 },
+	[],
+	seed,
+	undefined,
+	9
+);
 expect(
 	'a huge Batch is refused by the cap, not the Seed',
 	typeof hugeBatch === 'string' && hugeBatch.includes('takes at most'),
 	hugeBatch
 );
+const hugeUnloaded = buildSynthBatch(
+	pending,
+	{ ...form, seed: 5, synth_batch_size: 1e20 },
+	[],
+	seed,
+	undefined,
+	undefined
+);
+expect(
+	'a huge Batch with no cap loaded builds no take list',
+	typeof hugeUnloaded === 'string' && hugeUnloaded.includes('not loaded'),
+	hugeUnloaded
+);
 // A fractional Seed is whole, as the server reads it (toward zero), so the
 // take list says the seeds that ran.
-const fractional = built(buildSynthBatch(pending, { ...form, seed: 5.5 }, [], seed));
+const fractional = built(batchOf(pending, { ...form, seed: 5.5 }, [], seed));
 expect(
 	'a fractional Seed is whole',
 	fractional.toSend.every((r) => r.seed === 5) &&

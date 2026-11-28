@@ -1018,8 +1018,10 @@ layout neural-codec writes as `.vae` files. Hard cap T <= 15000 frames
 select which model and adapter to load. `lm_mode` picks the LM instruction
 (`"generate"`, `"inspire"`, `"format"`); `output_format` picks the audio
 encoder for `/synth` (`"mp3"`, `"wav16"`, `"wav24"`, `"wav32"`).
-`synth_batch_size` duplicates a request for multiple DiT variations
-(clamped to 9). Error responses are JSON: `{"error":"message"}` with 400,
+`synth_batch_size` duplicates a request for multiple DiT variations. A
+batch whose requests' `synth_batch_size`, summed, ask more than 9 takes is
+refused with a 400 saying so, not cut to 9 (ace-synth clamps it instead and
+names the requests it drops). Error responses are JSON: `{"error":"message"}` with 400,
 500, 501, or 503 status.
 
 **GET /props** returns available models, server configuration, and the
@@ -1038,10 +1040,14 @@ default AceRequest (source of truth for webui dropdowns and placeholders):
       "reads_region": false, "reads_track": false, "splices": false },
     ...
   ],
-  "cli": { "max_batch": 1 },
+  "cli": { "max_batch": 1, "max_takes": 9 },
   "default": { "caption": "", "duration": 0, ... }
 }
 ```
+
+`cli.max_takes` is the most takes a `/synth` batch may ask
+(`kAceSynthMaxTakes`), which a client reads rather than copying
+(cadenza-audio #1182).
 
 `tasks` is the engine's task table, row by row in its order, as
 `ace_synth_task_info` says each: the webui offers the tasks it lists, and

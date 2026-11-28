@@ -1104,6 +1104,10 @@ AceSynthBatchTakes ace_synth_batch_takes(const AceRequest * reqs, int batch_n) {
     return batch;
 }
 
+const char * ace_synth_batch_takes_refused(const AceSynthBatchTakes & batch) {
+    return batch.asked > kAceSynthMaxTakes ? kAceRefusalTooManyTakes : nullptr;
+}
+
 int ace_synth_requests_run(const AceRequest * reqs, int batch_n) {
     return (int) ace_synth_batch_takes(reqs, batch_n).takes.size();
 }

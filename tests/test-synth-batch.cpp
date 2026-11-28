@@ -3,8 +3,10 @@
 // from the ace_synth_batch_takes each computes once per job, and say its
 // clamp by synth_batch_notes: these hold what a tool runs and says -- ten
 // one-take requests run the first nine, the tenth named as dropped; a lone
-// request asking 50 runs 9 and logs its clamp. lint-batch-expansion.cmake
-// holds the tools to these helpers. No model is loaded.
+// request asking 50 runs 9 and logs its clamp. ace-server refuses a batch
+// asking past the cap instead (ace_synth_batch_takes_refused, cadenza-audio
+// #1182), which these hold too. lint-batch-expansion.cmake holds the tools
+// to these helpers. No model is loaded.
 
 #include "pipeline-synth.h"
 #include "request.h"
@@ -92,6 +94,24 @@ int main() {
         CHECK(notes.size() == 1 && said(notes, "3 track(s) from 2 of 2 request(s)"));
         std::vector<AceRequest> one = batch_of({ 1 });
         CHECK(notes_of(one, ace_synth_batch_takes(one.data(), 1)).empty());
+    }
+    // The server's refusal: a batch asking past the cap, by its requests'
+    // sizes summed -- ten of one, a lone 50, {5, 5} -- and none for a batch
+    // at it, {4, 5}, or a size below 1, which asks one take.
+    for (const std::vector<int> & past : {
+             std::vector<int>(10, 1), std::vector<int>{ 50 },
+               std::vector<int>{ 5, 5 }
+    }) {
+        std::vector<AceRequest> reqs = batch_of(past);
+        CHECK(ace_synth_batch_takes_refused(ace_synth_batch_takes(reqs.data(), (int) reqs.size())) ==
+              kAceRefusalTooManyTakes);
+    }
+    for (const std::vector<int> & fits : {
+             std::vector<int>{ 4, 5 },
+             std::vector<int>(9, 0), std::vector<int>{ 9 }
+    }) {
+        std::vector<AceRequest> reqs = batch_of(fits);
+        CHECK(ace_synth_batch_takes_refused(ace_synth_batch_takes(reqs.data(), (int) reqs.size())) == nullptr);
     }
     return test_summary("test-synth-batch");
 }

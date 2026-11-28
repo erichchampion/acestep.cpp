@@ -1021,7 +1021,8 @@ static bool refuse_sourceless(httplib::Response &        res,
 //   one latent part (application/octet-stream, raw f32 [T*64]) per generated
 //   track, paired in wire order. The latent reproduces its track's audio when
 //   fed back to /vae decode.
-// Batch size = number of JSON objects (after synth_batch_size expansion, clamped to kAceSynthMaxTakes).
+// Batch size = number of JSON objects after synth_batch_size expansion; a batch asking past kAceSynthMaxTakes
+// is refused with a 400 (kAceRefusalTooManyTakes), not clamped (cadenza-audio #1182).
 // Metadata (seed, duration, etc) is already in the request JSON from /lm.
 static void handle_synth(const httplib::Request & req, httplib::Response & res) {
     if (g_registry.dit.empty() || g_registry.text_enc.empty() || g_registry.vae.empty()) {
@@ -1088,6 +1089,13 @@ static void handle_synth(const httplib::Request & req, httplib::Response & res) 
     // computed once, asked of here and handed to the worker, which expands by
     // it (cadenza-audio #1243, #1269).
     AceSynthBatchTakes batch_takes = ace_synth_batch_takes(ace_reqs.data(), (int) ace_reqs.size());
+    // A batch past the takes a run makes is refused, said with what it asks,
+    // not cut to the cap with the rest dropped unsaid: the client hears only
+    // this answer (cadenza-audio #1182).
+    if (const char * reason = ace_synth_batch_takes_refused(batch_takes)) {
+        json_error(res, 400, (std::string(reason) + ", and this asks " + std::to_string(batch_takes.asked)).c_str());
+        return;
+    }
     {
         AceSynthBatchRefusal why;
         if (ace_synth_batch_refused(ace_reqs.data(), (int) batch_takes.takes.size(), &why)) {
@@ -1765,6 +1773,9 @@ static void handle_props(const httplib::Request &, httplib::Response & res) {
     yyjson_mut_val * cli = yyjson_mut_obj(doc);
     yyjson_mut_obj_add_val(doc, root, "cli", cli);
     yyjson_mut_obj_add_int(doc, cli, "max_batch", g_max_batch);
+    // the most takes a /synth batch may ask, its requests' synth_batch_size
+    // summed: a client reads the cap here, not a copy of its own (#1182)
+    yyjson_mut_obj_add_int(doc, cli, "max_takes", kAceSynthMaxTakes);
 
     // default: full AceRequest with all defaults from request_init().
     // the webui reads this to populate LM placeholders.

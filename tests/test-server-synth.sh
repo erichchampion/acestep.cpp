@@ -16,7 +16,9 @@
 # its worker fails it before any model loads. And (#1179) /understand
 # refuses a request JSON's window_only it cannot read, and a field and a
 # request that ask it differently; and makes a windowed job of the request's
-# window_only alone, and of it with a field that agrees.
+# window_only alone, and of it with a field that agrees. And (#1182) /props
+# says the takes cap, and /synth refuses a batch asking past it, saying what
+# it asks, where a batch at it gets its job.
 #
 # The first draft of #1193 refused that last cover after decoding its
 # reference, and freed the reference twice. The refusal now comes before any
@@ -123,6 +125,30 @@ for want in \
     case "$props" in *"$want"*) ;; *) fail "/props has no task row $want: $props" ;; esac
 done
 echo "ok: /props lists the task table's rows"
+# /props says the takes cap, for a client to read (cadenza-audio #1182).
+case "$props" in *'"max_takes":9'*) ;; *) fail "/props has no cli.max_takes of 9: $props" ;; esac
+echo "ok: /props says the takes cap"
+
+# A batch asking past the takes a run makes is refused with a 400 that says
+# so and what it asks -- not cut to the cap, the rest dropped unsaid
+# (cadenza-audio #1182): two requests of 5 takes ask 10, and one of 9 runs
+# past this check to a job.
+TAKES_REASON="a batch makes 9 takes at most, its requests' synth_batch_size summed"
+code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    --data-binary '[{"caption":"warm","duration":4,"synth_batch_size":5},{"caption":"cold","duration":4,"synth_batch_size":5}]' \
+    "$URL/synth")" || fail "a batch of 10 takes: no answer"
+[ "$code" = 400 ] || fail "a batch of 10 takes: HTTP $code, want 400: $(cat "$work/body")"
+grep -qF "$TAKES_REASON" "$work/body" || fail "a batch of 10 takes: not the cap's reason: $(cat "$work/body")"
+grep -qF 'this asks 10' "$work/body" || fail "a batch of 10 takes: not what it asks: $(cat "$work/body")"
+answers "after a batch of 10 takes"
+echo "ok: a batch of 10 takes -- $(cat "$work/body")"
+code="$(curl -sS --max-time "$REQUEST_TIMEOUT_S" -o "$work/body" -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    --data-binary "{\"caption\":\"warm\",\"duration\":4,\"synth_batch_size\":9,\"synth_model\":\"$NO_DIT\"}" \
+    "$URL/synth")" || fail "a batch of 9 takes: no answer"
+[ "$code" = 200 ] || [ "$code" = 202 ] || fail "a batch of 9 takes: HTTP $code, want its job: $(cat "$work/body")"
+echo "ok: a batch of 9 takes gets its job"
 refused "a plain-JSON cover with no source" "$HINT_JSON" \
     -H 'Content-Type: application/json' --data-binary "$COVER"
 refused "a multipart cover with only its request part" "$HINT_MULTIPART" \

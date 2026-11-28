@@ -201,11 +201,6 @@ function whole(n: number | undefined): number | undefined {
 	return n == null ? undefined : Math.trunc(n);
 }
 
-// the most takes the server runs in one batch: the engine's kAceSynthMaxTakes
-// (pipeline-synth.h). Its copy here goes once the server refuses a batch
-// past it itself (cadenza-audio #1182, item 5).
-export const SERVER_MAX_TAKES = 9;
-
 // a /synth batch: what is sent, and the takes it makes, one per seed.
 export interface SynthBatch {
 	toSend: AceRequest[];
@@ -322,14 +317,16 @@ export function regionAfterDrag(
 // mix audio codes and none is refused, and so are codes that hold no code,
 // both as the server refuses them (cadenza-audio #1159) -- for a task the
 // engine's table says takes no source, by the rows /props lists; before they
-// have loaded the server says it (#1124); so is a batch past the server's 9
-// takes, which it would cut short unsaid.
+// have loaded the server says it (#1124); so is a batch past the takes cap
+// /props says (`maxTakes`), which the server refuses too, and any batch
+// before /props has first said it (#1182).
 export function buildSynthBatch(
 	pending: AceRequest[],
 	form: AceRequest,
 	adapters: readonly string[],
 	seed: () => number,
-	tasks?: readonly AceTaskInfo[]
+	tasks: readonly AceTaskInfo[] | undefined,
+	maxTakes: number | undefined
 ): SynthBatch | string {
 	// whole, as the server reads it, and 1 at least
 	const synthBatch = Math.max(1, whole(num(form.synth_batch_size)) ?? 1);
@@ -357,8 +354,15 @@ export function buildSynthBatch(
 			return 'Some compositions carry audio codes and some do not: give every one its codes, or clear them all.';
 		}
 	}
-	if (pending.length * synthBatch > SERVER_MAX_TAKES) {
-		return `A batch makes ${SERVER_MAX_TAKES} takes at most, and this asks for ${pending.length * synthBatch}: lower Batch, or synthesize fewer compositions.`;
+	// the server's cap on a batch's takes, as /props says it (cli.max_takes),
+	// so the batch is not sent to be refused (#1182): none before /props has
+	// first loaded -- the server isn't answering, and a take list is not
+	// built for a Batch nothing bounds
+	if (maxTakes == null) {
+		return "The server's settings have not loaded yet: synthesize once it answers.";
+	}
+	if (pending.length * synthBatch > maxTakes) {
+		return `A batch makes ${maxTakes} takes at most, and this asks for ${pending.length * synthBatch}: lower Batch, or synthesize fewer compositions.`;
 	}
 	// a Seed whose last take passes the engine's range would run as another
 	// seed's twin (or, past a double's, be sent as null): refused. A random

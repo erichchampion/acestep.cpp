@@ -38,7 +38,6 @@
 		buildSynthBatch,
 		codesOf,
 		holdsCode,
-		SERVER_MAX_TAKES,
 		taskRow
 	} from '../lib/fields.js';
 	import type { AceRequest, AceTaskInfo, Song } from '../lib/types.js';
@@ -90,6 +89,14 @@
 	// DiT input indicators
 	// codes as a synth would send them, and holding a code, so the light and
 	// the batch agree
+	// the takes cap /props says (cli.max_takes), the last it gave kept through
+	// a poll that fails, as knownTasks are; undefined until it first loads,
+	// and then no batch is built (cadenza-audio #1182)
+	let maxTakes = $state<number | undefined>(undefined);
+	$effect(() => {
+		const n = Number(app.props?.cli?.max_takes);
+		if (Number.isFinite(n) && n > 0) maxTakes = n;
+	});
 	let hasCodes = $derived(holdsCode(codesOf(app.request)) && app.srcSongId == null);
 	let hasSrc = $derived(app.srcSongId != null);
 	let hasRange = $derived(app.srcRangeStart != null || app.srcRangeEnd != null);
@@ -463,7 +470,8 @@
 				app.request,
 				adapterList,
 				() => Math.floor(Math.random() * 0x100000000),
-				knownTasks
+				knownTasks,
+				maxTakes
 			);
 			if (typeof batch === 'string') {
 				toast(batch);
@@ -1090,7 +1098,7 @@
 			type="number"
 			class="batch-input"
 			min="1"
-			max={SERVER_MAX_TAKES}
+			max={maxTakes}
 			placeholder={ph(d?.synth_batch_size)}
 			bind:value={app.request.synth_batch_size}
 			title="Number of DiT variations per request. Each uses a consecutive seed."

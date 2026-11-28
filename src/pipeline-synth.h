@@ -80,6 +80,13 @@ inline constexpr const char * kAceRefusalSourceRequired =
 // synth says it too. It names the cap, kAceSynthMaxTakes, below.
 inline constexpr const char * kAceRefusalRunBatch = "a run takes a synth and 1..9 requests";
 
+// A batch whose requests ask more takes, their synth_batch_size summed, than
+// a run makes (ace_synth_batch_takes_refused): refused by ace-server, so a
+// client is told rather than have the takes past the cap dropped
+// (cadenza-audio #1182). It names the cap, kAceSynthMaxTakes, below.
+inline constexpr const char * kAceRefusalTooManyTakes =
+    "a batch makes 9 takes at most, its requests' synth_batch_size summed";
+
 // The reasons a run refuses its request partway, handed out through
 // ace_synth_job_run_dit's `refused` (cadenza-audio #1193).
 inline constexpr const char * kAceRefusalRegionEmpty   = "the region ends at or before its start";
@@ -97,7 +104,7 @@ inline constexpr const char * kAceRefusalLengthTooLong =
 // takes, clamped to this, and clamp a batch's total to it too.
 // cadenza-audio's shim holds its request cap to it (cadenza-audio #1165).
 inline constexpr int kAceSynthMaxTakes = 9;
-static_assert(kAceSynthMaxTakes == 9, "kAceRefusalRunBatch says the cap");
+static_assert(kAceSynthMaxTakes == 9, "kAceRefusalRunBatch and kAceRefusalTooManyTakes say the cap");
 
 // The takes a request's synth_batch_size asks for: the size, a size below 1
 // being one take. What a batch's `asked` sums, uncapped (cadenza-audio #1269).
@@ -409,6 +416,13 @@ struct AceSynthBatchTakes {
 };
 
 AceSynthBatchTakes ace_synth_batch_takes(const AceRequest * reqs, int batch_n);
+
+// Whether a batch asks more takes than a run makes: kAceRefusalTooManyTakes
+// when its `asked` passes kAceSynthMaxTakes, NULL when it fits. ace-server
+// refuses such a batch, as its client is told only by its answer; ace-synth
+// clamps it, and says which requests it drops (synth_batch_notes, #1269)
+// (cadenza-audio #1182).
+const char * ace_synth_batch_takes_refused(const AceSynthBatchTakes & batch);
 
 // How many of a batch's requests the tools run (0 for a NULL reqs):
 // ace_synth_batch_takes's requests, so the requests past the DiT's
