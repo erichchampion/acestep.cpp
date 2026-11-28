@@ -384,7 +384,7 @@ expect(
 expect('a cap is read from /props', takesCapOf({ cli: { max_takes: 9 } }) === 9);
 expect('an older /props says none', takesCapOf({ cli: {} }) === undefined);
 expect('no /props says none', takesCapOf(null) === undefined);
-for (const bad of [0, -3, 2.5, '9x', null]) {
+for (const bad of [0, -3, 2.5, '9x', '9', true, [9], null]) {
 	expect(
 		`a cap of ${JSON.stringify(bad)} is none`,
 		takesCapOf({ cli: { max_takes: bad } }) === undefined

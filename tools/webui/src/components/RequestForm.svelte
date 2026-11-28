@@ -87,8 +87,8 @@
 	$effect(() => {
 		if (!app.props) return;
 		propsSeen = true;
-		const cap = takesCapOf(app.props);
-		if (cap != null) maxTakes = cap;
+		// a /props that says no cap clears it: only a failed poll keeps it
+		maxTakes = takesCapOf(app.props);
 	});
 	// a task the request asks that is not among them -- a loaded song's, say
 	// -- is offered too, so the select shows the task that will run

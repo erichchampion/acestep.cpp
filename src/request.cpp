@@ -16,9 +16,11 @@
 #include <vector>
 
 // A JSON number as an int field reads it: truncated toward zero, and held to
-// the type's range first, since a cast of a double past it is undefined -- a
-// synth_batch_size of 1e10 read as INT_MIN, one take, slipped past ace-server's
-// takes cap (cadenza-audio #1182). The range's ends stand for any past them.
+// the type's range first, since a cast of a double past it is undefined. On
+// x86 a synth_batch_size of 1e10 read as INT_MIN -- one take -- and slipped
+// past ace-server's takes cap; arm64 happens to saturate (cadenza-audio
+// #1182). The range's ends stand for any past them. A seed past 2^53 is
+// read rounded, as a double holds it.
 template <class T> static T json_whole(yyjson_val * v) {
     const double d  = yyjson_get_num(v);
     const double lo = (double) std::numeric_limits<T>::min();
@@ -204,8 +206,8 @@ static void request_parse_obj(yyjson_val * obj, AceRequest * r) {
     if ((v = yyjson_obj_get(obj, "solver")) && yyjson_is_str(v) && yyjson_get_len(v) > 0) {
         r->solver = yy_str(v);
     }
-    if ((v = yyjson_obj_get(obj, "stork_substeps")) && yyjson_is_int(v)) {
-        r->stork_substeps = (int) yyjson_get_int(v);
+    if ((v = yyjson_obj_get(obj, "stork_substeps")) && yyjson_is_num(v)) {
+        r->stork_substeps = json_int(v);
     }
     if ((v = yyjson_obj_get(obj, "custom_timesteps")) && yyjson_is_str(v)) {
         r->custom_timesteps = yy_str(v);

@@ -11,8 +11,11 @@
 #include "pipeline-synth.h"
 #include "request.h"
 #include "synth-batch-runner.h"
+#include "task-types.h"
 #include "test-util.h"
 
+#include <climits>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -112,6 +115,33 @@ int main() {
     }) {
         std::vector<AceRequest> reqs = batch_of(fits);
         CHECK(ace_synth_batch_takes_refused(ace_synth_batch_takes(reqs.data(), (int) reqs.size())) == nullptr);
+    }
+    // The parser holds each int field to its type's range before its cast,
+    // truncating toward zero (cadenza-audio #1182): a size past an int asks
+    // the most, never a single take, on any machine.
+    {
+        struct Case {
+            const char * json;
+            int          batch;
+            long long    seed;
+            int          substeps;
+        };
+
+        const long long big = std::numeric_limits<long long>::max();
+        for (const Case & c : std::vector<Case>{
+                 { R"({"synth_batch_size":1e10,"seed":1e19})",                      INT_MAX, big,      STORK_SUBSTEPS_DEFAULT },
+                 { R"({"synth_batch_size":-1e10,"seed":-1e19})",                    INT_MIN, -big - 1, STORK_SUBSTEPS_DEFAULT },
+                 { R"({"synth_batch_size":2147483647.5,"seed":12.7})",              INT_MAX, 12,       STORK_SUBSTEPS_DEFAULT },
+                 { R"({"synth_batch_size":7.9,"seed":-0.5,"stork_substeps":12.0})", 7,       0,        12                     },
+                 { R"({"synth_batch_size":3,"stork_substeps":4294967306})",         3,       -1,       INT_MAX                },
+        }) {
+            AceRequest r;
+            request_init(&r);
+            CHECK(request_parse_json(&r, c.json));
+            CHECK(r.synth_batch_size == c.batch);
+            CHECK(r.seed == c.seed);
+            CHECK(r.stork_substeps == c.substeps);
+        }
     }
     return test_summary("test-synth-batch");
 }

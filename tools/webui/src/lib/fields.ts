@@ -314,8 +314,8 @@ export function regionAfterDrag(
 export function takesCapOf(
 	props: { cli?: { max_takes?: unknown } } | null | undefined
 ): number | undefined {
-	const n = Number(props?.cli?.max_takes);
-	return Number.isInteger(n) && n >= 1 ? n : undefined;
+	const n = props?.cli?.max_takes;
+	return typeof n === 'number' && Number.isInteger(n) && n >= 1 ? n : undefined;
 }
 
 // why no batch is built without a takes cap: /props not yet loaded, or
