@@ -221,18 +221,18 @@ export function taskRow(
 	return tasks?.find((t) => t.name === name);
 }
 
-// the part of a region the source's waveform can show, in seconds, or null
-// for none: its end read as the engine reads it (asked_region_end) -- a
-// negative end is the source's end, or for a start before the source its
-// start -- and the whole cut to the source's [0, duration]. So a repaint or
-// a lego from a start to -1 shows to the source's end, and an outpaint
-// before the source shows only its part on the source (cadenza-audio #1189).
 // a region's end as the engine reads it (asked_region_end): a negative end
 // is the source's end, or for a start before the source its start
 function askedEnd(start: number, end: number, duration: number): number {
 	return end >= 0 ? end : start < 0 ? 0 : duration;
 }
 
+// the part of a region the source's waveform can show, in seconds, or null
+// for none: its end read as the engine reads it (asked_region_end) -- a
+// negative end is the source's end, or for a start before the source its
+// start -- and the whole cut to the source's [0, duration]. So a repaint or
+// a lego from a start to -1 shows to the source's end, and an outpaint
+// before the source shows only its part on the source (cadenza-audio #1189).
 export function regionOnSource(
 	start: number,
 	end: number,
@@ -254,42 +254,55 @@ export interface AskedRegion {
 	end: number | null;
 }
 
-// a drag's state the card keeps between its calls: whether it has written a
-// region yet
-export interface DragWrite {
-	region: AskedRegion;
+// a drag's phase, as the waveform reports each step: 'start' as it takes
+// hold, 'move', and 'end' as it is released or cancelled
+export type DragPhase = 'start' | 'move' | 'end';
+
+// what a drag carries from step to step: whether it has written a region,
+// and whether its last step's region was empty
+export interface DragState {
 	wrote: boolean;
+	empty: boolean;
 }
 
-// the region after one step of a drag, from the request's region `asked`:
-// only the edge the user moved is applied, so the other keeps the bound the
-// request asked -- an outpaint's start before the source, a -1 end, an end
-// past the source (#1189). Whether that is empty is the asked region's, as
-// the engine reads it (askedEnd), not the range the waveform draws cut to
-// the source: an outpaint's end dragged to the source's start is the
-// region before it, written, not cleared (#1182). A step whose region is
-// empty writes nothing; a drag's end ('ending') that leaves it empty, once
-// the drag has written one -- a handle dropped on the other, a new range
-// pulled back to its start -- clears it, so the request asks none where the
-// waveform shows none. A click that wrote nothing leaves the request as it
-// was: a region the waveform cannot show is kept (#1182).
+export const DRAG_UNSTARTED: DragState = { wrote: false, empty: false };
+
+// the region after one step of a drag, from the request's region `asked`,
+// and the drag's state after it. A step applies only the edge the user
+// moved, so the other keeps the bound the request asked -- an outpaint's
+// start before the source, a -1 end, an end past the source (#1189) -- and
+// judges the result empty as the engine reads it (askedEnd), not by the
+// range drawn cut to the source: an outpaint's end dragged to the source's
+// start is the region before it, written (#1182). A step whose region is
+// empty writes nothing. The drag's end applies no edge: it clears the
+// region when the drag wrote one and its last step was empty -- a handle
+// dropped on the other, a new range pulled back to its start -- so the
+// request asks none where the waveform shows none, and otherwise keeps
+// what the drag wrote. A click that wrote nothing keeps a region the
+// waveform cannot show (#1182).
 export function regionAfterDrag(
 	edge: DragEdge,
 	start: number,
 	end: number,
 	asked: AskedRegion,
 	duration: number,
-	ending: boolean,
-	wrote: boolean
-): DragWrite {
+	phase: DragPhase,
+	state: DragState
+): { region: AskedRegion; state: DragState } {
+	if (phase === 'end') {
+		const clear = state.wrote && state.empty;
+		return { region: clear ? { start: null, end: null } : asked, state: DRAG_UNSTARTED };
+	}
+	const wrote = phase === 'start' ? false : state.wrote;
 	const next: AskedRegion = {
 		start: edge === 'hi' ? asked.start : start,
 		end: edge === 'lo' ? asked.end : end
 	};
 	const from = next.start ?? 0;
-	if (askedEnd(from, next.end ?? -1, duration) > from) return { region: next, wrote: true };
-	if (ending && wrote) return { region: { start: null, end: null }, wrote };
-	return { region: asked, wrote };
+	if (askedEnd(from, next.end ?? -1, duration) > from) {
+		return { region: next, state: { wrote: true, empty: false } };
+	}
+	return { region: asked, state: { wrote, empty: true } };
 }
 
 // build a /synth batch from the pending requests and the form, or say why

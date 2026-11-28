@@ -24,7 +24,14 @@
 	import { saveJob, clearJob, putSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
 	import { displaySongName } from '../lib/songName.js';
-	import { regionAfterDrag, regionOnSource, type DragEdge } from '../lib/fields.js';
+	import {
+		DRAG_UNSTARTED,
+		regionAfterDrag,
+		regionOnSource,
+		type DragEdge,
+		type DragPhase,
+		type DragState
+	} from '../lib/fields.js';
 	import Waveform from './Waveform.svelte';
 	import Menu, { type MenuItem } from './Menu.svelte';
 	import Dialog from './Dialog.svelte';
@@ -69,25 +76,33 @@
 	// empty clears it, and a click that wrote nothing keeps a region the
 	// waveform cannot show (#1182). The drawn range is never written back
 	// for having been drawn.
-	let dragWrote = false;
-	function onRange(edge: DragEdge, start: number, end: number, phase: 'start' | 'move' | 'end') {
+	// the drag in progress: its state from step to step, and whether one is
+	// held, while which the request's region is not drawn back into the
+	// waveform -- a region it cannot draw would reset the range mid-drag
+	let drag: DragState = DRAG_UNSTARTED;
+	let dragHeld = $state(false);
+	function onRange(edge: DragEdge, start: number, end: number, phase: DragPhase) {
 		if (!isSrc) return;
 		const next = regionAfterDrag(
 			edge,
 			start,
 			end,
 			{ start: app.srcRangeStart, end: app.srcRangeEnd },
-			dur > 0 ? dur : song.duration,
-			phase === 'end',
-			phase === 'start' ? false : dragWrote
+			dur,
+			phase,
+			drag
 		);
-		dragWrote = next.wrote;
+		drag = next.state;
+		dragHeld = phase !== 'end';
 		app.srcRangeStart = next.region.start;
 		app.srcRangeEnd = next.region.end;
 	}
 
 	// global state to waveform visual (field input)
 	$effect(() => {
+		// not while a drag is held: the drag draws its own range, and this
+		// redraws from the request as it ends (#1182)
+		if (dragHeld) return;
 		if (isSrc) {
 			const rs = app.srcRangeStart;
 			const re = app.srcRangeEnd;

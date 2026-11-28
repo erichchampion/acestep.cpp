@@ -23,6 +23,7 @@ import {
 } from '../src/lib/fields.ts';
 import type { AceRequest, AceTaskInfo } from '../src/lib/types.ts';
 import type { DragEdge } from '../src/lib/fields.ts';
+import { DRAG_UNSTARTED } from '../src/lib/fields.ts';
 
 let failed = 0;
 function expect(what: string, ok: boolean, got?: unknown): void {
@@ -162,23 +163,17 @@ expect('a region past the source shows nothing', same(regionOnSource(11, 12, 10)
 // written one; a click that wrote nothing keeps the request's.
 type Region = { start: number | null; end: number | null };
 const region = (r: Region) => `${r.start},${r.end}`;
-// one drag on a 10 s source, from `asked`, step by step: [edge, start, end]
-// for its start, its moves and its end
+// one drag on a 10 s source, from `asked`: its start, its moves, and its
+// end, each [edge, start, end] as the waveform reports it -- through the
+// card's own rule, phase by phase
 function drag(asked: Region, steps: [DragEdge, number, number][]): string {
 	let r = asked;
-	let wrote = false;
+	let state = DRAG_UNSTARTED;
 	steps.forEach(([edge, start, end], i) => {
-		const next = regionAfterDrag(
-			edge,
-			start,
-			end,
-			r,
-			10,
-			i === steps.length - 1,
-			i === 0 ? false : wrote
-		);
+		const phase = i === 0 ? 'start' : i === steps.length - 1 ? 'end' : 'move';
+		const next = regionAfterDrag(edge, start, end, r, 10, phase, state);
 		r = next.region;
-		wrote = next.wrote;
+		state = next.state;
 	});
 	return region(r);
 }
@@ -225,6 +220,7 @@ expect(
 	drag({ start: 4, end: 8 }, [
 		['lo', 5, 8],
 		['lo', 8, 8],
+		['lo', 6, 8],
 		['lo', 6, 8]
 	]) === '6,8'
 );
@@ -252,6 +248,23 @@ expect(
 		['lo', 10, 10],
 		['lo', 10, 10]
 	]) === '10,12'
+);
+// The end applies no edge: the range the waveform leaves at release -- reset
+// to none where the region cannot be drawn -- is not written (#1182).
+expect(
+	"a drag's end keeps what it wrote, whatever range is left drawn",
+	drag({ start: 2, end: 12 }, [
+		['lo', 8, 10],
+		['lo', 10, 10],
+		['lo', 0, 0]
+	]) === '10,12'
+);
+expect(
+	'a click after a drag that wrote clears nothing',
+	drag({ start: -3, end: -1 }, [
+		['new', 2, 2],
+		['new', 2, 2]
+	]) === '-3,-1'
 );
 expect(
 	'a start dragged onto a -1 end, the source end, clears it',

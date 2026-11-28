@@ -5,7 +5,7 @@
 	import { app } from '../lib/state.svelte.js';
 	import { putSong } from '../lib/db.js';
 	import type { Song } from '../lib/types.js';
-	import type { DragEdge } from '../lib/fields.js';
+	import type { DragEdge, DragPhase } from '../lib/fields.js';
 	import {
 		getContext,
 		registerPlaying,
@@ -35,7 +35,7 @@
 		// back only what was moved (cadenza-audio #1189), and the drag's
 		// phase: 'start' as it takes hold, 'move', and 'end' as it is
 		// released or cancelled, so a caller can tell a drag's end (#1182)
-		onrange?: (edge: DragEdge, start: number, end: number, phase: 'start' | 'move' | 'end') => void;
+		onrange?: (edge: DragEdge, start: number, end: number, phase: DragPhase) => void;
 	} = $props();
 
 	let canvas: HTMLCanvasElement;
@@ -308,12 +308,16 @@
 
 	function onPointerDown(e: PointerEvent) {
 		if (dragging) return;
-		// the primary button, a touch or a pen: a right-click, or a Mac's
-		// control-click, which opens the same menu, edits nothing
-		if (e.button !== 0 || (e.ctrlKey && e.pointerType === 'mouse')) return;
-		// no region is drawn or edited before the audio has a length: a
-		// press then would read as a new range at 0 (#1182)
-		if (selectable && dur <= 0) return;
+		if (selectable) {
+			// the primary button, a touch or a pen edits the region: a
+			// right-click, or a Mac's control-click, which opens the same
+			// menu, does not
+			const mac = /Mac/.test(navigator.platform);
+			if (e.button !== 0 || (mac && e.ctrlKey && e.pointerType === 'mouse')) return;
+			// nor a press before the audio has a length, which would read as
+			// a new range at 0 (#1182)
+			if (dur <= 0) return;
+		}
 		dragging = true;
 		dragPointer = e.pointerId;
 		canvas.setPointerCapture(e.pointerId);
